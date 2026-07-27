@@ -851,8 +851,6 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSDeleteFileSystemCommand(info),
 		newFSListFileSystemsCommand(info),
 		newFSDescribeFileSystemCommand(info),
-		newFSSetDefaultFileSystemCommand(info),
-		newFSUnsetDefaultFileSystemCommand(info),
 		newFSCheckFileSystemCommand(info),
 		newFSCopyFileCommand(info),
 		newFSReadFileCommand(info),
@@ -879,13 +877,11 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSDrainFileSystemCommand(info),
 		newFSUnmountFileSystemCommand(info),
 	}
-	addFSSelectorFlags(commands, "create-file-system", "list-file-systems", "unset-default-file-system", "drain-file-system", "unmount-file-system")
+	addFSSelectorFlags(commands, "create-file-system", "list-file-systems", "drain-file-system", "unmount-file-system")
 	addFSAuthFlags(commands,
 		"create-file-system",
 		"list-file-systems",
 		"describe-file-system",
-		"set-default-file-system",
-		"unset-default-file-system",
 		"drain-file-system",
 		"unmount-file-system",
 	)
@@ -903,7 +899,7 @@ func addFSSelectorFlags(commands []*cobra.Command, excluded ...string) {
 			continue
 		}
 		if command.Flags().Lookup("file-system-name") == nil {
-			command.Flags().String("file-system-name", "", "The name of the file system.")
+			command.Flags().String("file-system-name", "", "The name of the file system. Can also be supplied through TDC_FS_FILE_SYSTEM_NAME.")
 		}
 	}
 }
@@ -941,10 +937,6 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			setDefault, err := ctx.BoolFlag("set-default")
-			if err != nil {
-				return nil, err
-			}
 			waitUntilReady, err := ctx.BoolFlag("wait")
 			if err != nil {
 				return nil, err
@@ -952,7 +944,6 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			return service.CreateFileSystem(ctx.cmd.Context(), tdcfs.CreateFileSystemOptions{
 				Profile:        profile,
 				FileSystemName: name,
-				SetDefault:     setDefault,
 				WaitUntilReady: waitUntilReady,
 			})
 		},
@@ -965,10 +956,6 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			setDefault, err := ctx.BoolFlag("set-default")
-			if err != nil {
-				return dryrun.Result{}, err
-			}
 			waitUntilReady, err := ctx.BoolFlag("wait")
 			if err != nil {
 				return dryrun.Result{}, err
@@ -976,13 +963,11 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			return service.DryRunCreateFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tdcfs.CreateFileSystemOptions{
 				Profile:        profile,
 				FileSystemName: name,
-				SetDefault:     setDefault,
 				WaitUntilReady: waitUntilReady,
 			})
 		},
 	}, info)
 	cmd.Flags().String("file-system-name", "", "The name of the file system.")
-	cmd.Flags().Bool("set-default", false, "Make the created file system the profile default.")
 	cmd.Flags().Bool("wait", false, "Wait until the created file system is active.")
 	markUsageRequired(cmd, "file-system-name")
 	return cmd
@@ -1021,65 +1006,6 @@ func newFSDescribeFileSystemCommand(info version.Info) *cobra.Command {
 	cmd.Flags().String("file-system-name", "", "The name of the file system.")
 	markUsageRequired(cmd, "file-system-name")
 	return cmd
-}
-
-func newFSSetDefaultFileSystemCommand(info version.Info) *cobra.Command {
-	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "set-default-file-system",
-		Short:      "Set the default file system for a specific profile.",
-		Mutation:   mutatingCommand,
-		Permission: authz.FSVolumeRead,
-		Run: func(ctx commandContext) (any, error) {
-			service, profile, err := fsRegistryServiceAndProfile(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return service.SetDefaultFileSystem(ctx.cmd.Context(), profile)
-		},
-		DryRun: func(ctx commandContext) (dryrun.Result, error) {
-			_, profile, err := fsRegistryServiceAndProfile(ctx)
-			if err != nil {
-				return dryrun.Result{}, err
-			}
-			return localFSDefaultDryRun(ctx.CommandPath(), profile, profile.FSResourceName), nil
-		},
-	}, info)
-	cmd.Flags().String("file-system-name", "", "The name of the file system.")
-	markUsageRequired(cmd, "file-system-name")
-	return cmd
-}
-
-func newFSUnsetDefaultFileSystemCommand(info version.Info) *cobra.Command {
-	return newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "unset-default-file-system",
-		Short:      "Unset the default file system for a specific profile.",
-		Mutation:   mutatingCommand,
-		Permission: authz.FSVolumeRead,
-		Run: func(ctx commandContext) (any, error) {
-			service, profile, err := fsLocalServiceAndProfile(ctx)
-			if err != nil {
-				return nil, err
-			}
-			return service.UnsetDefaultFileSystem(ctx.cmd.Context(), profile)
-		},
-		DryRun: func(ctx commandContext) (dryrun.Result, error) {
-			_, profile, err := fsLocalServiceAndProfile(ctx)
-			if err != nil {
-				return dryrun.Result{}, err
-			}
-			return localFSDefaultDryRun(ctx.CommandPath(), profile, ""), nil
-		},
-	}, info)
-}
-
-func localFSDefaultDryRun(commandPath string, profile *config.Profile, name string) dryrun.Result {
-	action := "unset_default_file_system"
-	description := "normal execution clears fs_default_file_system_name in the selected profile"
-	if name != "" {
-		action = "set_default_file_system"
-		description = fmt.Sprintf("normal execution sets fs_default_file_system_name to %q in the selected profile", name)
-	}
-	return dryrun.New(commandPath, action, dryrun.RequestSummary{Description: description}, dryrun.Check{Name: "local_resource_registry", Status: "passed", Message: fmt.Sprintf("profile %q", profile.Name)})
 }
 
 func newFSDeleteFileSystemCommand(info version.Info) *cobra.Command {
@@ -1190,7 +1116,7 @@ func newFSReadFileCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "read-file",
 		Aliases:    []string{"cat"},
-		Short:      "Read a file from a specific file system or the default file system.",
+		Short:      "Read a file from a specific file system.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSFileRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -1483,7 +1409,7 @@ func newFSSearchFileContentCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "search-file-content",
 		Aliases:    []string{"grep"},
-		Short:      "Search file content in a specific file system or the default file system.",
+		Short:      "Search file content in a specific file system.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSFileRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -1883,7 +1809,7 @@ func newFSMountFileSystemCommand(info version.Info) *cobra.Command {
 			return service.DryRunMountFileSystem(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("file-system-name", "", "The name of the file system. Default: the name of the default file system in the profile.")
+	cmd.Flags().String("file-system-name", "", "The name of the file system. Can also be supplied through TDC_FS_FILE_SYSTEM_NAME.")
 	cmd.Flags().String("mount-path", "", "Local mount path.")
 	cmd.Flags().String("remote-path", "/", "The TiDB Cloud file system root path to mount.")
 	cmd.Flags().String("driver", "auto", "Mount driver: auto, fuse, or webdav.")

@@ -47,6 +47,8 @@ Implemented:
   `docs/spec/done/0011-ext01-fuse-cache-and-open-handle-correctness.md`
 - profile-scoped 1:N tdc fs resource registry from
   `docs/spec/done/0016-profile-fs-resource-registry.md`
+- explicit tdc fs resource selection from
+  `docs/spec/done/0020-explicit-file-system-selection.md`
 - FS token authentication and configuration-free access from
   `docs/spec/done/0018-fs-token-auth-and-config-free-access.md`
 - install and update distribution from
@@ -73,8 +75,6 @@ Implemented:
 - `tdc fs delete-file-system`
 - `tdc fs list-file-systems`
 - `tdc fs describe-file-system`
-- `tdc fs set-default-file-system`
-- `tdc fs unset-default-file-system`
 - `tdc fs check-file-system`
 - `tdc fs copy-file`
 - `tdc fs read-file`
@@ -441,13 +441,11 @@ Implemented command behavior:
 - `tdc fs create-file-system --file-system-name workspace`
 - `tdc fs create-file-system --file-system-name workspace --wait`
 - `tdc fs create-file-system --file-system-name workspace --dry-run`
-- `tdc fs create-file-system --file-system-name scratch --set-default`
+- `tdc fs create-file-system --file-system-name scratch`
 - `tdc fs delete-file-system --file-system-name workspace`
 - `tdc fs delete-file-system --file-system-name workspace --dry-run`
 - `tdc fs list-file-systems`
 - `tdc fs describe-file-system --file-system-name workspace`
-- `tdc fs set-default-file-system --file-system-name workspace`
-- `tdc fs unset-default-file-system`
 - `tdc fs check-file-system`
 - `tdc fs check-file-system --file-system-name workspace`
 - `tdc fs copy-file --from-local ./README.md --to-remote /workspace/README.md`
@@ -545,8 +543,6 @@ Registered command surface:
 - `tdc fs delete-file-system`
 - `tdc fs list-file-systems`
 - `tdc fs describe-file-system`
-- `tdc fs set-default-file-system`
-- `tdc fs unset-default-file-system`
 - `tdc fs check-file-system`
 - `tdc fs copy-file`
 - `tdc fs read-file`
@@ -655,14 +651,8 @@ tdc_public_key = "..."
 tdc_private_key = "..."
 ```
 
-One profile can own multiple tdc fs resources. The main config stores only the
-optional default resource name:
-
-```toml
-[default]
-region_code = "aws-us-east-1"
-fs_default_file_system_name = "workspace"
-```
+One profile can own multiple tdc fs resources. The main config stores neither a
+default resource name nor resource credentials.
 
 Each resource stores metadata and credentials separately:
 
@@ -780,10 +770,12 @@ tdc fs resource selection order is:
 
 1. Explicit `--file-system-name`.
 2. `TDC_FS_FILE_SYSTEM_NAME`.
-3. The profile's `fs_default_file_system_name`.
-4. The only configured resource.
-5. Otherwise fail with `fs.resource_ambiguous` or
-   `fs.resource_not_configured`.
+3. Otherwise fail with `fs.missing_file_system_name` before credential loading,
+   endpoint resolution, companion startup, or a remote request.
+
+Never infer a tdc fs resource from profile state, registry cardinality,
+creation order, or deletion side effects. `TDC_FS_FILE_SYSTEM_NAME` is an
+explicit process-scoped selector and must not be persisted.
 
 Remote tdc fs, fs-git, fs-journal, and owner fs-vault commands use this FS
 credential lookup order:
@@ -801,9 +793,10 @@ TiDB Cloud-authenticated; deletion also requires the selected locally
 registered resource and its owner token.
 
 The selector is available on tdc fs data-plane/runtime commands and all
-`fs-git`, `fs-journal`, and `fs-vault` subcommands. Creation, deletion,
-description, and setting the default require an explicit resource name where
-their command contract declares it.
+`fs-git`, `fs-journal`, and `fs-vault` subcommands. Creation, deletion, and
+description require an explicit resource name where their command contract
+declares it. Drain and unmount resolve an existing mount through its mount path
+and locator instead of selecting a resource again.
 
 When implementing command handlers, detect whether `--profile` was explicitly
 set before calling `config.Load`; the root flag has a default value, but that
@@ -946,7 +939,7 @@ boundary writes to stdout/stderr and maps errors to exit codes.
 
 The product-owned telemetry backend is implemented as the independent
 `tdc-telemetry-backend` process. The CLI collection and delivery path remains
-governed by `docs/spec/0020-telemetry.md`. Telemetry must be opt-aware and
+governed by `docs/spec/0021-telemetry.md`. Telemetry must be opt-aware and
 privacy-preserving. Allowed fields:
 
 - command and subcommand invoked

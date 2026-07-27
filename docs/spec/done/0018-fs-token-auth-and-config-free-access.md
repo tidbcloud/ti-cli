@@ -2,6 +2,8 @@
 
 This spec refines `docs/requirements/mount-file-system-config-free-mount.md`. It keeps the configuration-free workflow but uses tdc's existing global `--region` contract, the profile-scoped FS resource registry introduced by `docs/spec/done/0016-profile-fs-resource-registry.md`, and the Drive9 companion ownership boundary from `docs/spec/done/0015-drive9-companion-wrapper-for-tdc-fs.md`.
 
+The persistent default-resource and unique-resource fallback rules in this completed spec are superseded by `docs/spec/done/0020-explicit-file-system-selection.md`. Explicit `--file-system-name` and `TDC_FS_FILE_SYSTEM_NAME` selection, token precedence, and configuration-free access remain valid.
+
 ## Goal
 
 Allow an existing tdc file system to be used in an ephemeral environment without running `tdc configure` or providing TiDB Cloud public/private API keys. A user or agent with a file-system name, canonical region code, and FS token must be able to mount the file system and use token-authenticated `tdc fs`, `tdc fs-git`, `tdc fs-journal`, and `tdc fs-vault` operations.
@@ -15,7 +17,7 @@ TiDB Cloud API keys must be required only for operations that actually call the 
 | FS data plane, check, layer, pack/unpack, mount, git, and journal | not required | required | required |
 | Owner vault management/read operations | not required | required | required |
 | Delegated vault consumption | not required | delegated vault token | required |
-| Local FS registry list/describe/default selection | not required | not required | not required |
+| Local FS registry list and describe | not required | not required | not required |
 
 This is an authentication-boundary correction in tdc. Drive9 already supports its data plane and mount runtime with `DRIVE9_API_KEY` plus `DRIVE9_SERVER`; no Drive9 backend change is required.
 

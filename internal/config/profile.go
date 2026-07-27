@@ -22,22 +22,21 @@ type LoadOptions struct {
 }
 
 type Profile struct {
-	Name                    string
-	HomeDir                 string
-	Source                  string
-	PlacementRegionCode     string
-	CloudProvider           string
-	RegionCode              string
-	ProjectID               string
-	TDCPublicKey            string
-	TDCPrivateKey           string
-	FSResourceName          string
-	FSTenantID              string
-	FSPlacementRegionCode   string
-	FSCloudProvider         string
-	FSRegionCode            string
-	FSAPIKey                string
-	FSDefaultFileSystemName string
+	Name                  string
+	HomeDir               string
+	Source                string
+	PlacementRegionCode   string
+	CloudProvider         string
+	RegionCode            string
+	ProjectID             string
+	TDCPublicKey          string
+	TDCPrivateKey         string
+	FSResourceName        string
+	FSTenantID            string
+	FSPlacementRegionCode string
+	FSCloudProvider       string
+	FSRegionCode          string
+	FSAPIKey              string
 }
 
 func Load(ctx context.Context, opts LoadOptions) (*Profile, error) {
@@ -89,22 +88,21 @@ func Load(ctx context.Context, opts LoadOptions) (*Profile, error) {
 	}
 
 	return &Profile{
-		Name:                    profileName,
-		HomeDir:                 opts.HomeDir,
-		Source:                  source,
-		PlacementRegionCode:     placement.Code,
-		CloudProvider:           placement.Provider,
-		RegionCode:              placement.NativeCode,
-		ProjectID:               cfg.ProjectID,
-		TDCPublicKey:            publicKey,
-		TDCPrivateKey:           privateKey,
-		FSResourceName:          cfg.FSResourceName,
-		FSTenantID:              cfg.FSTenantID,
-		FSPlacementRegionCode:   fsPlacement.Code,
-		FSCloudProvider:         fsPlacement.Provider,
-		FSRegionCode:            fsPlacement.NativeCode,
-		FSAPIKey:                creds.FSAPIKey,
-		FSDefaultFileSystemName: cfg.FSDefaultFileSystemName,
+		Name:                  profileName,
+		HomeDir:               opts.HomeDir,
+		Source:                source,
+		PlacementRegionCode:   placement.Code,
+		CloudProvider:         placement.Provider,
+		RegionCode:            placement.NativeCode,
+		ProjectID:             cfg.ProjectID,
+		TDCPublicKey:          publicKey,
+		TDCPrivateKey:         privateKey,
+		FSResourceName:        cfg.FSResourceName,
+		FSTenantID:            cfg.FSTenantID,
+		FSPlacementRegionCode: fsPlacement.Code,
+		FSCloudProvider:       fsPlacement.Provider,
+		FSRegionCode:          fsPlacement.NativeCode,
+		FSAPIKey:              creds.FSAPIKey,
 	}, nil
 }
 
@@ -154,17 +152,16 @@ func LoadLocal(ctx context.Context, opts LoadOptions) (*Profile, error) {
 		source = "profile"
 	}
 	profile := &Profile{
-		Name:                    profileName,
-		HomeDir:                 opts.HomeDir,
-		Source:                  source,
-		ProjectID:               cfg.ProjectID,
-		FSResourceName:          cfg.FSResourceName,
-		FSTenantID:              cfg.FSTenantID,
-		FSPlacementRegionCode:   fsPlacement.Code,
-		FSCloudProvider:         fsPlacement.Provider,
-		FSRegionCode:            fsPlacement.NativeCode,
-		FSAPIKey:                creds.FSAPIKey,
-		FSDefaultFileSystemName: cfg.FSDefaultFileSystemName,
+		Name:                  profileName,
+		HomeDir:               opts.HomeDir,
+		Source:                source,
+		ProjectID:             cfg.ProjectID,
+		FSResourceName:        cfg.FSResourceName,
+		FSTenantID:            cfg.FSTenantID,
+		FSPlacementRegionCode: fsPlacement.Code,
+		FSCloudProvider:       fsPlacement.Provider,
+		FSRegionCode:          fsPlacement.NativeCode,
+		FSAPIKey:              creds.FSAPIKey,
 	}
 	if hasPlacement {
 		profile.PlacementRegionCode = placement.Code

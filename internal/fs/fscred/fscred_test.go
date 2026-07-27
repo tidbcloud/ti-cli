@@ -31,26 +31,21 @@ func TestRegistryStoreListAndFileModes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1", false); err != nil {
+	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-west-2", "key-2", false); err != nil {
+	if err := Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-west-2", "key-2"); err != nil {
 		t.Fatal(err)
 	}
-	configDoc, err := store.ReadConfig(home)
+	resources, err := List(home, profile.Name)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := configDoc[profile.Name].FSDefaultFileSystemName; got != "workspace" {
-		t.Fatalf("second resource changed default to %q, want workspace", got)
-	}
-	profile.FSDefaultFileSystemName = "workspace"
-	resources, err := List(home, profile.Name, profile.FSDefaultFileSystemName)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(resources) != 2 || resources[0].Name != "scratch" || resources[1].Name != "workspace" || !resources[1].IsDefault {
+	if len(resources) != 2 || resources[0].Name != "scratch" || resources[1].Name != "workspace" {
 		t.Fatalf("unexpected resources: %#v", resources)
+	}
+	if _, err := os.Stat(store.ConfigPath(home)); !os.IsNotExist(err) {
+		t.Fatalf("registry store wrote main config: %v", err)
 	}
 	if runtime.GOOS != "windows" {
 		assertMode(t, filepath.Join(home, store.TDCDirName, resourcesDirName), 0o700)
@@ -74,14 +69,12 @@ func TestRegistryStoreListAndFileModes(t *testing.T) {
 func TestResolveSelectionPrecedence(t *testing.T) {
 	home := t.TempDir()
 	profile := registryProfile(home)
-	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1", false); err != nil {
+	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-west-2", "key-2", false); err != nil {
+	if err := Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-west-2", "key-2"); err != nil {
 		t.Fatal(err)
 	}
-	profile.FSDefaultFileSystemName = "workspace"
-
 	selected, _, err := Resolve(home, profile, "scratch", true, map[string]string{"TDC_FS_FILE_SYSTEM_NAME": "workspace"})
 	if err != nil || selected.FSResourceName != "scratch" || selected.FSAPIKey != "key-2" || selected.FSRegionCode != "us-west-2" {
 		t.Fatalf("flag selection failed: selected=%#v err=%v", selected, err)
@@ -90,32 +83,31 @@ func TestResolveSelectionPrecedence(t *testing.T) {
 	if err != nil || selected.FSResourceName != "scratch" {
 		t.Fatalf("environment selection failed: selected=%#v err=%v", selected, err)
 	}
-	selected, _, err = Resolve(home, profile, "", false, map[string]string{})
-	if err != nil || selected.FSResourceName != "workspace" {
-		t.Fatalf("default selection failed: selected=%#v err=%v", selected, err)
-	}
-	profile.FSDefaultFileSystemName = ""
-	if _, _, err := Resolve(home, profile, "", false, map[string]string{}); apperr.CodeFor(err) != "fs.resource_ambiguous" {
-		t.Fatalf("expected ambiguity error, got %v", err)
+	if _, _, err := Resolve(home, profile, "", false, map[string]string{}); apperr.CodeFor(err) != "fs.missing_file_system_name" {
+		t.Fatalf("expected missing selector error, got %v", err)
 	}
 	if _, _, err := Resolve(home, profile, "missing", true, map[string]string{}); apperr.CodeFor(err) != "fs.resource_not_found" {
 		t.Fatalf("expected not found error, got %v", err)
 	}
 }
 
-func TestResolveOnlyResourceAndMissingResource(t *testing.T) {
+func TestResolveNeverInfersResourceFromRegistryCardinality(t *testing.T) {
 	home := t.TempDir()
 	profile := registryProfile(home)
-	if _, _, err := Resolve(home, profile, "", false, map[string]string{}); apperr.CodeFor(err) != "fs.resource_not_configured" {
-		t.Fatalf("expected not configured error, got %v", err)
+	if _, _, err := Resolve(home, profile, "", false, map[string]string{}); apperr.CodeFor(err) != "fs.missing_file_system_name" {
+		t.Fatalf("zero-resource error = %v", err)
 	}
-	if err := Store(home, profile, "only", "tenant-1", "aws", "aws-us-east-1", "key-1", false); err != nil {
+	if err := Store(home, profile, "only", "tenant-1", "aws", "aws-us-east-1", "key-1"); err != nil {
 		t.Fatal(err)
 	}
-	profile.FSDefaultFileSystemName = ""
-	selected, _, err := Resolve(home, profile, "", false, map[string]string{})
-	if err != nil || selected.FSResourceName != "only" {
-		t.Fatalf("single resource selection failed: selected=%#v err=%v", selected, err)
+	if _, _, err := Resolve(home, profile, "", false, map[string]string{}); apperr.CodeFor(err) != "fs.missing_file_system_name" {
+		t.Fatalf("one-resource error = %v", err)
+	}
+	if err := Store(home, profile, "second", "tenant-2", "aws", "aws-us-east-1", "key-2"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Resolve(home, profile, "", false, map[string]string{}); apperr.CodeFor(err) != "fs.missing_file_system_name" {
+		t.Fatalf("multiple-resource error = %v", err)
 	}
 }
 
@@ -148,10 +140,9 @@ func TestResolveAuthenticatedConfigurationFree(t *testing.T) {
 func TestResolveAuthenticatedPrecedenceAndMixedSources(t *testing.T) {
 	home := t.TempDir()
 	profile := registryProfile(home)
-	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-west-2", "stored-token", true); err != nil {
+	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-west-2", "stored-token"); err != nil {
 		t.Fatal(err)
 	}
-	profile.FSDefaultFileSystemName = "workspace"
 	profile.PlacementRegionCode = "aws-eu-central-1"
 
 	selected, _, err := ResolveAuthenticated(home, profile, ResolveAuthOptions{
@@ -175,7 +166,10 @@ func TestResolveAuthenticatedPrecedenceAndMixedSources(t *testing.T) {
 
 	selected, _, err = ResolveAuthenticated(home, profile, ResolveAuthOptions{
 		TokenRequired: true,
-		Env:           map[string]string{"TDC_FS_TOKEN": "env-token"},
+		Env: map[string]string{
+			"TDC_FS_FILE_SYSTEM_NAME": "workspace",
+			"TDC_FS_TOKEN":            "env-token",
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -198,14 +192,19 @@ func TestResolveAuthenticatedErrorsAndDelegatedTokenMode(t *testing.T) {
 			code: "fs.missing_file_system_name",
 		},
 		{
-			name: "missing token",
+			name: "unregistered resource without token",
 			opts: ResolveAuthOptions{Selector: "workspace", SelectorExplicit: true, TokenRequired: true, RegionOverride: "aws-us-east-1"},
-			code: "fs.missing_token",
+			code: "fs.resource_not_found",
 		},
 		{
 			name: "missing region",
 			opts: ResolveAuthOptions{Selector: "workspace", SelectorExplicit: true, Token: "token", TokenExplicit: true, TokenRequired: true},
 			code: "fs.missing_region",
+		},
+		{
+			name: "empty selector flag",
+			opts: ResolveAuthOptions{SelectorExplicit: true, Token: "token", TokenExplicit: true, TokenRequired: true, RegionOverride: "aws-us-east-1", Env: map[string]string{"TDC_FS_FILE_SYSTEM_NAME": "workspace"}},
+			code: "fs.empty_file_system_name",
 		},
 		{
 			name: "empty token flag",
@@ -263,7 +262,7 @@ func TestLegacyFlatResourceMigration(t *testing.T) {
 	}
 	configDoc, _ := store.ReadConfig(home)
 	credentialsDoc, _ := store.ReadCredentials(home)
-	if got := configDoc["stage"]; got.FSResourceName != "" || got.FSTenantID != "" || got.FSDefaultFileSystemName != "workspace" {
+	if got := configDoc["stage"]; got.FSResourceName != "" || got.FSTenantID != "" {
 		t.Fatalf("legacy config not cleared: %#v", got)
 	}
 	if got := credentialsDoc["stage"]; got.FSAPIKey != "" || got.TDCPublicKey != "public" {
@@ -384,7 +383,7 @@ func TestResolveDryRunUsesLegacyResourceWithoutMigrating(t *testing.T) {
 func TestLegacyMigrationRejectsRegistryMismatch(t *testing.T) {
 	home := t.TempDir()
 	profile := registryProfile(home)
-	if err := Store(home, profile, "workspace", "tenant-new", "aws", "aws-us-east-1", "key-new", false); err != nil {
+	if err := Store(home, profile, "workspace", "tenant-new", "aws", "aws-us-east-1", "key-new"); err != nil {
 		t.Fatal(err)
 	}
 	profile.FSResourceName = "workspace"
@@ -402,14 +401,16 @@ func TestLegacyMigrationRejectsRegistryMismatch(t *testing.T) {
 	}
 }
 
-func TestDeletePreservesOtherResourceAndSelectsOnlyRemainder(t *testing.T) {
+func TestDeletePreservesOtherResourceWithoutChangingMainConfig(t *testing.T) {
 	home := t.TempDir()
 	profile := registryProfile(home)
-	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1", false); err != nil {
+	if err := store.WriteProfile(home, profile.Name, store.ConfigProfile{RegionCode: "aws-us-east-1", ProjectID: "project-1"}, store.CredentialsProfile{}); err != nil {
 		t.Fatal(err)
 	}
-	profile.FSDefaultFileSystemName = "workspace"
-	if err := Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-west-2", "key-2", false); err != nil {
+	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-west-2", "key-2"); err != nil {
 		t.Fatal(err)
 	}
 	if err := Delete(home, profile, "workspace"); err != nil {
@@ -425,74 +426,18 @@ func TestDeletePreservesOtherResourceAndSelectsOnlyRemainder(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := configDoc[profile.Name].FSDefaultFileSystemName; got != "scratch" {
-		t.Fatalf("default = %q, want scratch", got)
+	if got := configDoc[profile.Name]; got.RegionCode != "aws-us-east-1" || got.ProjectID != "project-1" {
+		t.Fatalf("main config changed: %#v", got)
 	}
-}
-
-func TestDeleteDefaultSelectionRules(t *testing.T) {
-	t.Run("multiple resources remain", func(t *testing.T) {
-		home := t.TempDir()
-		profile := registryProfile(home)
-		if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1", false); err != nil {
-			t.Fatal(err)
-		}
-		profile.FSDefaultFileSystemName = "workspace"
-		for _, resource := range []struct {
-			name string
-			key  string
-		}{{name: "scratch", key: "key-2"}, {name: "archive", key: "key-3"}} {
-			if err := Store(home, profile, resource.name, "tenant-extra", "aws", "aws-us-east-1", resource.key, false); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := Delete(home, profile, "workspace"); err != nil {
-			t.Fatal(err)
-		}
-		configDoc, err := store.ReadConfig(home)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := configDoc[profile.Name].FSDefaultFileSystemName; got != "" {
-			t.Fatalf("default = %q, want empty while multiple resources remain", got)
-		}
-		for _, name := range []string{"scratch", "archive"} {
-			if _, err := Get(home, profile.Name, name); err != nil {
-				t.Fatalf("remaining resource %q changed: %v", name, err)
-			}
-		}
-	})
-
-	t.Run("non-default resource deleted", func(t *testing.T) {
-		home := t.TempDir()
-		profile := registryProfile(home)
-		if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1", false); err != nil {
-			t.Fatal(err)
-		}
-		profile.FSDefaultFileSystemName = "workspace"
-		if err := Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-east-1", "key-2", false); err != nil {
-			t.Fatal(err)
-		}
-		if err := Delete(home, profile, "scratch"); err != nil {
-			t.Fatal(err)
-		}
-		configDoc, err := store.ReadConfig(home)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := configDoc[profile.Name].FSDefaultFileSystemName; got != "workspace" {
-			t.Fatalf("default = %q, want workspace", got)
-		}
-	})
 }
 
 func TestStoreRejectsConflictingResourceName(t *testing.T) {
 	home := t.TempDir()
 	profile := registryProfile(home)
-	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1", false); err != nil {
+	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := Store(home, profile, "workspace", "tenant-2", "aws", "aws-us-east-1", "key-2", false); apperr.CodeFor(err) != "fs.resource_name_conflict" {
+	if err := Store(home, profile, "workspace", "tenant-2", "aws", "aws-us-east-1", "key-2"); apperr.CodeFor(err) != "fs.resource_name_conflict" {
 		t.Fatalf("expected resource name conflict, got %v", err)
 	}
 	resource, err := Get(home, profile.Name, "workspace")
@@ -508,7 +453,7 @@ func TestResourceNameCannotEscapeRegistry(t *testing.T) {
 	home := t.TempDir()
 	profile := registryProfile(home)
 	name := "../../outside"
-	if err := Store(home, profile, name, "tenant-1", "aws", "aws-us-east-1", "key-1", false); err != nil {
+	if err := Store(home, profile, name, "tenant-1", "aws", "aws-us-east-1", "key-1"); err != nil {
 		t.Fatal(err)
 	}
 	dir, err := resourceDir(home, profile.Name, name)

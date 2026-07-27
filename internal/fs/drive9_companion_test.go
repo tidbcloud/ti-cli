@@ -49,7 +49,7 @@ func TestDrive9CreateFileSystemStoresRegistryCredentialsAndUsesCanonicalRegion(t
 	if err != nil {
 		t.Fatalf("ReadConfig failed: %v", err)
 	}
-	if got := configDoc["stage"]; got.FSDefaultFileSystemName != "workspace" || got.FSResourceName != "" || got.FSTenantID != "" || got.FSRegionCode != "" {
+	if got := configDoc["stage"]; got.FSResourceName != "" || got.FSTenantID != "" || got.FSRegionCode != "" {
 		t.Fatalf("unexpected fs config: %#v", got)
 	}
 	credentialsDoc, err := store.ReadCredentials(home)
@@ -171,7 +171,7 @@ func TestDrive9CreateFileSystemFromEnvironmentProfileStoresDefaultProfile(t *tes
 	if err != nil {
 		t.Fatalf("ReadConfig failed: %v", err)
 	}
-	if got := configDoc[config.DefaultProfile]; got.FSDefaultFileSystemName != "workspace" || got.FSResourceName != "" || got.FSTenantID != "" {
+	if got := configDoc[config.DefaultProfile]; got.FSResourceName != "" || got.FSTenantID != "" {
 		t.Fatalf("expected fs config under default profile, got %#v", got)
 	}
 	if _, ok := configDoc["env"]; ok {
@@ -198,15 +198,8 @@ func TestDrive9CreateSecondFileSystemUsesIndependentCompanionHome(t *testing.T) 
 	if _, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile, FileSystemName: "workspace"}); err != nil {
 		t.Fatalf("create workspace: %v", err)
 	}
-	if _, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile, FileSystemName: "scratch", SetDefault: true}); err != nil {
+	if _, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile, FileSystemName: "scratch"}); err != nil {
 		t.Fatalf("create scratch: %v", err)
-	}
-	configDoc, err := store.ReadConfig(home)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := configDoc[profile.Name].FSDefaultFileSystemName; got != "scratch" {
-		t.Fatalf("default = %q, want scratch", got)
 	}
 	repeated, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile, FileSystemName: "scratch"})
 	if err != nil {
@@ -215,7 +208,7 @@ func TestDrive9CreateSecondFileSystemUsesIndependentCompanionHome(t *testing.T) 
 	if repeated.Status != "exists" || repeated.FSToken != "fs-secret" || !repeated.CredentialsStored {
 		t.Fatalf("unexpected repeated create result: %#v", repeated)
 	}
-	resources, err := fscred.List(home, profile.Name, "scratch")
+	resources, err := fscred.List(home, profile.Name)
 	if err != nil || len(resources) != 2 {
 		t.Fatalf("resources=%#v err=%v", resources, err)
 	}
@@ -248,14 +241,12 @@ func TestDrive9DeleteFileSystemDeletesOnlySelectedRegistryResource(t *testing.T)
 	if err := store.WriteProfile(home, profile.Name, store.ConfigProfile{RegionCode: profile.PlacementRegionCode}, store.CredentialsProfile{TDCPublicKey: profile.TDCPublicKey, TDCPrivateKey: profile.TDCPrivateKey}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "fs-secret", true); err != nil {
+	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "fs-secret"); err != nil {
 		t.Fatal(err)
 	}
-	if err := fscred.Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-east-1", "fs-secret-2", false); err != nil {
+	if err := fscred.Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-east-1", "fs-secret-2"); err != nil {
 		t.Fatal(err)
 	}
-	profile.FSDefaultFileSystemName = "workspace"
-
 	result, err := testCompanionService(home, companion).DeleteFileSystem(context.Background(), DeleteFileSystemOptions{
 		Profile:        profile,
 		FileSystemName: "workspace",
@@ -589,10 +580,9 @@ func TestDryRunCreateFileSystemUsesRedactedProvisionShape(t *testing.T) {
 func TestDryRunDeleteFileSystemReportsRegistryFiles(t *testing.T) {
 	home := t.TempDir()
 	profile := dataProfile()
-	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "fs-secret", true); err != nil {
+	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "fs-secret"); err != nil {
 		t.Fatal(err)
 	}
-	profile.FSDefaultFileSystemName = "workspace"
 	result, err := (Service{HomeDir: home, Resolver: supportedFSManifestResolver("https://fs.test")}).DryRunDeleteFileSystem(context.Background(), "tdc fs delete-file-system", DeleteFileSystemOptions{
 		Profile:        profile,
 		FileSystemName: "workspace",

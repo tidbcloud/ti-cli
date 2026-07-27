@@ -2,6 +2,8 @@
 
 This spec supersedes the 1:1 profile storage and flat `fs_*` credential rules in completed specs 0009 and 0015.
 
+The persistent default-resource and unique-resource fallback rules in this completed spec are superseded by `docs/spec/done/0020-explicit-file-system-selection.md`. The 1:N registry and per-resource credential layout remain valid.
+
 ## Goal
 
 Allow one tdc profile to manage multiple tdc fs resources. A profile represents TiDB Cloud identity and default placement, while a file system resource represents a workspace. The user should not need to create one tdc profile per workspace.

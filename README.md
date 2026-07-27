@@ -122,12 +122,14 @@ tdc fs mount-file-system --file-system-name my-workspace --mount-path ~/my-works
 
 Automatic mounting uses FUSE on Linux and WebDAV on macOS and Windows. macOS users can install macFUSE and explicitly add `--driver fuse` for the full FUSE experience.
 
-One profile can manage multiple file systems. The first created file system becomes the profile default; later resources can be selected explicitly or made the default:
+One profile can manage multiple file systems. tdc never infers which resource a command targets, so provide `--file-system-name` for one-off commands or set `TDC_FS_FILE_SYSTEM_NAME` for repeated commands:
 
 ```shell
 tdc fs create-file-system --file-system-name scratch
 tdc fs list-file-systems
 tdc fs describe-file-system --file-system-name scratch
+export TDC_FS_FILE_SYSTEM_NAME=scratch
+tdc fs list-files
 ```
 
 `create-file-system` returns an file system token (`fs_token`) in its JSON result. This is the file system owner credential and should be handled as a secret. A configured machine can provision a file system and capture the token without printing the full result:
@@ -181,8 +183,6 @@ tdc fs create-file-system
 tdc fs delete-file-system
 tdc fs list-file-systems
 tdc fs describe-file-system
-tdc fs set-default-file-system
-tdc fs unset-default-file-system
 tdc fs check-file-system
 tdc fs copy-file
 tdc fs read-file

@@ -30,7 +30,6 @@ type Resource struct {
 	RegionCode    string `json:"region_code,omitempty" toml:"region_code"`
 	CreatedAt     string `json:"created_at,omitempty" toml:"created_at,omitempty"`
 	HasAPIKey     bool   `json:"has_api_key" toml:"-"`
-	IsDefault     bool   `json:"is_default" toml:"-"`
 	APIKey        string `json:"-" toml:"-"`
 }
 
@@ -39,9 +38,8 @@ type credentials struct {
 }
 
 type ListResult struct {
-	Profile               string     `json:"profile"`
-	DefaultFileSystemName string     `json:"default_file_system_name,omitempty"`
-	FileSystems           []Resource `json:"file_systems"`
+	Profile     string     `json:"profile"`
+	FileSystems []Resource `json:"file_systems"`
 }
 
 type RegistryPaths struct {
@@ -70,12 +68,11 @@ func FromProfile(profile *config.Profile) Resource {
 		CloudProvider: profile.FSCloudProvider,
 		RegionCode:    profile.FSPlacementRegionCode,
 		HasAPIKey:     strings.TrimSpace(profile.FSAPIKey) != "",
-		IsDefault:     profile.FSResourceName != "" && profile.FSResourceName == profile.FSDefaultFileSystemName,
 		APIKey:        profile.FSAPIKey,
 	}
 }
 
-func Store(homeDir string, profile *config.Profile, resourceName, tenantID, cloudProvider, regionCode, apiKey string, setDefault bool) error {
+func Store(homeDir string, profile *config.Profile, resourceName, tenantID, cloudProvider, regionCode, apiKey string) error {
 	if profile == nil {
 		return apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
@@ -96,9 +93,6 @@ func Store(homeDir string, profile *config.Profile, resourceName, tenantID, clou
 	if existing, err := Get(homeDir, profile.Name, resourceName); err == nil {
 		if existing.TenantID != strings.TrimSpace(tenantID) || existing.APIKey != strings.TrimSpace(apiKey) {
 			return resourceError("fs.resource_name_conflict", profile.Name, resourceName, "a different local tdc fs resource already uses this name")
-		}
-		if setDefault {
-			return store.SetFSDefaultFileSystem(homeDir, profile.Name, resourceName)
 		}
 		return nil
 	} else if apperr.CodeFor(err) != "fs.resource_not_found" {
@@ -125,17 +119,10 @@ func Store(homeDir string, profile *config.Profile, resourceName, tenantID, clou
 		_ = os.Remove(filepath.Join(dir, configFileName))
 		return err
 	}
-	resources, err := List(homeDir, profile.Name, profile.FSDefaultFileSystemName)
-	if err != nil {
-		return err
-	}
-	if setDefault || len(resources) == 1 {
-		return store.SetFSDefaultFileSystem(homeDir, profile.Name, resourceName)
-	}
 	return nil
 }
 
-func List(homeDir, profileName, defaultName string) ([]Resource, error) {
+func List(homeDir, profileName string) ([]Resource, error) {
 	dir := profileDir(homeDir, profileName)
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
@@ -160,7 +147,6 @@ func List(homeDir, profileName, defaultName string) ([]Resource, error) {
 			}
 			return nil, err
 		}
-		resource.IsDefault = resource.Name == strings.TrimSpace(defaultName)
 		resources = append(resources, resource)
 	}
 	sort.Slice(resources, func(i, j int) bool { return resources[i].Name < resources[j].Name })
@@ -192,16 +178,6 @@ func ResolveAuthenticated(homeDir string, profile *config.Profile, opts ResolveA
 	if profile == nil {
 		return nil, Resource{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
-	if opts.DryRun {
-		if err := validateLegacy(profile); err != nil {
-			return nil, Resource{}, err
-		}
-	} else {
-		if err := MigrateLegacy(homeDir, profile); err != nil {
-			return nil, Resource{}, err
-		}
-	}
-
 	name := strings.TrimSpace(opts.Selector)
 	if opts.SelectorExplicit && name == "" {
 		return nil, Resource{}, apperr.New("fs.empty_file_system_name", "usage", 2, "--file-system-name cannot be empty")
@@ -209,51 +185,16 @@ func ResolveAuthenticated(homeDir string, profile *config.Profile, opts ResolveA
 	if name == "" {
 		name = strings.TrimSpace(fsEnvValue(opts.Env, "TDC_FS_FILE_SYSTEM_NAME"))
 	}
-	resources, err := List(homeDir, profile.Name, profile.FSDefaultFileSystemName)
-	if err != nil {
-		return nil, Resource{}, err
-	}
-	if opts.DryRun {
-		legacy := legacyResource(profile)
-		if legacy.Name != "" {
-			found := false
-			for _, resource := range resources {
-				if resource.Name == legacy.Name {
-					found = true
-					break
-				}
-			}
-			if !found {
-				resources = append(resources, legacy)
-				sort.Slice(resources, func(i, j int) bool { return resources[i].Name < resources[j].Name })
-			}
-		}
-	}
 	if name == "" {
-		name = strings.TrimSpace(profile.FSDefaultFileSystemName)
-	}
-	if name == "" && len(resources) == 1 {
-		name = resources[0].Name
-	}
-	if name == "" {
-		if len(resources) > 1 {
-			names := make([]string, 0, len(resources))
-			for _, resource := range resources {
-				names = append(names, resource.Name)
-			}
-			return nil, Resource{}, resourceError("fs.resource_ambiguous", profile.Name, "", fmt.Sprintf("multiple tdc fs resources are configured; pass --file-system-name, set TDC_FS_FILE_SYSTEM_NAME, or set a default. Available: %s", strings.Join(names, ", ")))
-		}
-		return nil, Resource{}, apperr.New("fs.missing_file_system_name", "usage", 2, "file system name is required; pass --file-system-name, set TDC_FS_FILE_SYSTEM_NAME, or configure one local default resource")
+		return nil, Resource{}, missingFileSystemName()
 	}
 
-	resource := Resource{Name: name}
-	found := false
-	for _, candidate := range resources {
-		if candidate.Name == name {
-			resource = candidate
-			found = true
-			break
+	if opts.DryRun {
+		if err := validateLegacy(profile); err != nil {
+			return nil, Resource{}, err
 		}
+	} else if err := MigrateLegacy(homeDir, profile); err != nil {
+		return nil, Resource{}, err
 	}
 
 	token := strings.TrimSpace(opts.Token)
@@ -262,6 +203,26 @@ func ResolveAuthenticated(homeDir string, profile *config.Profile, opts ResolveA
 	}
 	if token == "" {
 		token = strings.TrimSpace(fsEnvValue(opts.Env, "TDC_FS_TOKEN"))
+	}
+
+	resource, resourceErr := Get(homeDir, profile.Name, name)
+	found := resourceErr == nil
+	if resourceErr != nil && opts.DryRun {
+		legacy := legacyResource(profile)
+		if legacy.Name == name {
+			resource = legacy
+			resourceErr = nil
+			found = true
+		}
+	}
+	if resourceErr != nil {
+		if apperr.CodeFor(resourceErr) != "fs.resource_not_found" {
+			return nil, Resource{}, resourceErr
+		}
+		if token == "" && opts.TokenRequired {
+			return nil, Resource{}, resourceErr
+		}
+		resource = Resource{Name: name}
 	}
 	if token == "" && found {
 		token = strings.TrimSpace(resource.APIKey)
@@ -289,7 +250,6 @@ func ResolveAuthenticated(homeDir string, profile *config.Profile, opts ResolveA
 	resource.CloudProvider = placement.Provider
 	resource.APIKey = token
 	resource.HasAPIKey = token != ""
-	resource.IsDefault = resource.Name == profile.FSDefaultFileSystemName
 	selected := *profile
 	selected.FSResourceName = resource.Name
 	selected.FSTenantID = resource.TenantID
@@ -304,13 +264,6 @@ func resolve(homeDir string, profile *config.Profile, selector string, selectorE
 	if profile == nil {
 		return nil, Resource{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
-	if migrate {
-		if err := MigrateLegacy(homeDir, profile); err != nil {
-			return nil, Resource{}, err
-		}
-	} else if err := validateLegacy(profile); err != nil {
-		return nil, Resource{}, err
-	}
 	name := strings.TrimSpace(selector)
 	if selectorExplicit && name == "" {
 		return nil, Resource{}, apperr.New("fs.empty_file_system_name", "usage", 2, "--file-system-name cannot be empty")
@@ -322,51 +275,27 @@ func resolve(homeDir string, profile *config.Profile, selector string, selectorE
 			name = strings.TrimSpace(os.Getenv("TDC_FS_FILE_SYSTEM_NAME"))
 		}
 	}
-	resources, err := List(homeDir, profile.Name, profile.FSDefaultFileSystemName)
+	if name == "" {
+		return nil, Resource{}, missingFileSystemName()
+	}
+	if migrate {
+		if err := MigrateLegacy(homeDir, profile); err != nil {
+			return nil, Resource{}, err
+		}
+	} else if err := validateLegacy(profile); err != nil {
+		return nil, Resource{}, err
+	}
+	resource, err := Get(homeDir, profile.Name, name)
+	if err != nil && !migrate {
+		legacy := legacyResource(profile)
+		if legacy.Name == name {
+			resource = legacy
+			err = nil
+		}
+	}
 	if err != nil {
 		return nil, Resource{}, err
 	}
-	legacy := legacyResource(profile)
-	if !migrate && legacy.Name != "" {
-		found := false
-		for _, resource := range resources {
-			if resource.Name == legacy.Name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			resources = append(resources, legacy)
-			sort.Slice(resources, func(i, j int) bool { return resources[i].Name < resources[j].Name })
-		}
-	}
-	if name == "" {
-		name = strings.TrimSpace(profile.FSDefaultFileSystemName)
-	}
-	if name == "" && len(resources) == 1 {
-		name = resources[0].Name
-	}
-	if name == "" && len(resources) == 0 {
-		return nil, Resource{}, resourceError("fs.resource_not_configured", profile.Name, "", "tdc fs is not configured; run `tdc fs create-file-system --file-system-name <name>` first")
-	}
-	if name == "" {
-		names := make([]string, 0, len(resources))
-		for _, resource := range resources {
-			names = append(names, resource.Name)
-		}
-		return nil, Resource{}, resourceError("fs.resource_ambiguous", profile.Name, "", fmt.Sprintf("multiple tdc fs resources are configured; pass --file-system-name or set a default. Available: %s", strings.Join(names, ", ")))
-	}
-	var resource Resource
-	for _, candidate := range resources {
-		if candidate.Name == name {
-			resource = candidate
-			break
-		}
-	}
-	if resource.Name == "" {
-		return nil, Resource{}, resourceError("fs.resource_not_found", profile.Name, name, "tdc fs resource is not configured")
-	}
-	resource.IsDefault = resource.Name == profile.FSDefaultFileSystemName
 	selected := *profile
 	selected.FSResourceName = resource.Name
 	selected.FSTenantID = resource.TenantID
@@ -379,6 +308,10 @@ func resolve(homeDir string, profile *config.Profile, selector string, selectorE
 	selected.FSRegionCode = placement.NativeCode
 	selected.FSAPIKey = resource.APIKey
 	return &selected, resource, nil
+}
+
+func missingFileSystemName() error {
+	return apperr.New("fs.missing_file_system_name", "usage", 2, "file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
 }
 
 func fsEnvValue(env map[string]string, key string) string {
@@ -402,33 +335,15 @@ func Delete(homeDir string, profile *config.Profile, resourceName string) error 
 	if err := os.RemoveAll(dir); err != nil {
 		return fmt.Errorf("delete local tdc fs resource %q: %w", resourceName, err)
 	}
-	defaultName := profile.FSDefaultFileSystemName
-	if defaultName == resourceName {
-		defaultName = ""
-	}
-	resources, err := List(homeDir, profile.Name, defaultName)
-	if err != nil {
-		return err
-	}
-	if defaultName == "" && len(resources) == 1 {
-		defaultName = resources[0].Name
-	}
-	return store.SetFSDefaultFileSystem(homeDir, profile.Name, defaultName)
-}
-
-func SetDefault(homeDir string, profile *config.Profile, resourceName string) error {
-	if profile == nil {
-		return apperr.New("fs.missing_profile", "config", 2, "active profile is required")
-	}
-	if _, err := Get(homeDir, profile.Name, resourceName); err != nil {
-		return err
-	}
-	return store.SetFSDefaultFileSystem(homeDir, profile.Name, resourceName)
+	return nil
 }
 
 func MigrateLegacy(homeDir string, profile *config.Profile) error {
 	if profile == nil {
 		return nil
+	}
+	if _, err := store.RemoveLegacyFSDefaultFileSystem(homeDir, profile.Name); err != nil {
+		return apperr.Wrap("fs.resource_migration_failed", "config", 1, "remove legacy default file system", err)
 	}
 	hasConfig := strings.TrimSpace(profile.FSResourceName) != "" || strings.TrimSpace(profile.FSTenantID) != "" || strings.TrimSpace(profile.FSPlacementRegionCode) != ""
 	hasCreds := strings.TrimSpace(profile.FSAPIKey) != ""
@@ -447,15 +362,12 @@ func MigrateLegacy(homeDir string, profile *config.Profile) error {
 		if apperr.CodeFor(err) != "fs.resource_not_found" {
 			return apperr.Wrap("fs.resource_migration_failed", "config", 1, err.Error(), err)
 		}
-		if err := Store(homeDir, profile, profile.FSResourceName, profile.FSTenantID, profile.FSCloudProvider, profile.FSPlacementRegionCode, profile.FSAPIKey, profile.FSDefaultFileSystemName == ""); err != nil {
+		if err := Store(homeDir, profile, profile.FSResourceName, profile.FSTenantID, profile.FSCloudProvider, profile.FSPlacementRegionCode, profile.FSAPIKey); err != nil {
 			return apperr.Wrap("fs.resource_migration_failed", "config", 1, err.Error(), err)
 		}
 	}
 	if err := store.ClearFSResource(homeDir, profile.Name); err != nil {
 		return apperr.Wrap("fs.resource_migration_failed", "config", 1, "clear migrated flat tdc fs credentials", err)
-	}
-	if profile.FSDefaultFileSystemName == "" {
-		profile.FSDefaultFileSystemName = profile.FSResourceName
 	}
 	profile.FSResourceName = ""
 	profile.FSTenantID = ""
