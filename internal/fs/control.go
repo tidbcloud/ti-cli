@@ -17,7 +17,6 @@ import (
 	"github.com/tidbcloud/tdc/internal/auth"
 	"github.com/tidbcloud/tdc/internal/authz"
 	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/store"
 	"github.com/tidbcloud/tdc/internal/dryrun"
 	"github.com/tidbcloud/tdc/internal/fs/fscred"
 )
@@ -42,7 +41,6 @@ type Service struct {
 type CreateFileSystemOptions struct {
 	Profile        *config.Profile
 	FileSystemName string
-	SetDefault     bool
 	WaitUntilReady bool
 }
 
@@ -59,12 +57,6 @@ type DescribeFileSystemResult struct {
 	Profile string `json:"profile"`
 	fscred.Resource
 	Drive9Home string `json:"drive9_home"`
-}
-
-type DefaultFileSystemResult struct {
-	Profile               string `json:"profile"`
-	DefaultFileSystemName string `json:"default_file_system_name,omitempty"`
-	Status                string `json:"status"`
 }
 
 type FileSystemResult struct {
@@ -120,11 +112,11 @@ func (s Service) ListFileSystems(_ context.Context, profile *config.Profile) (fs
 	if err := fscred.MigrateLegacy(homeDir, profile); err != nil {
 		return fscred.ListResult{}, err
 	}
-	resources, err := fscred.List(homeDir, profileName(profile), profile.FSDefaultFileSystemName)
+	resources, err := fscred.List(homeDir, profileName(profile))
 	if err != nil {
 		return fscred.ListResult{}, err
 	}
-	return fscred.ListResult{Profile: profileName(profile), DefaultFileSystemName: profile.FSDefaultFileSystemName, FileSystems: resources}, nil
+	return fscred.ListResult{Profile: profileName(profile), FileSystems: resources}, nil
 }
 
 func (s Service) DescribeFileSystem(_ context.Context, profile *config.Profile) (DescribeFileSystemResult, error) {
@@ -138,31 +130,6 @@ func (s Service) DescribeFileSystem(_ context.Context, profile *config.Profile) 
 		return DescribeFileSystemResult{}, err
 	}
 	return DescribeFileSystemResult{Profile: profileName(profile), Resource: resource, Drive9Home: drive9Home}, nil
-}
-
-func (s Service) SetDefaultFileSystem(_ context.Context, profile *config.Profile) (DefaultFileSystemResult, error) {
-	homeDir, err := s.homeDir()
-	if err != nil {
-		return DefaultFileSystemResult{}, err
-	}
-	if err := fscred.SetDefault(homeDir, profile, profile.FSResourceName); err != nil {
-		return DefaultFileSystemResult{}, err
-	}
-	return DefaultFileSystemResult{Profile: profileName(profile), DefaultFileSystemName: profile.FSResourceName, Status: "updated"}, nil
-}
-
-func (s Service) UnsetDefaultFileSystem(_ context.Context, profile *config.Profile) (DefaultFileSystemResult, error) {
-	homeDir, err := s.homeDir()
-	if err != nil {
-		return DefaultFileSystemResult{}, err
-	}
-	if err := fscred.MigrateLegacy(homeDir, profile); err != nil {
-		return DefaultFileSystemResult{}, err
-	}
-	if err := store.SetFSDefaultFileSystem(homeDir, profileName(profile), ""); err != nil {
-		return DefaultFileSystemResult{}, err
-	}
-	return DefaultFileSystemResult{Profile: profileName(profile), Status: "updated"}, nil
 }
 
 func (s Service) DryRunCreateFileSystem(ctx context.Context, commandPath string, opts CreateFileSystemOptions) (dryrun.Result, error) {

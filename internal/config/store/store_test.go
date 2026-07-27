@@ -120,7 +120,7 @@ max_files = 2
 	}
 }
 
-func TestSetFSDefaultFileSystemPreservesLoggingConfig(t *testing.T) {
+func TestRemoveLegacyFSDefaultFileSystemPreservesConfig(t *testing.T) {
 	home := t.TempDir()
 	tdcDir := filepath.Join(home, TDCDirName)
 	if err := os.MkdirAll(tdcDir, 0o700); err != nil {
@@ -129,6 +129,12 @@ func TestSetFSDefaultFileSystemPreservesLoggingConfig(t *testing.T) {
 	if err := os.WriteFile(ConfigPath(home), []byte(`
 [default]
 region_code = "aws-us-east-1"
+project_id = "project-1"
+fs_default_file_system_name = "workspace"
+
+[stage]
+region_code = "aws-us-west-2"
+fs_default_file_system_name = "scratch"
 
 [logging]
 enabled = false
@@ -137,29 +143,40 @@ max_files = 2
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := SetFSDefaultFileSystem(home, "default", "workspace"); err != nil {
-		t.Fatalf("set default: %v", err)
+	changed, err := RemoveLegacyFSDefaultFileSystem(home, "default")
+	if err != nil {
+		t.Fatalf("remove legacy default: %v", err)
+	}
+	if !changed {
+		t.Fatal("expected legacy default removal")
 	}
 	configDoc, err := ReadConfig(home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := configDoc["default"].FSDefaultFileSystemName; got != "workspace" {
-		t.Fatalf("default = %q, want workspace", got)
+	if got := configDoc["default"]; got.RegionCode != "aws-us-east-1" || got.ProjectID != "project-1" {
+		t.Fatalf("default profile changed: %#v", got)
+	}
+	data, err := os.ReadFile(ConfigPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "[default]\nfs_default_file_system_name") || strings.Contains(string(data), "project_id = 'project-1'\nfs_default_file_system_name") {
+		t.Fatalf("default profile legacy key remains: %s", data)
+	}
+	if !strings.Contains(string(data), "fs_default_file_system_name = 'scratch'") {
+		t.Fatalf("unselected profile legacy key changed: %s", data)
 	}
 	logging, ok, err := ReadLoggingConfig(home)
 	if err != nil || !ok || logging.Enabled == nil || *logging.Enabled || logging.MaxFileMB != 3 || logging.MaxFiles != 2 {
 		t.Fatalf("logging config was not preserved: ok=%v logging=%#v err=%v", ok, logging, err)
 	}
-	if err := SetFSDefaultFileSystem(home, "default", ""); err != nil {
-		t.Fatalf("unset default: %v", err)
-	}
-	configDoc, err = ReadConfig(home)
+	changed, err = RemoveLegacyFSDefaultFileSystem(home, "default")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("repeat removal: %v", err)
 	}
-	if got := configDoc["default"].FSDefaultFileSystemName; got != "" {
-		t.Fatalf("default = %q, want empty", got)
+	if changed {
+		t.Fatal("repeated legacy removal should be a no-op")
 	}
 }
 

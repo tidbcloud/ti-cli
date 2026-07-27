@@ -87,12 +87,9 @@ func TestLiveFSResourceRegistryLifecycle(t *testing.T) {
 
 	bin := tdcBinary(t)
 	profileName := liveProfileName(t)
-	profile := liveProfile(t)
-	originalDefault := profile.FSDefaultFileSystemName
 	suffix := fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102150405"), os.Getpid())
 	names := []string{"tdc-e2e-fs-" + suffix + "-a", "tdc-e2e-fs-" + suffix + "-b"}
 	created := make(map[string]bool, len(names))
-	stateMutated := false
 	defer func() {
 		for i := len(names) - 1; i >= 0; i-- {
 			name := names[i]
@@ -103,9 +100,6 @@ func TestLiveFSResourceRegistryLifecycle(t *testing.T) {
 			if result.exitCode != 0 {
 				t.Logf("cleanup delete failed for tdc fs resource %q: exit=%d stdout=%s stderr=%s", name, result.exitCode, result.stdout, result.stderr)
 			}
-		}
-		if stateMutated {
-			restoreLiveFSDefault(t, bin, profileName, originalDefault)
 		}
 	}()
 
@@ -128,7 +122,6 @@ func TestLiveFSResourceRegistryLifecycle(t *testing.T) {
 			create.fail("generated live tdc fs resource name already existed; refusing to delete a resource not created by this test")
 		}
 		created[name] = true
-		stateMutated = true
 		create.wantStdoutContains(`"credentials_stored": true`)
 		create.wantStdoutContains(`"status": "ready"`)
 	}
@@ -138,12 +131,15 @@ func TestLiveFSResourceRegistryLifecycle(t *testing.T) {
 	for _, name := range names {
 		list.wantStdoutContains(`"file_system_name": "` + name + `"`)
 	}
+	list.wantStdoutNotContains("default_file_system_name")
+	list.wantStdoutNotContains("is_default")
 
-	setDefault := runTDC(t, bin, "--profile", profileName, "fs", "set-default-file-system", "--file-system-name", names[0])
-	setDefault.wantExitCode(0)
-	defaultCheck := runTDC(t, bin, "--profile", profileName, "fs", "check-file-system")
-	defaultCheck.wantExitCode(0)
-	defaultCheck.wantStdoutContains(`"file_system_name": "` + names[0] + `"`)
+	missingSelector := runTDCWithInput(t, bin, "", []string{"TDC_FS_FILE_SYSTEM_NAME="}, "--profile", profileName, "fs", "check-file-system")
+	missingSelector.wantExitCode(2)
+	missingSelector.wantStderrContains("file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
+	environmentCheck := runTDCWithInput(t, bin, "", []string{"TDC_FS_FILE_SYSTEM_NAME=" + names[0]}, "--profile", profileName, "fs", "check-file-system")
+	environmentCheck.wantExitCode(0)
+	environmentCheck.wantStdoutContains(`"file_system_name": "` + names[0] + `"`)
 	explicitCheck := runTDC(t, bin, "--profile", profileName, "fs", "check-file-system", "--file-system-name", names[1])
 	explicitCheck.wantExitCode(0)
 	explicitCheck.wantStdoutContains(`"file_system_name": "` + names[1] + `"`)
@@ -274,8 +270,7 @@ func TestLiveFSCommandSurface(t *testing.T) {
 	testLiveHelpCommands(t, bin, [][]string{
 		{"fs", "help"},
 		{"fs", "create-file-system", "help"}, {"fs", "list-file-systems", "help"},
-		{"fs", "describe-file-system", "help"}, {"fs", "set-default-file-system", "help"},
-		{"fs", "unset-default-file-system", "help"}, {"fs", "copy-file", "help"},
+		{"fs", "describe-file-system", "help"}, {"fs", "copy-file", "help"},
 		{"fs", "read-file", "help"}, {"fs", "chmod-file", "help"},
 		{"fs", "create-symlink", "help"}, {"fs", "create-hardlink", "help"},
 		{"fs", "create-layer", "help"}, {"fs", "list-layers", "help"},
@@ -314,12 +309,12 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "create-hardlink", "--source-path", "/workspace/source.txt", "--link-path", "/workspace/hard.txt"},
 	}, "request_construction")
 	for _, args := range [][]string{
-		{"fs", "set-default-file-system", "--file-system-name", fileSystemName},
+		{"fs", "set-default-file-system"},
 		{"fs", "unset-default-file-system"},
+		{"fs", "create-file-system", "--file-system-name", "removed-flag", "--set-default"},
 	} {
-		result := runTDC(t, bin, append(append([]string{"--profile", profileName}, args...), "--dry-run")...)
-		result.wantExitCode(0)
-		result.wantStdoutContains(`"local_resource_registry"`)
+		result := runTDC(t, bin, append([]string{"--profile", profileName}, args...)...)
+		result.wantExitCode(2)
 	}
 	testLiveReadOnlyDryRunRejections(t, bin, profileName, [][]string{
 		{"fs", "check-file-system"}, {"fs", "list-file-systems"}, {"fs", "describe-file-system"},
@@ -514,19 +509,6 @@ func isLiveFSQuotaError(message string) bool {
 	message = strings.ToLower(message)
 	return strings.Contains(message, "maximum number of free clusters") ||
 		strings.Contains(message, "quota or capacity limit")
-}
-
-func restoreLiveFSDefault(t *testing.T, bin, profileName, originalDefault string) {
-	t.Helper()
-	var result commandResult
-	if originalDefault == "" {
-		result = runTDC(t, bin, "--profile", profileName, "fs", "unset-default-file-system")
-	} else {
-		result = runTDC(t, bin, "--profile", profileName, "fs", "set-default-file-system", "--file-system-name", originalDefault)
-	}
-	if result.exitCode != 0 {
-		t.Logf("restore tdc fs default failed for profile %q: exit=%d stdout=%s stderr=%s", profileName, result.exitCode, result.stdout, result.stderr)
-	}
 }
 
 func TestLiveFSDataPlaneLifecycle(t *testing.T) {

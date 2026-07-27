@@ -367,12 +367,18 @@ func TestFSResourceRegistrySelectionAcrossCommandFamilies(t *testing.T) {
 		"TDC_PRIVATE_KEY=e2e-private",
 	), "configure", "--profile", "stage", "--non-interactive")
 	configured.wantExitCode(0)
+	missingWithZeroResources := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
+	missingWithZeroResources.wantExitCode(2)
+	missingWithZeroResources.wantStderrContains("file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
 
 	createWorkspace := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-file-system", "--file-system-name", "workspace", "--wait")
 	createWorkspace.wantExitCode(0)
 	createWorkspace.wantStdoutContains(`"status": "ready"`)
 	createWorkspace.wantStdoutContains(`"credentials_stored": true`)
 	createWorkspace.wantStdoutContains(`"fs_token": "key-workspace"`)
+	missingWithOneResource := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
+	missingWithOneResource.wantExitCode(2)
+	missingWithOneResource.wantStderrContains("file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
 	createScratch := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "create-file-system", "--file-system-name", "scratch", "--wait")
 	createScratch.wantExitCode(0)
 	createScratch.wantStdoutContains(`"status": "ready"`)
@@ -384,36 +390,30 @@ func TestFSResourceRegistrySelectionAcrossCommandFamilies(t *testing.T) {
 	list.wantStdoutContains(`"file_system_name": "scratch"`)
 	list.wantStdoutNotContains("key-workspace")
 	list.wantStdoutNotContains("key-scratch")
+	list.wantStdoutNotContains("default_file_system_name")
+	list.wantStdoutNotContains("is_default")
 	describe := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "describe-file-system", "--file-system-name", "scratch")
 	describe.wantExitCode(0)
 	describe.wantStdoutContains(`"tenant_id": "tenant-scratch"`)
 	describe.wantStdoutContains(`"region_code": "aws-us-west-2"`)
 	describe.wantStdoutNotContains("key-scratch")
-	setDefault := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "set-default-file-system", "--file-system-name", "scratch")
-	setDefault.wantExitCode(0)
-	setDefault.wantStdoutContains(`"default_file_system_name": "scratch"`)
-	selectedDefault := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
-	selectedDefault.wantExitCode(0)
-
-	unset := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "unset-default-file-system")
-	unset.wantExitCode(0)
-	callsBeforeAmbiguousCommands := len(readFakeDrive9Calls(t, recordPath))
+	callsBeforeMissingSelectorCommands := len(readFakeDrive9Calls(t, recordPath))
 	for _, args := range [][]string{
 		{"fs", "list-files", "--path", "/"},
 		{"fs-vault", "list-secrets"},
 		{"fs-journal", "read-journal-entries", "--journal-id", "jrn-e2e"},
 		{"fs-git", "hydrate-git-workspace", "--target-path", filepath.Join(home, "ambiguous-workspace")},
 	} {
-		ambiguous := runTDCWithInput(t, bin, "", baseEnv, append([]string{"--profile", "stage"}, args...)...)
-		ambiguous.wantExitCode(2)
-		ambiguous.wantStderrContains("multiple tdc fs resources are configured")
+		missing := runTDCWithInput(t, bin, "", baseEnv, append([]string{"--profile", "stage"}, args...)...)
+		missing.wantExitCode(2)
+		missing.wantStderrContains("file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
 	}
-	if calls := readFakeDrive9Calls(t, recordPath); len(calls) != callsBeforeAmbiguousCommands {
-		t.Fatalf("ambiguous resource selection must fail before invoking Drive9: calls before=%d after=%d", callsBeforeAmbiguousCommands, len(calls))
+	if calls := readFakeDrive9Calls(t, recordPath); len(calls) != callsBeforeMissingSelectorCommands {
+		t.Fatalf("missing resource selection must fail before invoking Drive9: calls before=%d after=%d", callsBeforeMissingSelectorCommands, len(calls))
 	}
-	ambiguousDryRun := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-directory", "--path", "/tmp", "--dry-run")
-	ambiguousDryRun.wantExitCode(2)
-	ambiguousDryRun.wantStderrContains("multiple tdc fs resources are configured")
+	missingDryRun := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-directory", "--path", "/tmp", "--dry-run")
+	missingDryRun.wantExitCode(2)
+	missingDryRun.wantStderrContains("file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
 
 	dataPlane := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--file-system-name", "scratch", "--path", "/")
 	dataPlane.wantExitCode(0)
@@ -442,7 +442,19 @@ func TestFSResourceRegistrySelectionAcrossCommandFamilies(t *testing.T) {
 	afterDelete.wantExitCode(0)
 	afterDelete.wantStdoutContains(`"file_system_name": "workspace"`)
 	afterDelete.wantStdoutNotContains(`"file_system_name": "scratch"`)
+	stillMissingAfterDelete := runTDCWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
+	stillMissingAfterDelete.wantExitCode(2)
+	stillMissingAfterDelete.wantStderrContains("file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
 	assertFakeDrive9Call(t, readFakeDrive9Calls(t, recordPath), []string{"delete", "--json", "--yes"}, "key-scratch", home, "stage", "scratch", "https://fs-west.test", "aws-us-west-2")
+
+	for _, args := range [][]string{
+		{"--profile", "stage", "fs", "set-default-file-system"},
+		{"--profile", "stage", "fs", "unset-default-file-system"},
+		{"--profile", "stage", "fs", "create-file-system", "--file-system-name", "removed-flag", "--set-default"},
+	} {
+		removed := runTDCWithInput(t, bin, "", baseEnv, args...)
+		removed.wantExitCode(2)
+	}
 }
 
 func TestFSConfigurationFreeAccess(t *testing.T) {
@@ -698,8 +710,25 @@ func runTDC(t *testing.T, bin string, args ...string) commandResult {
 	return runTDCWithInput(t, bin, "", nil, args...)
 }
 
+func hasLiveFSCommandFamily(args []string) bool {
+	for _, arg := range args {
+		switch arg {
+		case "fs", "fs-git", "fs-journal", "fs-vault":
+			return true
+		}
+	}
+	return false
+}
+
 func runTDCWithInput(t *testing.T, bin, stdin string, env []string, args ...string) commandResult {
 	t.Helper()
+	if os.Getenv("TDC_LIVE") == "1" && hasLiveFSCommandFamily(args) && !envContains(env, "TDC_FS_FILE_SYSTEM_NAME") {
+		name := strings.TrimSpace(os.Getenv("TDC_LIVE_FS_NAME"))
+		if name == "" {
+			name = "workspace"
+		}
+		env = append(env, "TDC_FS_FILE_SYSTEM_NAME="+name)
+	}
 
 	cmd := exec.Command(bin, args...)
 	var stdout bytes.Buffer

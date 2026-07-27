@@ -160,11 +160,6 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 		return FileSystemResult{}, err
 	}
 	if existing, getErr := fscred.Get(homeDir, opts.Profile.Name, name); getErr == nil {
-		if opts.SetDefault {
-			if err := fscred.SetDefault(homeDir, opts.Profile, name); err != nil {
-				return FileSystemResult{}, err
-			}
-		}
 		fileSystem := FileSystemResult{
 			FileSystemName:    existing.Name,
 			TenantID:          existing.TenantID,
@@ -215,7 +210,7 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 	if regionCode == "" {
 		regionCode = opts.Profile.PlacementRegionCode
 	}
-	if err := fscred.Store(homeDir, opts.Profile, name, out.TenantID, cloudProvider, regionCode, out.APIKey, opts.SetDefault); err != nil {
+	if err := fscred.Store(homeDir, opts.Profile, name, out.TenantID, cloudProvider, regionCode, out.APIKey); err != nil {
 		return FileSystemResult{}, err
 	}
 	fileSystem := FileSystemResult{

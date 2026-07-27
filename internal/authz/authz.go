@@ -62,8 +62,6 @@ var commandPermissions = map[string]Permission{
 	"tdc fs delete-file-system":             FSVolumeDelete,
 	"tdc fs list-file-systems":              FSVolumeRead,
 	"tdc fs describe-file-system":           FSVolumeRead,
-	"tdc fs set-default-file-system":        FSVolumeRead,
-	"tdc fs unset-default-file-system":      FSVolumeRead,
 	"tdc fs check-file-system":              FSVolumeRead,
 	"tdc fs copy-file":                      FSFileWrite,
 	"tdc fs read-file":                      FSFileRead,

@@ -22,14 +22,13 @@ const (
 type ConfigDocument map[string]ConfigProfile
 
 type ConfigProfile struct {
-	CloudProvider           string `toml:"cloud_provider,omitempty"`
-	RegionCode              string `toml:"region_code,omitempty"`
-	ProjectID               string `toml:"project_id,omitempty"`
-	FSDefaultFileSystemName string `toml:"fs_default_file_system_name,omitempty"`
-	FSResourceName          string `toml:"fs_resource_name,omitempty"`
-	FSTenantID              string `toml:"fs_tenant_id,omitempty"`
-	FSCloudProvider         string `toml:"fs_cloud_provider,omitempty"`
-	FSRegionCode            string `toml:"fs_region_code,omitempty"`
+	CloudProvider   string `toml:"cloud_provider,omitempty"`
+	RegionCode      string `toml:"region_code,omitempty"`
+	ProjectID       string `toml:"project_id,omitempty"`
+	FSResourceName  string `toml:"fs_resource_name,omitempty"`
+	FSTenantID      string `toml:"fs_tenant_id,omitempty"`
+	FSCloudProvider string `toml:"fs_cloud_provider,omitempty"`
+	FSRegionCode    string `toml:"fs_region_code,omitempty"`
 }
 
 type LoggingConfig struct {
@@ -178,9 +177,6 @@ func WriteProfile(homeDir, profileName string, cfg ConfigProfile, creds Credenti
 	if cfg.FSRegionCode != "" {
 		existingConfig.FSRegionCode = cfg.FSRegionCode
 	}
-	if cfg.FSDefaultFileSystemName != "" {
-		existingConfig.FSDefaultFileSystemName = cfg.FSDefaultFileSystemName
-	}
 	configDoc[profileName] = existingConfig
 
 	credentialsDoc, err := ReadCredentials(homeDir)
@@ -208,21 +204,38 @@ func WriteProfile(homeDir, profileName string, cfg ConfigProfile, creds Credenti
 	return nil
 }
 
-func SetFSDefaultFileSystem(homeDir, profileName, fileSystemName string) error {
+func RemoveLegacyFSDefaultFileSystem(homeDir, profileName string) (bool, error) {
 	if profileName == "" {
 		profileName = "default"
 	}
-	if err := ensureDir(homeDir); err != nil {
-		return err
+	path := ConfigPath(homeDir)
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
 	}
-	configDoc, err := ReadConfig(homeDir)
 	if err != nil {
-		return err
+		return false, fmt.Errorf("read config %s: %w", path, err)
 	}
-	profile := configDoc[profileName]
-	profile.FSDefaultFileSystemName = strings.TrimSpace(fileSystemName)
-	configDoc[profileName] = profile
-	return writeConfigTOML(homeDir, configDoc)
+	if err := rejectDisallowedKeys(data, path); err != nil {
+		return false, err
+	}
+	var doc map[string]any
+	if err := toml.Unmarshal(data, &doc); err != nil {
+		return false, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	profile, ok := doc[profileName].(map[string]any)
+	if !ok {
+		return false, nil
+	}
+	if _, ok := profile["fs_default_file_system_name"]; !ok {
+		return false, nil
+	}
+	delete(profile, "fs_default_file_system_name")
+	doc[profileName] = profile
+	if err := writeTOML(path, doc, configFileMode); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func ClearFSResource(homeDir, profileName string) error {

@@ -129,7 +129,6 @@ Example:
 [default]
 region_code = "aws-us-east-1"
 project_id = "..."
-fs_default_file_system_name = "workspace"
 
 # ~/.tdc/credentials
 [default]
@@ -144,7 +143,7 @@ One profile can own multiple Filesystem resources. Each resource has isolated me
 ~/.tdc/fs_resources/<profile-key>/<resource-key>/credentials
 ```
 
-The resource config stores `file_system_name`, `tenant_id`, `cloud_provider`, `region_code`, and `created_at`. Its credentials file stores only the owner `api_key`. The main profile stores only an optional default resource name; it never stores resource API keys.
+The resource config stores `file_system_name`, `tenant_id`, `cloud_provider`, `region_code`, and `created_at`. Its credentials file stores only the owner `api_key`. The main profile never stores a default resource name or resource API keys.
 
 Legacy flat `fs_*` fields are migration input only. A complete legacy resource is migrated into the registry and the old fields are cleared. Incomplete legacy state fails explicitly.
 
@@ -196,9 +195,9 @@ Filesystem resource selection is:
 
 1. Explicit `--file-system-name`.
 2. `TDC_FS_FILE_SYSTEM_NAME`.
-3. Profile `fs_default_file_system_name`.
-4. The only registered resource.
-5. Otherwise fail as missing or ambiguous.
+3. Otherwise fail with `fs.missing_file_system_name` before endpoint resolution, companion startup, or a remote call.
+
+tdc never infers a target from profile state, the number of registered resources, creation order, or deletion side effects. Creating the first resource does not select it for later commands, and deleting a resource does not promote another resource. `TDC_FS_FILE_SYSTEM_NAME` is an explicit process-scoped selector, not a persisted default.
 
 Remote data-plane, mount, Git, journal, and owner Vault commands select their FS token in this order:
 

@@ -433,11 +433,10 @@ func TestFSAdjunctCommandsRequireConfiguredFSResource(t *testing.T) {
 func TestFSOperationalCommandsExposeResourceSelector(t *testing.T) {
 	root := NewRootCommand(testVersion())
 	excluded := map[string]bool{
-		"tdc fs list-file-systems":         true,
-		"tdc fs unset-default-file-system": true,
-		"tdc fs drain-file-system":         true,
-		"tdc fs unmount-file-system":       true,
-		"tdc fs-vault unmount-vault":       true,
+		"tdc fs list-file-systems":   true,
+		"tdc fs drain-file-system":   true,
+		"tdc fs unmount-file-system": true,
+		"tdc fs-vault unmount-vault": true,
 	}
 	visitCommands(root, func(cmd *cobra.Command) {
 		if cmd.Name() == "help" || cmd.HasSubCommands() || excluded[cmd.CommandPath()] {
@@ -456,14 +455,12 @@ func TestFSOperationalCommandsExposeResourceSelector(t *testing.T) {
 func TestFSRemoteCommandsExposeTokenFlag(t *testing.T) {
 	root := NewRootCommand(testVersion())
 	excluded := map[string]bool{
-		"tdc fs create-file-system":        true,
-		"tdc fs list-file-systems":         true,
-		"tdc fs describe-file-system":      true,
-		"tdc fs set-default-file-system":   true,
-		"tdc fs unset-default-file-system": true,
-		"tdc fs drain-file-system":         true,
-		"tdc fs unmount-file-system":       true,
-		"tdc fs-vault unmount-vault":       true,
+		"tdc fs create-file-system":   true,
+		"tdc fs list-file-systems":    true,
+		"tdc fs describe-file-system": true,
+		"tdc fs drain-file-system":    true,
+		"tdc fs unmount-file-system":  true,
+		"tdc fs-vault unmount-vault":  true,
 	}
 	visitCommands(root, func(cmd *cobra.Command) {
 		if cmd.Name() == "help" || cmd.HasSubCommands() || excluded[cmd.CommandPath()] {
@@ -494,12 +491,28 @@ func TestFSRegistryDryRunDoesNotMigrateLegacyState(t *testing.T) {
 	}, store.CredentialsProfile{TDCPublicKey: "public", TDCPrivateKey: "private", FSAPIKey: "key-1"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := executeForTest("fs", "set-default-file-system", "--file-system-name", "workspace", "--dry-run")
+	_, _, err := executeForTest("fs", "copy-file", "--file-system-name", "workspace", "--from-remote", "/source", "--to-remote", "/target", "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(home, store.TDCDirName, "fs_resources")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run migrated legacy state: %v", err)
+	}
+}
+
+func TestFSDefaultCommandSurfaceIsRemoved(t *testing.T) {
+	for _, args := range [][]string{
+		{"fs", "set-default-file-system"},
+		{"fs", "unset-default-file-system"},
+		{"fs", "create-file-system", "--file-system-name", "workspace", "--set-default"},
+	} {
+		_, _, err := executeForTest(args...)
+		if err == nil {
+			t.Fatalf("expected removed command surface %v to fail", args)
+		}
+		if got := apperr.ExitCodeFor(err); got != 2 {
+			t.Fatalf("%v exit code = %d, want 2: %v", args, got, err)
+		}
 	}
 }
 
