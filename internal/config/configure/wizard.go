@@ -67,6 +67,9 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if opts.Profile == "" {
 		opts.Profile = config.DefaultProfile
 	}
+	if err := config.ValidateProfileName(opts.Profile); err != nil {
+		return Result{}, err
+	}
 	if opts.HomeDir == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {

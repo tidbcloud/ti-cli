@@ -242,11 +242,16 @@ Logs must never include flag values, SQL text or results, file contents, remote 
 Disable local logging for one process with `TDC_LOGGING=off`, or globally:
 
 ```toml
+# ~/.tdc/.preferences
+schema_version = 1
+
 [logging]
 enabled = false
 ```
 
-Telemetry follows the same data-minimization rule and must be explicitly disclosed after installation. It can collect command/subcommand names, flag names, error codes, duration, region, CLI version, and OS type, but never credentials or user content. Telemetry must have a documented opt-out command before collection is enabled.
+`~/.tdc/.preferences` is optional, hidden from ordinary directory listings, global across profiles, and separate from the profile-only `~/.tdc/config` and `~/.tdc/credentials` files. Missing settings use in-memory defaults without creating the file. Existing legacy `[logging]` configuration in `~/.tdc/config` is migrated atomically. `tdc update` does not read or write any state under `~/.tdc/`, including settings and operation logs.
+
+Telemetry follows the same data-minimization rule and must be explicitly disclosed after installation. It can collect command/subcommand names, flag names, error codes, duration, region, CLI version, and OS type, but never credentials or user content. Telemetry must have documented settings-file and process-scoped environment opt-outs before collection is enabled.
 
 ## Security And Engineering Constraints
 

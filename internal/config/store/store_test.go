@@ -81,42 +81,17 @@ server_url = "https://example.invalid"
 	}
 }
 
-func TestWriteProfilePreservesLoggingConfig(t *testing.T) {
+func TestWriteProfileRejectsReservedLoggingName(t *testing.T) {
 	home := t.TempDir()
-	tdcDir := filepath.Join(home, TDCDirName)
-	if err := os.MkdirAll(tdcDir, 0o700); err != nil {
-		t.Fatal(err)
+	err := WriteProfile(home, "LoGgInG", ConfigProfile{RegionCode: "aws-us-east-1"}, CredentialsProfile{TDCPublicKey: "public", TDCPrivateKey: "private"})
+	if err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("expected reserved profile error, got %v", err)
 	}
-	if err := os.WriteFile(ConfigPath(home), []byte(`
-[logging]
-enabled = false
-max_file_mb = 3
-max_files = 2
-`), 0o644); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(ConfigPath(home)); !os.IsNotExist(err) {
+		t.Fatalf("reserved profile wrote config: %v", err)
 	}
-	if err := WriteProfile(home, "default", ConfigProfile{
-		RegionCode: "aws-us-east-1",
-	}, CredentialsProfile{
-		TDCPublicKey:  "public",
-		TDCPrivateKey: "private",
-	}); err != nil {
-		t.Fatalf("WriteProfile failed: %v", err)
-	}
-
-	logging, ok, err := ReadLoggingConfig(home)
-	if err != nil {
-		t.Fatalf("ReadLoggingConfig failed: %v", err)
-	}
-	if !ok || logging.Enabled == nil || *logging.Enabled || logging.MaxFileMB != 3 || logging.MaxFiles != 2 {
-		t.Fatalf("logging config was not preserved: ok=%v %#v", ok, logging)
-	}
-	configDoc, err := ReadConfig(home)
-	if err != nil {
-		t.Fatalf("ReadConfig failed: %v", err)
-	}
-	if _, ok := configDoc["logging"]; ok {
-		t.Fatalf("logging section must not be returned as a profile: %#v", configDoc)
+	if _, err := os.Stat(CredentialsPath(home)); !os.IsNotExist(err) {
+		t.Fatalf("reserved profile wrote credentials: %v", err)
 	}
 }
 
@@ -136,10 +111,6 @@ fs_default_file_system_name = "workspace"
 region_code = "aws-us-west-2"
 fs_default_file_system_name = "scratch"
 
-[logging]
-enabled = false
-max_file_mb = 3
-max_files = 2
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -166,10 +137,6 @@ max_files = 2
 	}
 	if !strings.Contains(string(data), "fs_default_file_system_name = 'scratch'") {
 		t.Fatalf("unselected profile legacy key changed: %s", data)
-	}
-	logging, ok, err := ReadLoggingConfig(home)
-	if err != nil || !ok || logging.Enabled == nil || *logging.Enabled || logging.MaxFileMB != 3 || logging.MaxFiles != 2 {
-		t.Fatalf("logging config was not preserved: ok=%v logging=%#v err=%v", ok, logging, err)
 	}
 	changed, err = RemoveLegacyFSDefaultFileSystem(home, "default")
 	if err != nil {

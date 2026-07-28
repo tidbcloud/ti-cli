@@ -21,6 +21,8 @@ Implemented:
 - CLI foundation from `docs/spec/done/0001-cli-foundation.md`
 - Local config and credentials from
   `docs/spec/done/0002-local-config-and-credentials.md`
+- Global settings and operation logging configuration from
+  `docs/spec/done/0021-global-settings.md`
 - Output, query, and dry-run contracts from
   `docs/spec/done/0003-output-error-query-dry-run.md`
 - API client auth, authorization, and region routing from
@@ -286,6 +288,7 @@ internal/output/            structured JSON/text/raw rendering
 internal/organization/      organization project command use cases
 internal/query/             JMESPath query application
 internal/secretinput/       no-echo secret input helper
+internal/settings/          global settings parsing and legacy logging migration
 internal/telemetrybackend/  telemetry API, batcher, TiDB, and PostHog sinks
 internal/update/            GitHub Releases update checks and self-update logic
 internal/version/           build version metadata
@@ -617,9 +620,15 @@ specs or demos.
 
 All tdc local state belongs under `~/.tdc/`.
 
-- `~/.tdc/config` stores non-sensitive TOML values.
-- `~/.tdc/credentials` stores sensitive TOML values.
+- `~/.tdc/config` stores profile-scoped non-sensitive TOML values.
+- `~/.tdc/credentials` stores profile-scoped sensitive TOML values.
 - Both files use profile sections such as `[default]` and `[stage]`.
+- `~/.tdc/.preferences` is optional hidden global TOML configuration and is
+  never selected by profile. Fresh installs and `tdc configure` do not create
+  it. Do not create or migrate the unshipped intermediate `~/.tdc/settings`
+  path.
+- The profile name `logging` is reserved so legacy global logging configuration
+  cannot be confused with a profile.
 - The default profile name is `default`.
 - The global `--profile` flag selects a profile when explicitly provided.
 - The global `--region` flag selects command-scope placement when explicitly
@@ -823,17 +832,25 @@ fixtures.
 
 Local operation logs are enabled by default and live at
 `~/.tdc/logs/tdc.jsonl`. They are local audit/debug summaries, not telemetry.
-`TDC_LOGGING=off` disables them for the current process, and global config can
-disable them with:
+`TDC_LOGGING=off` disables them for the current process, and global settings
+can disable them with:
 
 ```toml
+# ~/.tdc/.preferences
+schema_version = 1
+
 [logging]
 enabled = false
 ```
 
 Environment values `off`, `false`, `0`, and `no` disable logging; `on`,
 `true`, `1`, and `yes` enable it. The environment variable takes precedence
-over config. Do not add a `tdc logging status` command. The operation log may
+over settings. Do not add a `tdc logging status` command. Invalid settings or
+environment values fail closed for logging without failing the requested
+command. Legacy `[logging]` in `~/.tdc/config` is migrated atomically into
+`~/.tdc/.preferences`; config and credentials remain profile-only afterward.
+Every `tdc update` form must bypass settings, migration, profiles, credentials,
+operation logs, and all other `~/.tdc/` state. The operation log may
 record command paths, flag names, profile names, region codes, duration, exit
 code, app error code/category, service name, HTTP method/status, operation, and
 request id. It must never record flag values, SQL text, SQL results, file
@@ -939,7 +956,7 @@ boundary writes to stdout/stderr and maps errors to exit codes.
 
 The product-owned telemetry backend is implemented as the independent
 `tdc-telemetry-backend` process. The CLI collection and delivery path remains
-governed by `docs/spec/0021-telemetry.md`. Telemetry must be opt-aware and
+governed by `docs/spec/0022-telemetry.md`. Telemetry must be opt-aware and
 privacy-preserving. Allowed fields:
 
 - command and subcommand invoked

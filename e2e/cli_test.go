@@ -298,6 +298,9 @@ func TestConfigureWritesLocalProfile(t *testing.T) {
 			t.Fatalf("credentials mode: want 0600, got %o", info.Mode().Perm())
 		}
 	}
+	if _, err := os.Stat(filepath.Join(home, ".tdc", ".preferences")); !os.IsNotExist(err) {
+		t.Fatalf("configure created global settings: %v", err)
+	}
 }
 
 func TestConfigureNonInteractiveFromEnvironment(t *testing.T) {
@@ -705,6 +708,186 @@ func TestOperationLogCanBeDisabled(t *testing.T) {
 	}
 }
 
+func TestGlobalSettingsControlOperationLogging(t *testing.T) {
+	bin := tdcBinary(t)
+
+	t.Run("enabled", func(t *testing.T) {
+		home := t.TempDir()
+		writeE2EFile(t, filepath.Join(home, ".tdc", ".preferences"), "schema_version = 1\n\n[logging]\nenabled = true\nmax_file_mb = 1\nmax_files = 2\n", 0o600)
+		for _, profileName := range []string{"default", "stage"} {
+			result := runTDCUsingLoggingSettings(t, bin, []string{"HOME=" + home}, "--profile", profileName, "help")
+			result.wantExitCode(0)
+		}
+		data, err := os.ReadFile(filepath.Join(home, ".tdc", "logs", "tdc.jsonl"))
+		if err != nil {
+			t.Fatalf("enabled settings did not create operation log: %v", err)
+		}
+		profiles := make(map[string]bool)
+		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+			var event map[string]any
+			if err := json.Unmarshal(line, &event); err != nil {
+				t.Fatalf("decode operation log: %v", err)
+			}
+			if profileName, ok := event["profile"].(string); ok {
+				profiles[profileName] = true
+			}
+		}
+		if !profiles["default"] || !profiles["stage"] {
+			t.Fatalf("global settings did not apply across profiles: %#v", profiles)
+		}
+	})
+
+	t.Run("disabled", func(t *testing.T) {
+		home := t.TempDir()
+		writeE2EFile(t, filepath.Join(home, ".tdc", ".preferences"), "[logging]\nenabled = false\n", 0o600)
+		result := runTDCUsingLoggingSettings(t, bin, []string{"HOME=" + home}, "help")
+		result.wantExitCode(0)
+		if _, err := os.Stat(filepath.Join(home, ".tdc", "logs", "tdc.jsonl")); !os.IsNotExist(err) {
+			t.Fatalf("disabled settings created operation log: %v", err)
+		}
+	})
+}
+
+func TestLegacyLoggingConfigMigratesThroughBinary(t *testing.T) {
+	bin := tdcBinary(t)
+	home := t.TempDir()
+	configPath := filepath.Join(home, ".tdc", "config")
+	writeE2EFile(t, configPath, `[default]
+region_code = "aws-us-east-1"
+project_id = "virtual-e2e"
+
+[logging]
+enabled = false
+max_file_mb = 3
+max_files = 2
+`, 0o644)
+	credentialsPath := filepath.Join(home, ".tdc", "credentials")
+	credentials := "[default]\ntdc_public_key = \"public\"\ntdc_private_key = \"private\"\n"
+	writeE2EFile(t, credentialsPath, credentials, 0o600)
+
+	result := runTDCUsingLoggingSettings(t, bin, []string{"HOME=" + home}, "help")
+	result.wantExitCode(0)
+
+	settingsPath := filepath.Join(home, ".tdc", ".preferences")
+	settingsData, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatalf("read migrated settings: %v", err)
+	}
+	if !strings.Contains(string(settingsData), "[logging]") || !strings.Contains(string(settingsData), "enabled = false") {
+		t.Fatalf("legacy logging was not migrated:\n%s", settingsData)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(settingsPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("migrated settings mode = %o, want 0600", info.Mode().Perm())
+		}
+	}
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(configData), "[logging]") || !strings.Contains(string(configData), "[default]") || !strings.Contains(string(configData), "virtual-e2e") {
+		t.Fatalf("legacy migration changed profile config incorrectly:\n%s", configData)
+	}
+	afterCredentials, err := os.ReadFile(credentialsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterCredentials) != credentials {
+		t.Fatalf("legacy migration changed credentials:\n%s", afterCredentials)
+	}
+}
+
+func TestMalformedGlobalSettingsFailClosedThroughBinary(t *testing.T) {
+	bin := tdcBinary(t)
+	home := t.TempDir()
+	settingsPath := filepath.Join(home, ".tdc", ".preferences")
+	before := "[logging]\nenabled = \"not-a-boolean\"\n"
+	writeE2EFile(t, settingsPath, before, 0o644)
+
+	result := runTDCUsingLoggingSettings(t, bin, []string{"HOME=" + home}, "--debug", "help")
+	result.wantExitCode(0)
+	result.wantStderrContains("operation logging disabled because global settings could not be loaded")
+	if strings.Contains(result.stderr, "not-a-boolean") {
+		result.fail("debug diagnostic leaked settings contents")
+	}
+	after, err := os.ReadFile(settingsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != before {
+		t.Fatalf("malformed settings were rewritten: %q", after)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".tdc", "logs", "tdc.jsonl")); !os.IsNotExist(err) {
+		t.Fatalf("malformed settings did not fail closed: %v", err)
+	}
+}
+
+func TestUpdateAndReservedProfileGlobalSettingsBoundaries(t *testing.T) {
+	bin := tdcBinary(t)
+
+	t.Run("update does not access tdc home", func(t *testing.T) {
+		home := t.TempDir()
+		settingsPath := filepath.Join(home, ".tdc", ".preferences")
+		before := "not valid toml = ["
+		writeE2EFile(t, settingsPath, before, 0o600)
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			extension := "tar.gz"
+			if runtime.GOOS == "windows" {
+				extension = "zip"
+			}
+			assetName := fmt.Sprintf("tdc_%s_%s.%s", runtime.GOOS, runtime.GOARCH, extension)
+			_, _ = fmt.Fprintf(w, `{"tag_name":"v0.1.5","html_url":"https://example.test/v0.1.5","assets":[{"name":%q,"browser_download_url":"https://example.test/%s"}]}`, assetName, assetName)
+		}))
+		defer server.Close()
+		result := runTDCUsingLoggingSettings(t, bin, []string{
+			"HOME=" + home,
+			"TDC_LOGGING=on",
+			"TDC_RELEASE_API_BASE_URL=" + server.URL,
+		}, "--debug", "update", "--check")
+		result.wantExitCode(0)
+		result.wantStderrNotContains("operation logging disabled")
+		after, err := os.ReadFile(settingsPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(after) != before {
+			t.Fatalf("update changed settings: %q", after)
+		}
+		if _, err := os.Stat(filepath.Join(home, ".tdc", "logs", "tdc.jsonl")); !os.IsNotExist(err) {
+			t.Fatalf("update wrote operation log: %v", err)
+		}
+	})
+
+	t.Run("logging profile is reserved", func(t *testing.T) {
+		home := t.TempDir()
+		result := runTDCWithInput(t, bin, "", []string{
+			"HOME=" + home,
+			"TDC_LOGGING=off",
+		}, "configure", "--profile", "logging", "--region-code", "aws-us-east-1", "--tdc-public-key", "public", "--tdc-private-key", "private", "--non-interactive")
+		result.wantExitCode(2)
+		result.wantStderrContains(`profile name "logging" is reserved`)
+		for _, name := range []string{"config", "credentials", ".preferences"} {
+			if _, err := os.Stat(filepath.Join(home, ".tdc", name)); !os.IsNotExist(err) {
+				t.Fatalf("reserved profile wrote %s: %v", name, err)
+			}
+		}
+	})
+}
+
+func writeE2EFile(t *testing.T, path, content string, mode os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func runTDC(t *testing.T, bin string, args ...string) commandResult {
 	t.Helper()
 	return runTDCWithInput(t, bin, "", nil, args...)
@@ -721,6 +904,15 @@ func hasLiveFSCommandFamily(args []string) bool {
 }
 
 func runTDCWithInput(t *testing.T, bin, stdin string, env []string, args ...string) commandResult {
+	return runTDCProcess(t, bin, stdin, env, true, args...)
+}
+
+func runTDCUsingLoggingSettings(t *testing.T, bin string, env []string, args ...string) commandResult {
+	t.Helper()
+	return runTDCProcess(t, bin, "", env, false, args...)
+}
+
+func runTDCProcess(t *testing.T, bin, stdin string, env []string, disableLoggingByDefault bool, args ...string) commandResult {
 	t.Helper()
 	if os.Getenv("TDC_LIVE") == "1" && hasLiveFSCommandFamily(args) && !envContains(env, "TDC_FS_FILE_SYSTEM_NAME") {
 		name := strings.TrimSpace(os.Getenv("TDC_LIVE_FS_NAME"))
@@ -739,7 +931,7 @@ func runTDCWithInput(t *testing.T, bin, stdin string, env []string, args ...stri
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 	cmd.Env = append([]string{}, os.Environ()...)
-	if !envContains(env, "TDC_LOGGING") {
+	if disableLoggingByDefault && !envContains(env, "TDC_LOGGING") {
 		cmd.Env = append(cmd.Env, "TDC_LOGGING=off")
 	}
 	if len(env) > 0 {

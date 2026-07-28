@@ -20,6 +20,7 @@ import (
 	"github.com/tidbcloud/tdc/internal/dryrun"
 	"github.com/tidbcloud/tdc/internal/oplog"
 	"github.com/tidbcloud/tdc/internal/output"
+	"github.com/tidbcloud/tdc/internal/settings"
 	"github.com/tidbcloud/tdc/internal/version"
 )
 
@@ -102,11 +103,13 @@ To see help information, you can run:
 }
 
 func Execute(ctx context.Context, root *cobra.Command, args []string, stdout, stderr io.Writer) error {
-	recorder := commandRecorder()
+	recorder, recordCommand := commandRecorder(args, stderr)
 	ctx = oplog.WithRecorder(ctx, recorder)
 	start := time.Now()
 	if err := rejectShortFlags(args); err != nil {
-		recorder.Record(ctx, commandEvent(root, root, err, time.Since(start)))
+		if recordCommand {
+			recorder.Record(ctx, commandEvent(root, root, err, time.Since(start)))
+		}
 		return err
 	}
 	root.SetArgs(args)
@@ -114,24 +117,88 @@ func Execute(ctx context.Context, root *cobra.Command, args []string, stdout, st
 	root.SetErr(stderr)
 	cmd, err := root.ExecuteContextC(ctx)
 	if err == nil {
-		recorder.Record(ctx, commandEvent(root, cmd, nil, time.Since(start)))
+		if recordCommand {
+			recorder.Record(ctx, commandEvent(root, cmd, nil, time.Since(start)))
+		}
 		return nil
 	}
 	normalized := normalizeError(err)
-	recorder.Record(ctx, commandEvent(root, cmd, normalized, time.Since(start)))
+	if recordCommand {
+		recorder.Record(ctx, commandEvent(root, cmd, normalized, time.Since(start)))
+	}
 	return normalized
 }
 
-func commandRecorder() oplog.Recorder {
+func commandRecorder(args []string, stderr io.Writer) (oplog.Recorder, bool) {
+	disabled := func() (oplog.Recorder, bool) {
+		return oplog.NewRecorder(oplog.Config{Enabled: false}), false
+	}
+	if isUpdateInvocation(args) {
+		return disabled()
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return oplog.NewRecorder(oplog.Config{Enabled: false})
+		return disabled()
 	}
-	cfg, err := oplog.LoadConfig(home, nil)
+	logging, err := settings.ResolveLogging(home, nil)
 	if err != nil {
-		return oplog.NewRecorder(oplog.Config{Enabled: false})
+		if debugRequested(args) && stderr != nil {
+			_, _ = fmt.Fprintln(stderr, "tdc [DEBUG]: operation logging disabled because global settings could not be loaded")
+		}
+		return disabled()
 	}
-	return oplog.NewRecorder(cfg)
+	if !logging.Enabled {
+		return disabled()
+	}
+	cfg := oplog.Config{
+		Enabled:      true,
+		Path:         oplog.Path(home),
+		MaxFileBytes: logging.MaxFileBytes,
+		MaxFiles:     logging.MaxFiles,
+	}
+	return oplog.NewRecorder(cfg), true
+}
+
+func isUpdateInvocation(args []string) bool {
+	valueFlags := map[string]struct{}{
+		"profile": {},
+		"region":  {},
+		"output":  {},
+		"query":   {},
+	}
+	positionals := make([]string, 0, 2)
+	for index := 0; index < len(args); index++ {
+		arg := args[index]
+		if arg == "--" {
+			positionals = append(positionals, args[index+1:]...)
+			break
+		}
+		if strings.HasPrefix(arg, "--") {
+			name, _, hasValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
+			if _, ok := valueFlags[name]; ok && !hasValue && index+1 < len(args) {
+				index++
+			}
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		positionals = append(positionals, arg)
+		if len(positionals) == 2 {
+			break
+		}
+	}
+	return len(positionals) > 0 && (positionals[0] == "update" ||
+		(positionals[0] == "help" && len(positionals) > 1 && positionals[1] == "update"))
+}
+
+func debugRequested(args []string) bool {
+	for _, arg := range args {
+		if arg == "--debug" || strings.EqualFold(arg, "--debug=true") {
+			return true
+		}
+	}
+	return false
 }
 
 func commandEvent(root, cmd *cobra.Command, err error, duration time.Duration) oplog.Event {
@@ -524,6 +591,9 @@ func loadOptionsForCommand(cmd *cobra.Command) (config.LoadOptions, error) {
 	} else if envProfile := strings.TrimSpace(os.Getenv("TDC_PROFILE")); envProfile != "" {
 		profileName = envProfile
 		profileExplicit = true
+	}
+	if err := config.ValidateProfileName(profileName); err != nil {
+		return config.LoadOptions{}, err
 	}
 	return config.LoadOptions{
 		Profile:         profileName,

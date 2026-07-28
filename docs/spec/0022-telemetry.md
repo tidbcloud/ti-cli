@@ -10,7 +10,7 @@ Telemetry is routed only through a product-owned HTTPS backend. The CLI never se
 
 - Release builds enable telemetry by default only when a product-owned telemetry endpoint is configured in the build.
 - Development, test, and CI executions do not send telemetry by default.
-- Users control telemetry through `~/.tdc/telemetry/config` or the process-scoped `TDC_TELEMETRY` environment variable.
+- Users control telemetry through `[telemetry]` in the optional global `~/.tdc/.preferences` file or the process-scoped `TDC_TELEMETRY` environment variable.
 - Do not add `tdc cli describe-telemetry`, `tdc cli enable-telemetry`, `tdc cli disable-telemetry`, or another telemetry command.
 - `tdc update`, help, version, and commandless usage invocations never send telemetry.
 - Telemetry is best-effort and lossy. Delivery must not change command stdout, stderr, output format, exit code, or user-visible result.
@@ -42,70 +42,29 @@ tdc update --dry-run
 tdc update --target-version <version>
 ```
 
-All `tdc update` modes remain outside telemetry because update promises not to read, modify, or upload tdc local configuration and credentials. Do not weaken this boundary to collect update events. The update path must not read `~/.tdc/config`, `~/.tdc/credentials`, `~/.tdc/telemetry/config`, DB credentials, FS credentials, SQL text, or file contents.
+All `tdc update` modes remain outside telemetry because update promises not to read, modify, or upload tdc local state. Do not weaken this boundary to collect update events. The update path must not read `~/.tdc/.preferences`, `~/.tdc/.telemetry-installation-id`, `~/.tdc/config`, `~/.tdc/credentials`, operation logs, DB credentials, FS credentials, SQL text, or file contents.
 
 ## Local Telemetry Configuration
 
-Telemetry state is global and not profile-scoped:
-
-```text
-~/.tdc/telemetry/config
-```
-
-The file is TOML without a section header:
+Telemetry preferences are global and not profile-scoped. They use the shared settings contract from `done/0021-global-settings.md`:
 
 ```toml
+# ~/.tdc/.preferences
 schema_version = 1
-enabled = true
-installation_id = "tdc_01j0a0n8m9f4q2x6cn0b9q3k3z"
-```
 
-The supported fields are:
-
-| Field | Type | Required | Behavior |
-| --- | --- | --- | --- |
-| `schema_version` | integer | no | Defaults to `1`; unsupported versions disable sending. |
-| `enabled` | boolean | yes | Persistent user decision. |
-| `installation_id` | string | conditional | Required only when telemetry is enabled and an event is sent. |
-
-Do not store telemetry state under `[telemetry]` in the main `~/.tdc/config`. The main profile parser, `tdc configure`, and profile persistence do not own telemetry state.
-
-On the first telemetry-eligible invocation of a release build:
-
-1. If `~/.tdc/telemetry/config` does not exist and the effective build default is enabled, generate a cryptographically random installation ID.
-2. Atomically create the directory and config with `schema_version = 1`, `enabled = true`, and the generated ID.
-3. Use the same ID for subsequent eligible events from that tdc home.
-
-Users disable telemetry by editing the file:
-
-```toml
-schema_version = 1
-enabled = false
-installation_id = "tdc_01j0a0n8m9f4q2x6cn0b9q3k3z"
-```
-
-The installation ID may remain while telemetry is disabled. It is local pseudonymous state and must not be sent when disabled. Deleting `~/.tdc/telemetry/config` resets the local telemetry state; a later eligible release invocation applies the release default and generates a new ID.
-
-Users may pre-create a minimal opt-out file:
-
-```toml
+[telemetry]
 enabled = false
 ```
 
-When this file exists, tdc must not generate or write an installation ID.
+The settings file is optional and is never created merely to record a default telemetry decision. Installer and configure flows do not create it. Do not store telemetry preferences under `[telemetry]` in the profile-scoped `~/.tdc/config`.
 
-If telemetry is enabled and the file has no installation ID, tdc generates one and atomically writes it while preserving supported user settings. Concurrent first invocations must not leave a partial TOML file. If two processes race, later events must converge on the installation ID stored in the completed config.
-
-Use these permissions where POSIX mode bits are meaningful:
+The machine-generated installation ID is independent internal state whose complete lifecycle is defined in the Installation ID section:
 
 ```text
-~/.tdc/telemetry/          0700
-~/.tdc/telemetry/config    0600
+~/.tdc/.telemetry-installation-id
 ```
 
-Windows uses the same logical path and best-effort owner-private file handling.
-
-If the telemetry config is unreadable, malformed, has an unsupported schema version, or contains an invalid value, fail closed: do not send telemetry, do not overwrite the file, and emit only a redacted debug diagnostic when `--debug` is enabled. Telemetry configuration failures never fail the user command.
+The settings schema and legacy logging migration are defined by `done/0021-global-settings.md`. This spec owns installation ID generation, storage, permissions, validation, concurrency, reset behavior, and telemetry-specific failure handling.
 
 ## Resolution And Defaults
 
@@ -113,7 +72,7 @@ Resolve telemetry in this order:
 
 1. Excluded command check. Excluded commands return disabled without reading telemetry state.
 2. `TDC_TELEMETRY`, when explicitly set.
-3. `~/.tdc/telemetry/config`.
+3. `[telemetry].enabled` in `~/.tdc/.preferences`.
 4. Build and execution default.
 5. Endpoint availability.
 
@@ -124,17 +83,31 @@ Accepted environment values:
 
 An invalid `TDC_TELEMETRY` value disables sending and produces only a debug diagnostic. Explicit environment enablement may override `enabled = false`, but it must not make an excluded command eligible.
 
-Release builds default to enabled. Development builds, test binaries, and executions with a recognized CI environment default to disabled and must not create `~/.tdc/telemetry/` unless explicitly enabled. A build without a configured product-owned endpoint never sends, regardless of environment or config.
+Release builds default to enabled. Development builds, test binaries, and executions with a recognized CI environment default to disabled and must not create `.telemetry-installation-id` unless explicitly enabled. A build without a configured product-owned endpoint never sends or creates telemetry state, regardless of environment or settings.
 
 ## Installation ID
 
-`installation_id` is a random local pseudonymous identifier used to correlate reliability trends from one tdc installation. It must:
+The installation ID stored in `~/.tdc/.telemetry-installation-id` is a random local pseudonymous identifier used to correlate reliability trends from one tdc installation. It must:
 
 - start with `tdc_`;
 - contain at least 128 bits of cryptographic randomness;
 - contain no hostname, username, machine ID, MAC address, IP address, TiDB Cloud identity, profile name, project ID, cluster ID, tenant ID, or FS token material;
 - never appear in command output, local operation logs, debug logs, error messages, or telemetry backend operational logs;
 - be sent only as the documented telemetry event field.
+
+The file contains only the validated identifier and an optional trailing newline:
+
+```text
+tdc_01j0a0n8m9f4q2x6cn0b9q3k3z
+```
+
+It is not TOML and is not user configuration. Use mode `0600` where POSIX mode bits are meaningful. Windows uses the same logical path with best-effort owner-private handling.
+
+Create the ID lazily only after the invocation is known to be eligible, telemetry is effectively enabled, and a product-owned endpoint is available. Creation must be race-safe across concurrent first invocations, must not expose a partial file, and must make subsequent events converge on the ID stored in the completed file.
+
+Disabling telemetry does not delete the ID. Users may delete the file to reset their anonymous installation identity. An unreadable, malformed, or invalid existing file disables telemetry without overwriting the file or failing the requested command.
+
+CLI telemetry has not shipped with the previously proposed `~/.tdc/telemetry/config` or intermediate `~/.tdc/settings` layouts. Do not create those paths and do not add migrations from them. Persistent user choice belongs only in `~/.tdc/.preferences`; machine-generated identity belongs only in `.telemetry-installation-id`.
 
 ## Collected And Prohibited Data
 
@@ -188,8 +161,9 @@ Never collected:
 - command output or API response payloads
 - cloud resource IDs
 
-To disable telemetry, create or edit ~/.tdc/telemetry/config:
+To disable telemetry, create or edit ~/.tdc/.preferences:
 
+  [telemetry]
   enabled = false
 
 For one process:
@@ -197,7 +171,7 @@ For one process:
   TDC_TELEMETRY=off tdc ...
 ```
 
-`tdc configure` may show the same notice for users who build or copy the binary without the installer. It must not ask a telemetry question and must not create the telemetry config.
+`tdc configure` may show the same notice for users who build or copy the binary without the installer. It must not ask a telemetry question or create `settings` or `.telemetry-installation-id`.
 
 The first release that enables telemetry by default must state this in its release notes. A successful update to that release may print the same static notice, but update must not read telemetry state or send an event.
 
@@ -249,7 +223,7 @@ Delivery behavior:
 
 1. Cobra resolves the canonical command and whether the invocation is excluded.
 2. Excluded invocations execute without reading telemetry environment or files.
-3. For an eligible invocation, `internal/telemetry` evaluates `TDC_TELEMETRY`, the independent telemetry config, execution defaults, and endpoint availability.
+3. For an eligible invocation, `internal/telemetry` evaluates `TDC_TELEMETRY`, the global telemetry setting resolved by `internal/settings`, execution defaults, and endpoint availability.
 4. If telemetry is effectively enabled, the package loads or creates the random installation ID before command execution timing begins.
 5. The command executes normally.
 6. The CLI boundary maps the result to stable exit and application error codes.
@@ -260,14 +234,16 @@ Delivery behavior:
 
 ## Package Design
 
-- `internal/telemetry` owns eligibility, defaults, event models, field allowlists, installation ID generation, independent TOML state, atomic writes, and best-effort delivery.
+- `internal/telemetry` owns eligibility, defaults, `TDC_TELEMETRY` parsing, event models, field allowlists, installation ID generation and validation, race-safe state persistence, and best-effort delivery.
+- `internal/settings` owns `~/.tdc/.preferences`, strict TOML validation, and the optional `[telemetry].enabled` value defined by `done/0021-global-settings.md`.
+- `internal/telemetry` combines the environment override with the optional persistent value, command eligibility, execution defaults, and endpoint availability.
 - `internal/cli` identifies excluded help/version/update invocations, starts timing for eligible commands, and finalizes events after exit-code mapping.
 - `internal/apperr` exposes stable error codes without exposing raw errors.
-- `internal/config` and `internal/config/store` do not parse, write, or preserve telemetry state.
+- `internal/config` and `internal/config/store` do not parse, write, or preserve telemetry preferences or installation state.
 - Install scripts and `tdc configure` display the static notice without prompting.
 - `internal/update` remains telemetry-free and independent from all tdc local state.
 
-Use the existing `github.com/pelletier/go-toml/v2` dependency for the telemetry config and Go standard packages for HTTP, runtime metadata, time, context, filesystem operations, and cryptographic randomness. Do not add cgo or a platform-specific telemetry dependency.
+Use the existing `github.com/pelletier/go-toml/v2` dependency through `internal/settings` and Go standard packages for HTTP, runtime metadata, time, context, filesystem operations, and cryptographic randomness. Do not add cgo or a platform-specific telemetry dependency.
 
 ## Backend Contract
 
@@ -287,19 +263,20 @@ The CLI depends on these guarantees:
 - Release builds with a configured endpoint default to enabled for eligible commands.
 - Development, test, and CI executions default to disabled and do not create telemetry state.
 - No telemetry management command is registered.
-- Tests verify every help/version/commandless/update form is excluded before telemetry config access.
-- Tests verify `tdc update` does not read or write telemetry state and never sends telemetry.
-- Tests verify `TDC_TELEMETRY=off` short-circuits before filesystem access.
+- Tests verify every help/version/commandless form is excluded before the telemetry path reads `[telemetry]` or installation state; operation logging may independently read global settings.
+- Tests verify every `tdc update` form is excluded before any `~/.tdc/` access.
+- Tests verify `tdc update` never sends telemetry.
+- Tests verify `TDC_TELEMETRY=off` short-circuits before telemetry reads settings or installation state; operation logging remains independent.
 - Tests verify `TDC_TELEMETRY=on` enables only eligible commands when an endpoint is configured.
-- Tests verify a missing config in an eligible release execution creates a valid TOML file with mode `0600`, a parent directory with mode `0700`, and a random installation ID.
-- Tests verify a pre-created `enabled = false` file is not modified and does not gain an installation ID.
-- Tests verify enabled config without an ID gains one through an atomic write.
-- Tests cover concurrent first use without partial TOML or unstable persisted identity.
-- Tests verify malformed, unreadable, or unsupported telemetry config fails closed without being overwritten.
+- Tests verify missing `settings` uses the build default without creating that file.
+- Tests verify `[telemetry].enabled = false` is not modified and prevents installation ID creation.
+- Tests verify an eligible, effectively enabled release execution atomically creates a valid `.telemetry-installation-id` with mode `0600` and a random ID.
+- Tests cover concurrent first use without partial state or unstable persisted identity.
+- Tests verify malformed or unreadable settings and malformed or unreadable installation ID state fail closed without being overwritten.
 - Tests verify captured events contain flag names but never flag values.
 - Tests verify credentials, SQL text, paths, file contents, command output, API payloads, raw errors, profile names, host identity, and cloud resource IDs are absent.
 - Tests verify telemetry network failures and non-`202` responses do not alter command stdout, stderr, or exit status.
-- Tests verify installer and configure notice text names the config path and process-scoped environment override.
+- Tests verify installer and configure notice text names the settings path and process-scoped environment override.
 - Black-box e2e tests use a temporary HOME and a local fake ingestion server; live cloud credentials are not required.
 
 ## Dependencies
@@ -308,6 +285,7 @@ The CLI depends on these guarantees:
 - `0002-local-config-and-credentials.md`
 - `0003-output-error-query-dry-run.md`
 - `0012-install-and-update-distribution.md`
+- `done/0021-global-settings.md`
 
 ## Out Of Scope
 

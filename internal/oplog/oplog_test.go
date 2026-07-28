@@ -5,42 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
-
-	"github.com/tidbcloud/tdc/internal/config/store"
 )
-
-func TestLoadConfigUsesEnvironmentOverride(t *testing.T) {
-	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, store.TDCDirName), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(store.ConfigPath(home), []byte(`
-[logging]
-enabled = true
-max_file_mb = 2
-max_files = 3
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := LoadConfig(home, map[string]string{"TDC_LOGGING": "off"})
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-	if cfg.Enabled {
-		t.Fatal("expected environment override to disable logging")
-	}
-	if cfg.MaxFileBytes != 2*1024*1024 || cfg.MaxFiles != 3 {
-		t.Fatalf("expected file config limits to be preserved, got %#v", cfg)
-	}
-}
 
 func TestDisabledRecorderDoesNotCreateFile(t *testing.T) {
 	home := t.TempDir()
-	path := store.LogPath(home)
+	path := Path(home)
 	recorder := NewRecorder(Config{
 		Enabled:      false,
 		Path:         path,
@@ -56,7 +27,7 @@ func TestDisabledRecorderDoesNotCreateFile(t *testing.T) {
 
 func TestRecorderWritesJSONL(t *testing.T) {
 	home := t.TempDir()
-	path := store.LogPath(home)
+	path := Path(home)
 	recorder := NewRecorder(Config{
 		Enabled:      true,
 		Path:         path,
@@ -89,7 +60,7 @@ func TestRecorderWritesJSONL(t *testing.T) {
 
 func TestRecorderRotatesByTotalFileCount(t *testing.T) {
 	home := t.TempDir()
-	path := store.LogPath(home)
+	path := Path(home)
 	recorder := NewRecorder(Config{
 		Enabled:      true,
 		Path:         path,

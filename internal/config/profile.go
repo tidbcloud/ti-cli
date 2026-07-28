@@ -56,6 +56,9 @@ func Load(ctx context.Context, opts LoadOptions) (*Profile, error) {
 	if profileName == "" {
 		profileName = DefaultProfile
 	}
+	if err := ValidateProfileName(profileName); err != nil {
+		return nil, err
+	}
 
 	configDoc, err := store.ReadConfig(opts.HomeDir)
 	if err != nil {
@@ -125,6 +128,9 @@ func LoadLocal(ctx context.Context, opts LoadOptions) (*Profile, error) {
 	if profileName == "" {
 		profileName = DefaultProfile
 	}
+	if err := ValidateProfileName(profileName); err != nil {
+		return nil, err
+	}
 	configDoc, err := store.ReadConfig(opts.HomeDir)
 	if err != nil {
 		return nil, apperr.Wrap("config.read_config", "config", 1, err.Error(), err)
@@ -169,6 +175,18 @@ func LoadLocal(ctx context.Context, opts LoadOptions) (*Profile, error) {
 		profile.RegionCode = placement.NativeCode
 	}
 	return profile, nil
+}
+
+func ValidateProfileName(name string) error {
+	if !store.IsReservedProfileName(name) {
+		return nil
+	}
+	return apperr.New(
+		"config.reserved_profile",
+		"usage",
+		2,
+		fmt.Sprintf("profile name %q is reserved; choose another profile name", name),
+	)
 }
 
 func resolveOptionalPlacement(cfg store.ConfigProfile, regionOverride string, env map[string]string) (region.Placement, bool, error) {

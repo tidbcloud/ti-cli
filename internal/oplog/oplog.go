@@ -11,17 +11,11 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/tidbcloud/tdc/internal/config/store"
 )
 
 const (
-	envLogging         = "TDC_LOGGING"
-	defaultMaxFileMB   = 10
-	defaultMaxFiles    = 5
-	logFileMode        = 0o600
-	logDirMode         = 0o700
-	defaultMaxFileSize = int64(defaultMaxFileMB) * 1024 * 1024
+	logFileMode = 0o600
+	logDirMode  = 0o700
 )
 
 type Config struct {
@@ -61,6 +55,10 @@ func (noopRecorder) Record(context.Context, Event) {}
 
 type contextKey struct{}
 
+func Path(homeDir string) string {
+	return filepath.Join(homeDir, ".tdc", "logs", "tdc.jsonl")
+}
+
 func WithRecorder(ctx context.Context, recorder Recorder) context.Context {
 	if recorder == nil {
 		recorder = noopRecorder{}
@@ -77,49 +75,6 @@ func FromContext(ctx context.Context) Recorder {
 		return noopRecorder{}
 	}
 	return recorder
-}
-
-func LoadConfig(homeDir string, env map[string]string) (Config, error) {
-	if homeDir == "" {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return Config{Enabled: false}, err
-		}
-		homeDir = home
-	}
-	cfg := Config{
-		Enabled:      true,
-		Path:         store.LogPath(homeDir),
-		MaxFileBytes: defaultMaxFileSize,
-		MaxFiles:     defaultMaxFiles,
-	}
-	if fileCfg, ok, err := store.ReadLoggingConfig(homeDir); err != nil {
-		return cfg, err
-	} else if ok {
-		if fileCfg.Enabled != nil {
-			cfg.Enabled = *fileCfg.Enabled
-		}
-		if fileCfg.MaxFileMB > 0 {
-			cfg.MaxFileBytes = int64(fileCfg.MaxFileMB) * 1024 * 1024
-		}
-		if fileCfg.MaxFiles > 0 {
-			cfg.MaxFiles = fileCfg.MaxFiles
-		}
-	}
-	if value, ok := envValue(env, envLogging); ok {
-		enabled, valid := parseBool(value)
-		if !valid {
-			enabled = false
-		}
-		cfg.Enabled = enabled
-	}
-	if cfg.MaxFileBytes <= 0 {
-		cfg.MaxFileBytes = defaultMaxFileSize
-	}
-	if cfg.MaxFiles <= 0 {
-		cfg.MaxFiles = defaultMaxFiles
-	}
-	return cfg, nil
 }
 
 func NewRecorder(cfg Config) Recorder {
@@ -210,24 +165,4 @@ func SortedFlagNames(values []string) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-func envValue(env map[string]string, key string) (string, bool) {
-	if env != nil {
-		value, ok := env[key]
-		return value, ok
-	}
-	value, ok := os.LookupEnv(key)
-	return value, ok
-}
-
-func parseBool(value string) (bool, bool) {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "on", "true", "1", "yes":
-		return true, true
-	case "off", "false", "0", "no":
-		return false, true
-	default:
-		return false, false
-	}
 }
