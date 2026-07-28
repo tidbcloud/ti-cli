@@ -31,12 +31,6 @@ type ConfigProfile struct {
 	FSRegionCode    string `toml:"fs_region_code,omitempty"`
 }
 
-type LoggingConfig struct {
-	Enabled   *bool `toml:"enabled,omitempty"`
-	MaxFileMB int   `toml:"max_file_mb,omitempty"`
-	MaxFiles  int   `toml:"max_files,omitempty"`
-}
-
 type CredentialsDocument map[string]CredentialsProfile
 
 type CredentialsProfile struct {
@@ -51,14 +45,6 @@ func ConfigPath(homeDir string) string {
 
 func CredentialsPath(homeDir string) string {
 	return filepath.Join(homeDir, TDCDirName, CredsFileName)
-}
-
-func LogsDir(homeDir string) string {
-	return filepath.Join(homeDir, TDCDirName, "logs")
-}
-
-func LogPath(homeDir string) string {
-	return filepath.Join(LogsDir(homeDir), "tdc.jsonl")
 }
 
 func ReadConfig(homeDir string) (ConfigDocument, error) {
@@ -81,36 +67,7 @@ func ReadConfig(homeDir string) (ConfigDocument, error) {
 	if doc == nil {
 		doc = ConfigDocument{}
 	}
-	delete(doc, "logging")
 	return doc, nil
-}
-
-func ReadLoggingConfig(homeDir string) (LoggingConfig, bool, error) {
-	path := ConfigPath(homeDir)
-	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return LoggingConfig{}, false, nil
-	}
-	if err != nil {
-		return LoggingConfig{}, false, fmt.Errorf("read config %s: %w", path, err)
-	}
-	if err := rejectDisallowedKeys(data, path); err != nil {
-		return LoggingConfig{}, false, err
-	}
-	var raw map[string]any
-	if err := toml.Unmarshal(data, &raw); err != nil {
-		return LoggingConfig{}, false, fmt.Errorf("parse config %s: %w", path, err)
-	}
-	if _, ok := raw["logging"]; !ok {
-		return LoggingConfig{}, false, nil
-	}
-	var doc struct {
-		Logging LoggingConfig `toml:"logging"`
-	}
-	if err := toml.Unmarshal(data, &doc); err != nil {
-		return LoggingConfig{}, false, fmt.Errorf("parse config %s: %w", path, err)
-	}
-	return doc.Logging, true, nil
 }
 
 func ReadCredentials(homeDir string) (CredentialsDocument, error) {
@@ -145,6 +102,9 @@ func ReadCredentials(homeDir string) (CredentialsDocument, error) {
 func WriteProfile(homeDir, profileName string, cfg ConfigProfile, creds CredentialsProfile) error {
 	if profileName == "" {
 		profileName = "default"
+	}
+	if IsReservedProfileName(profileName) {
+		return fmt.Errorf("profile name %q is reserved", profileName)
 	}
 	if err := ensureDir(homeDir); err != nil {
 		return err
@@ -195,7 +155,7 @@ func WriteProfile(homeDir, profileName string, cfg ConfigProfile, creds Credenti
 	}
 	credentialsDoc[profileName] = existingCreds
 
-	if err := writeConfigTOML(homeDir, configDoc); err != nil {
+	if err := writeTOML(ConfigPath(homeDir), configDoc, configFileMode); err != nil {
 		return err
 	}
 	if err := writeTOML(CredentialsPath(homeDir), credentialsDoc, credsFileMode); err != nil {
@@ -265,7 +225,7 @@ func ClearFSResource(homeDir, profileName string) error {
 	existingCreds.FSAPIKey = ""
 	credentialsDoc[profileName] = existingCreds
 
-	if err := writeConfigTOML(homeDir, configDoc); err != nil {
+	if err := writeTOML(ConfigPath(homeDir), configDoc, configFileMode); err != nil {
 		return err
 	}
 	if err := writeTOML(CredentialsPath(homeDir), credentialsDoc, credsFileMode); err != nil {
@@ -332,24 +292,6 @@ func writeTOML(path string, value any, mode os.FileMode) error {
 	return os.Chmod(path, mode)
 }
 
-func writeConfigTOML(homeDir string, profiles ConfigDocument) error {
-	logging, hasLogging, err := ReadLoggingConfig(homeDir)
-	if err != nil {
-		return err
-	}
-	doc := make(map[string]any, len(profiles)+1)
-	for name, profile := range profiles {
-		if name == "logging" {
-			continue
-		}
-		doc[name] = profile
-	}
-	if hasLogging {
-		doc["logging"] = logging
-	}
-	return writeTOML(ConfigPath(homeDir), doc, configFileMode)
-}
-
 func rejectDisallowedKeys(data []byte, path string) error {
 	var raw map[string]any
 	if err := toml.Unmarshal(data, &raw); err != nil {
@@ -375,6 +317,10 @@ func rejectDisallowedKeys(data []byte, path string) error {
 		return nil
 	}
 	return walk("", raw)
+}
+
+func IsReservedProfileName(name string) bool {
+	return strings.EqualFold(strings.TrimSpace(name), "logging")
 }
 
 func IsDisallowedKey(key string) bool {

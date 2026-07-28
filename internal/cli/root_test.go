@@ -17,6 +17,7 @@ import (
 	"github.com/tidbcloud/tdc/internal/config/store"
 	"github.com/tidbcloud/tdc/internal/dryrun"
 	"github.com/tidbcloud/tdc/internal/oplog"
+	"github.com/tidbcloud/tdc/internal/settings"
 	"github.com/tidbcloud/tdc/internal/version"
 )
 
@@ -168,7 +169,7 @@ func TestCommandOperationLogRecordsSafeSummary(t *testing.T) {
 		t.Fatalf("configure failed: %v", err)
 	}
 
-	data, err := os.ReadFile(store.LogPath(home))
+	data, err := os.ReadFile(oplog.Path(home))
 	if err != nil {
 		t.Fatalf("read operation log: %v", err)
 	}
@@ -202,8 +203,150 @@ func TestCommandOperationLogCanBeDisabled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("help failed: %v", err)
 	}
-	if _, err := os.Stat(store.LogPath(home)); !os.IsNotExist(err) {
+	if _, err := os.Stat(oplog.Path(home)); !os.IsNotExist(err) {
 		t.Fatalf("expected no operation log file, got err=%v", err)
+	}
+}
+
+func TestMalformedGlobalSettingsDisableLoggingWithRedactedDebug(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TDC_LOGGING", "on")
+	if err := os.MkdirAll(filepath.Dir(settings.Path(home)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sensitiveMarker := "must-not-appear-in-debug"
+	before := []byte("[logging]\nenabled = \"" + sensitiveMarker + "\"\n")
+	if err := os.WriteFile(settings.Path(home), before, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, stderr, err := executeForTest("--debug", "help")
+	if err != nil {
+		t.Fatalf("help failed because settings were malformed: %v", err)
+	}
+	if !strings.Contains(stderr, "operation logging disabled because global settings could not be loaded") {
+		t.Fatalf("missing redacted debug diagnostic: %q", stderr)
+	}
+	if strings.Contains(stderr, sensitiveMarker) || strings.Contains(stderr, "enabled") {
+		t.Fatalf("debug diagnostic leaked settings data: %q", stderr)
+	}
+	after, err := os.ReadFile(settings.Path(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("malformed settings were rewritten")
+	}
+	if _, err := os.Stat(oplog.Path(home)); !os.IsNotExist(err) {
+		t.Fatalf("malformed settings created operation log: %v", err)
+	}
+}
+
+func TestIsUpdateInvocation(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "update", args: []string{"update"}, want: true},
+		{name: "update check", args: []string{"update", "--check"}, want: true},
+		{name: "global boolean before update", args: []string{"--debug", "update", "--check"}, want: true},
+		{name: "global value before update", args: []string{"--profile", "stage", "update"}, want: true},
+		{name: "global equals before update", args: []string{"--profile=stage", "update"}, want: true},
+		{name: "help update", args: []string{"help", "update"}, want: true},
+		{name: "update help", args: []string{"update", "help"}, want: true},
+		{name: "db update", args: []string{"db", "update-db-cluster"}, want: false},
+		{name: "update profile value", args: []string{"--profile", "update", "db", "list-db-clusters"}, want: false},
+		{name: "update profile and command", args: []string{"--profile", "update", "update"}, want: true},
+		{name: "update query value", args: []string{"--query", "update", "db", "list-db-clusters"}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isUpdateInvocation(test.args); got != test.want {
+				t.Fatalf("isUpdateInvocation(%q) = %t, want %t", test.args, got, test.want)
+			}
+		})
+	}
+}
+
+func TestUpdateInvocationsDoNotReadOrWriteTDCHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TDC_LOGGING", "on")
+	tdcDir := filepath.Join(home, ".tdc")
+	if err := os.MkdirAll(tdcDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string][]byte{
+		settings.Path(home):         []byte("not valid toml = ["),
+		store.ConfigPath(home):      []byte("not valid config = ["),
+		store.CredentialsPath(home): []byte("not valid credentials = ["),
+	}
+	for path, data := range files {
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v0.1.0","html_url":"https://example.test/v0.1.0","assets":[]}`))
+	}))
+	defer server.Close()
+	t.Setenv("TDC_RELEASE_API_BASE_URL", server.URL)
+
+	for _, args := range [][]string{
+		{"update", "--check", "--debug"},
+		{"--debug", "update", "--check"},
+		{"update", "--dry-run", "--debug"},
+		{"update", "help", "--debug"},
+		{"update", "--help", "--debug"},
+		{"update", "--version", "--debug"},
+		{"help", "update", "--debug"},
+	} {
+		_, stderr, _ := executeForTest(args...)
+		if strings.Contains(stderr, "operation logging disabled") {
+			t.Fatalf("%q read global settings: %s", args, stderr)
+		}
+	}
+
+	for path, before := range files {
+		after, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(after, before) {
+			t.Fatalf("update invocation changed %s", path)
+		}
+	}
+	if _, err := os.Stat(oplog.Path(home)); !os.IsNotExist(err) {
+		t.Fatalf("update invocation wrote operation log: %v", err)
+	}
+}
+
+func TestConfigureRejectsReservedLoggingProfileBeforeWrites(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TDC_LOGGING", "off")
+
+	_, _, err := executeForTest(
+		"configure",
+		"--profile", "logging",
+		"--region-code", "aws-us-east-1",
+		"--tdc-public-key", "public",
+		"--tdc-private-key", "private",
+		"--non-interactive",
+	)
+	if err == nil {
+		t.Fatal("expected reserved profile to fail")
+	}
+	if apperr.CodeFor(err) != "config.reserved_profile" || apperr.ExitCodeFor(err) != 2 {
+		t.Fatalf("unexpected reserved profile error: %v", err)
+	}
+	for _, path := range []string{store.ConfigPath(home), store.CredentialsPath(home), settings.Path(home)} {
+		if _, statErr := os.Stat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("reserved configure wrote %s: %v", path, statErr)
+		}
 	}
 }
 

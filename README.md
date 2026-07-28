@@ -110,7 +110,24 @@ Alternatively, set up a default profile interactively by running the command bel
 tdc configure
 ```
 
-`tdc configure` stores non-sensitive settings in `~/.tdc/config` and API credentials to `~/.tdc/credentials`.
+`tdc configure` stores non-sensitive profile configuration in `~/.tdc/config` and API credentials in `~/.tdc/credentials`.
+
+### Global Settings and Operation Logs
+
+Process-wide preferences are separate from profiles. The optional, hidden `~/.tdc/.preferences` file applies to every profile and is not created on fresh installs or by `tdc configure`. Local operation logs are enabled by default at `~/.tdc/logs/tdc.jsonl`; they contain redacted command and API summaries, not command values or user data.
+
+To disable operation logging persistently, create `~/.tdc/.preferences`:
+
+```toml
+schema_version = 1
+
+[logging]
+enabled = false
+max_file_mb = 10
+max_files = 5
+```
+
+Use `TDC_LOGGING=off` to disable logging for one process. Accepted values are `on`, `true`, `1`, `yes`, `off`, `false`, `0`, and `no`. An existing `[logging]` section in `~/.tdc/config` is migrated automatically to `~/.tdc/.preferences`; profiles and credentials are preserved. `tdc update` does not read or write settings, profiles, credentials, operation logs, or other `~/.tdc/` state.
 
 ### TiDB Cloud Filesystem
 
