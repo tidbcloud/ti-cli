@@ -39,6 +39,10 @@ func TestStartResolutionAndStateCreation(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
+			environment := test.env
+			if environment == nil {
+				environment = map[string]string{}
+			}
 			if test.preferences != "" {
 				writeTestFile(t, settings.Path(home), test.preferences, 0o600)
 			}
@@ -47,7 +51,7 @@ func TestStartResolutionAndStateCreation(t *testing.T) {
 				HomeDir:     home,
 				Endpoint:    "https://telemetry.example.test/v1/telemetry/batch",
 				Info:        test.info,
-				Environment: test.env,
+				Environment: environment,
 			})
 			if (session != nil) != test.wantSession {
 				t.Fatalf("session present = %t, want %t", session != nil, test.wantSession)
