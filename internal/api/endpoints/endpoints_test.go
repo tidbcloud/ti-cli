@@ -38,6 +38,27 @@ func TestResolveStarterAlibabaRegion(t *testing.T) {
 	}
 }
 
+func TestResolveStarterTestOverrideRequiresOptIn(t *testing.T) {
+	t.Setenv("TDC_TEST_STARTER_BASE_URL", "https://starter.test")
+	t.Setenv("TDC_ALLOW_TEST_ENDPOINTS", "")
+	endpoint, err := NewResolver().ResolveStarter(region.ProviderAWS, "us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.BaseURL != DefaultStarterBaseURL {
+		t.Fatalf("test override used without opt-in: %q", endpoint.BaseURL)
+	}
+
+	t.Setenv("TDC_ALLOW_TEST_ENDPOINTS", "1")
+	endpoint, err = NewResolver().ResolveStarter(region.ProviderAWS, "us-east-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if endpoint.BaseURL != "https://starter.test" {
+		t.Fatalf("test override not applied: %q", endpoint.BaseURL)
+	}
+}
+
 func TestResolveIAMEndpoint(t *testing.T) {
 	endpoint, err := NewResolver().ResolveIAM()
 	if err != nil {

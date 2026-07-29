@@ -74,7 +74,11 @@ func (s Service) PrepareQueryAccess(ctx context.Context, opts PrepareQueryAccess
 	if err != nil {
 		return PrepareQueryAccessResult{}, err
 	}
-	if _, err := starterClient.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{View: "FULL"}); err != nil {
+	cluster, err := starterClient.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{View: "FULL"})
+	if err != nil {
+		return PrepareQueryAccessResult{}, err
+	}
+	if err := ensureStarterCluster(cluster); err != nil {
 		return PrepareQueryAccessResult{}, err
 	}
 	iamClient, err := s.iamClient(opts.Profile, authz.StarterSQLUserCreate, "create Starter DB SQL users")
@@ -137,6 +141,7 @@ func (s Service) DryRunPrepareQueryAccess(ctx context.Context, commandPath strin
 		dryrun.Check{Name: "endpoint_selection", Status: "passed", Message: string(endpoint.Service)},
 		dryrun.Check{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterSQLUserCreate)},
 		dryrun.Check{Name: "cluster_id", Status: "passed", Message: clusterID},
+		dryrun.Check{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the cluster is Starter before IAM requests or local credential writes"},
 	), nil
 }
 
@@ -228,6 +233,17 @@ func (s Service) sqlConnectionInputs(ctx context.Context, profile *config.Profil
 	if err != nil {
 		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
 	}
+	starterClient, err := s.starterClient(profile, permission, action)
+	if err != nil {
+		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
+	}
+	cluster, err := starterClient.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{View: "FULL"})
+	if err != nil {
+		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
+	}
+	if err := ensureStarterCluster(cluster); err != nil {
+		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
+	}
 	homeDir, err := s.homeDir()
 	if err != nil {
 		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
@@ -244,17 +260,6 @@ func (s Service) sqlConnectionInputs(ctx context.Context, profile *config.Profil
 			2,
 			fmt.Sprintf("missing prepared %s DB SQL credentials for cluster %s; run tdc db create-db-sql-users --db-cluster-id %s", mode, clusterID, clusterID),
 		)
-	}
-	starterClient, err := s.starterClient(profile, permission, action)
-	if err != nil {
-		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
-	}
-	cluster, err := starterClient.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{View: "FULL"})
-	if err != nil {
-		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
-	}
-	if err := ensureStarterCluster(cluster); err != nil {
-		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
 	}
 	return clusterID, mode, credential, cluster, nil
 }

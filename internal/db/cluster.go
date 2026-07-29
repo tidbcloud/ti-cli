@@ -111,9 +111,8 @@ func (s Service) ListClusters(ctx context.Context, opts ListClustersOptions) (Li
 		return ListClustersResult{}, err
 	}
 	return ListClustersResult{
-		Clusters:      response.Clusters,
+		Clusters:      filterStarterClusters(response.Clusters),
 		NextPageToken: response.NextPageToken,
-		TotalSize:     response.TotalSize,
 	}, nil
 }
 
@@ -131,7 +130,7 @@ func (s Service) CreateCluster(ctx context.Context, opts CreateClusterOptions) (
 		return ClusterResult{}, err
 	}
 	if err := ensureStarterCluster(cluster); err != nil {
-		return ClusterResult{}, err
+		return ClusterResult{}, createdClusterPlanError(cluster, err)
 	}
 	if opts.WaitUntilActive {
 		cluster, err = s.waitUntilClusterActive(ctx, client, cluster)
@@ -185,7 +184,7 @@ func (s Service) UpdateCluster(ctx context.Context, opts UpdateClusterOptions) (
 		return ClusterResult{}, err
 	}
 	if err := ensureStarterCluster(cluster); err != nil {
-		return ClusterResult{}, err
+		return ClusterResult{}, updatedClusterPlanError(cluster, err)
 	}
 	return ClusterResult{Cluster: cluster}, nil
 }
@@ -293,7 +292,7 @@ func (s Service) waitUntilClusterActive(ctx context.Context, client *apistarter.
 			)
 		}
 		if err := ensureStarterCluster(current); err != nil {
-			return apistarter.Cluster{}, err
+			return apistarter.Cluster{}, createdClusterPlanError(cluster, err)
 		}
 		switch current.State {
 		case "ACTIVE":
@@ -377,6 +376,7 @@ func (s Service) DryRunUpdateCluster(ctx context.Context, commandPath string, op
 		dryrun.Check{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		dryrun.Check{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)},
 		dryrun.Check{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterClusterUpdate)},
+		dryrun.Check{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the cluster is Starter before updating"},
 	), nil
 }
 
@@ -389,6 +389,7 @@ func (s Service) DryRunDeleteCluster(ctx context.Context, commandPath string, op
 		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)},
 		{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterClusterDelete)},
+		{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the cluster is Starter before deleting"},
 	}
 	if opts.WaitUntilDeleted {
 		checks = append(checks, dryrun.Check{
@@ -448,7 +449,7 @@ func (s Service) waitUntilClusterDeleted(ctx context.Context, client *apistarter
 			)
 		}
 		if err := ensureStarterCluster(current); err != nil {
-			return apistarter.Cluster{}, err
+			return apistarter.Cluster{}, deletingClusterPlanError(cluster, err)
 		}
 		if current.State == "DELETED" {
 			return current, nil
@@ -666,18 +667,6 @@ func spendingLimit(cents int32) *apistarter.SpendingLimit {
 	return &apistarter.SpendingLimit{Monthly: cents}
 }
 
-func ensureStarterCluster(cluster apistarter.Cluster) error {
-	if cluster.ClusterPlan == "" || cluster.ClusterPlan == "STARTER" {
-		return nil
-	}
-	return apperr.New(
-		"db.not_starter_cluster",
-		"usage",
-		2,
-		fmt.Sprintf("cluster %q is %s, not STARTER; tdc db only manages Starter clusters", cluster.ID, cluster.ClusterPlan),
-	)
-}
-
 func profileName(profile *config.Profile) string {
 	if profile == nil || profile.Name == "" {
 		return config.DefaultProfile
@@ -697,7 +686,7 @@ func (r ListClustersResult) Human() string {
 			cluster.DisplayName,
 			cluster.Region.Name,
 			cluster.State,
-			cluster.ClusterPlan,
+			clusterPlanDisplay(cluster),
 			cluster.CreateTime,
 		)
 	}
@@ -715,8 +704,8 @@ func (r ClusterResult) Human() string {
 		"Region: " + r.Region.Name,
 		"State: " + r.State,
 	}
-	if r.ClusterPlan != "" {
-		lines = append(lines, "Plan: "+r.ClusterPlan)
+	if plan := clusterPlanDisplay(r.Cluster); plan != "" {
+		lines = append(lines, "Plan: "+plan)
 	}
 	if r.CreateTime != "" {
 		lines = append(lines, "Created: "+r.CreateTime)
