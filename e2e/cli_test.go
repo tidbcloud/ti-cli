@@ -85,7 +85,6 @@ func TestHelpAndVersion(t *testing.T) {
 	configure := runTDC(t, bin, "configure", "help")
 	configure.wantExitCode(0)
 	configure.wantStdoutContains("--region-code <string>")
-	configure.wantStdoutContains("Default region code")
 
 	packFileSystem := runTDC(t, bin, "fs", "pack-file-system", "help")
 	packFileSystem.wantExitCode(0)

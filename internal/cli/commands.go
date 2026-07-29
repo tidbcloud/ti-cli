@@ -25,7 +25,7 @@ import (
 func newConfigureCommand(info version.Info) *cobra.Command {
 	cmd := newCommand(commandSpec{
 		Use:   "configure",
-		Short: "Configure TiDB Cloud (tdc) CLI options. If this command runs with no arguments, you will be prompted for configuration values.",
+		Short: "Configure TiDB Cloud CLI (tdc) options. If this command runs with no arguments, you will be prompted for configuration values.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			profile, err := cmd.Flags().GetString("profile")
 			if err != nil {
@@ -76,7 +76,7 @@ func newConfigureCommand(info version.Info) *cobra.Command {
 			return renderStructured(cmd, result)
 		},
 	}, info)
-	cmd.Flags().String("region-code", "", "Default region code, for example aws-us-east-1 or aws-ap-southeast-1.")
+	cmd.Flags().String("region-code", "", "Default TiDB Cloud region code for the profile, for example aws-us-east-1 or aws-ap-southeast-1.")
 	cmd.Flags().String("tdc-public-key", "", "TiDB Cloud API public key.")
 	cmd.Flags().String("tdc-private-key", "", "TiDB Cloud API private key.")
 	cmd.Flags().Bool("non-interactive", false, "Use this option to avoid being prompted for configuration values. You must provide at least three configuration values (--tdc-public-key, --tdc-private-key, and --region-code) when using this option. This is useful when running tdc in a script or automated environment.")
@@ -139,10 +139,10 @@ func newUpdateCommand(info version.Info) *cobra.Command {
 			return renderStructured(cmd, result)
 		},
 	}, info)
-	cmd.Flags().Bool("check", false, "check whether a newer tdc release is available without updating")
-	cmd.Flags().Bool("fail-if-update-available", false, "with --check, exit with code 1 when an update is available")
-	cmd.Flags().String("target-version", "latest", "target tdc version, such as latest or v0.1.0")
-	cmd.Flags().Bool("dry-run", false, "show the update plan without changing the local binary")
+	cmd.Flags().Bool("check", false, "Check whether a newer TiDB Cloud CLI (tdc) release is available without updating.")
+	cmd.Flags().Bool("fail-if-update-available", false, "With --check, exit with code 1 when an update is available.")
+	cmd.Flags().String("target-version", "latest", "Target TiDB Cloud CLI (tdc) version, such as latest or v0.1.0.")
+	cmd.Flags().Bool("dry-run", false, "Show the update plan without changing the local binary.")
 	return cmd
 }
 
@@ -161,7 +161,7 @@ func rejectCheckUpdateFlagCombinations(cmd *cobra.Command) error {
 }
 
 func newDBCommand(info version.Info) *cobra.Command {
-	cmd := newParentCommand("db", "Manage TiDB Cloud Starter - distributed serverless MySQL clusters.", info)
+	cmd := newParentCommand("db", "Manage TiDB Cloud Starter — serverless, distributed MySQL-compatible clusters.", info)
 	cmd.AddCommand(
 		newDBCreateClusterCommand(info),
 		newDBListClustersCommand(info),
@@ -208,11 +208,11 @@ func newDBCreateClusterCommand(info version.Info) *cobra.Command {
 			return service.DryRunCreateCluster(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("db-cluster-name", "", "Starter DB cluster display name")
-	cmd.Flags().String("db-cluster-type", "starter", "DB cluster type; must be starter")
-	cmd.Flags().String("project-id", "", "TiDB Cloud project id")
-	cmd.Flags().Int32("monthly-spending-limit-usd-cents", -1, "monthly spending limit in USD cents; omit to use the API default")
-	cmd.Flags().Bool("wait", false, "wait until the created cluster becomes ACTIVE before returning")
+	cmd.Flags().String("db-cluster-name", "", "Starter database cluster display name.")
+	cmd.Flags().String("db-cluster-type", "starter", "Starter database cluster type; must be starter.")
+	cmd.Flags().String("project-id", "", "TiDB Cloud project ID. Omit this value to use the default project for the profile.")
+	cmd.Flags().Int32("monthly-spending-limit-usd-cents", -1, "The monthly spending limit in USD cents; omit to use the default.")
+	cmd.Flags().Bool("wait", false, "Wait until the created cluster becomes ACTIVE before returning")
 	markUsageRequired(cmd, "db-cluster-name")
 	return cmd
 }
@@ -258,11 +258,11 @@ func newDBListClustersCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().Int32("page-size", 0, "number of clusters to request; 0 uses the API default")
-	cmd.Flags().String("page-token", "", "page token returned by a previous list-db-clusters call")
-	cmd.Flags().String("filter", "", "Starter API filter expression")
-	cmd.Flags().String("order-by", "", "Starter API orderBy expression")
-	cmd.Flags().Int32("skip", 0, "number of clusters to skip")
+	cmd.Flags().Int32("page-size", 0, "The number of database clusters to request; 0 uses the default.")
+	cmd.Flags().String("page-token", "", "For pagination, the page token returned by a previous list-db-clusters call.")
+	cmd.Flags().String("filter", "", "The filter expression for the database clusters.")
+	cmd.Flags().String("order-by", "", "The orderBy expression for the databaseclusters.")
+	cmd.Flags().Int32("skip", 0, "The number of database clusters to skip.")
 	return cmd
 }
 
@@ -292,8 +292,8 @@ func newDBDescribeClusterCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("db-cluster-id", "", "Starter DB cluster id")
-	cmd.Flags().String("view", "", "detail level: BASIC or FULL")
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
+	cmd.Flags().String("view", "", "Detail level for the view: BASIC or FULL.")
 	markUsageRequired(cmd, "db-cluster-id")
 	return cmd
 }
@@ -327,9 +327,9 @@ func newDBUpdateClusterCommand(info version.Info) *cobra.Command {
 			return service.DryRunUpdateCluster(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("db-cluster-id", "", "Starter DB cluster id")
-	cmd.Flags().String("db-cluster-name", "", "new Starter DB cluster display name")
-	cmd.Flags().Int32("monthly-spending-limit-usd-cents", -1, "monthly spending limit in USD cents; omit to leave unchanged")
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
+	cmd.Flags().String("db-cluster-name", "", "The new display name.")
+	cmd.Flags().Int32("monthly-spending-limit-usd-cents", -1, "The new monthly spending limit in USD cents; omit to leave unchanged.")
 	markUsageRequired(cmd, "db-cluster-id")
 	return cmd
 }
@@ -363,8 +363,8 @@ func newDBDeleteClusterCommand(info version.Info) *cobra.Command {
 			return service.DryRunDeleteCluster(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("db-cluster-id", "", "Starter DB cluster id")
-	cmd.Flags().Bool("wait", false, "wait until the deleted cluster reaches DELETED or is no longer accessible")
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
+	cmd.Flags().Bool("wait", false, "Wait until the cluster is deleted and is no longer accessible.")
 	markUsageRequired(cmd, "db-cluster-id")
 	return cmd
 }
@@ -398,9 +398,9 @@ func newDBCreateBranchCommand(info version.Info) *cobra.Command {
 			return service.DryRunCreateBranch(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("db-cluster-id", "", "Starter DB cluster id")
-	cmd.Flags().String("db-cluster-branch-name", "", "Starter DB cluster branch display name")
-	cmd.Flags().Bool("wait", false, "wait until the created branch becomes ACTIVE before returning")
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
+	cmd.Flags().String("db-cluster-branch-name", "", "Branch display name.")
+	cmd.Flags().Bool("wait", false, "Wait until the created branch becomes ACTIVE before returning.")
 	markUsageRequired(cmd, "db-cluster-id", "db-cluster-branch-name")
 	return cmd
 }
@@ -436,9 +436,9 @@ func newDBListBranchesCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("db-cluster-id", "", "Starter DB cluster id")
-	cmd.Flags().Int32("page-size", 0, "number of branches to request; 0 uses the API default")
-	cmd.Flags().String("page-token", "", "page token returned by a previous list-db-cluster-branches call")
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
+	cmd.Flags().Int32("page-size", 0, "The number of branches to request; 0 uses the default.")
+	cmd.Flags().String("page-token", "", "For pagination, the page token returned by a previous list-db-cluster-branches call.")
 	markUsageRequired(cmd, "db-cluster-id")
 	return cmd
 }
@@ -474,9 +474,9 @@ func newDBDescribeBranchCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("db-cluster-id", "", "Starter DB cluster id")
-	cmd.Flags().String("db-cluster-branch-id", "", "Starter DB cluster branch id")
-	cmd.Flags().String("view", "", "detail level: BASIC or FULL")
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
+	cmd.Flags().String("db-cluster-branch-id", "", "Starter database cluster branch ID.")
+	cmd.Flags().String("view", "", "Detail level for the view: BASIC or FULL.")
 	markUsageRequired(cmd, "db-cluster-id", "db-cluster-branch-id")
 	return cmd
 }
@@ -510,8 +510,8 @@ func newDBDeleteBranchCommand(info version.Info) *cobra.Command {
 			return service.DryRunDeleteBranch(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("db-cluster-id", "", "Starter DB cluster id")
-	cmd.Flags().String("db-cluster-branch-id", "", "Starter DB cluster branch id")
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
+	cmd.Flags().String("db-cluster-branch-id", "", "Starter database cluster branch ID.")
 	markUsageRequired(cmd, "db-cluster-id", "db-cluster-branch-id")
 	return cmd
 }
@@ -519,7 +519,7 @@ func newDBDeleteBranchCommand(info version.Info) *cobra.Command {
 func newDBPrepareQueryAccessCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "create-db-sql-users",
-		Short:      "Provision a tdc-managed database user or users for developer and agent access.",
+		Short:      "Provision a group of database users managed by tdc locally, with roles (admin, read-only, and read-write) for developer and agent access. And then, you can call format-db-connection-string to get the connection string for the users selectively.",
 		Mutation:   mutatingCommand,
 		Permission: authz.StarterSQLUserCreate,
 		Run: func(ctx commandContext) (any, error) {
@@ -551,7 +551,7 @@ func newDBPrepareQueryAccessCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("db-cluster-id", "", "Starter DB cluster id")
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
 	markUsageRequired(cmd, "db-cluster-id")
 	return cmd
 }
@@ -582,11 +582,11 @@ func newDBCreateConnectionStringCommand(info version.Info) *cobra.Command {
 		},
 	}, info)
 	addSQLCredentialFlags(cmd)
-	cmd.Flags().String("database", "", "database/default schema name")
-	cmd.Flags().String("format", connectionstring.FormatMySQLURI, "connection string format: mysql-uri, jdbc, go-sql-driver, sqlalchemy, or env")
-	cmd.Flags().String("env-prefix", "TIDB_", "dotenv variable prefix for --format env")
-	cmd.Flags().Bool("env-include-database-url", false, "include a database URL variable with --format env")
-	cmd.Flags().String("env-database-url-name", "DATABASE_URL", "database URL variable name for --format env")
+	cmd.Flags().String("database", "", "Default database (aka. schema) name.")
+	cmd.Flags().String("format", connectionstring.FormatMySQLURI, "Connection string format: mysql-uri, jdbc, go-sql-driver, sqlalchemy, or env.")
+	cmd.Flags().String("env-prefix", "TIDB_", "Use with --format env, the prefix for the environment variables.")
+	cmd.Flags().Bool("env-include-database-url", false, "Use with --format env, include an additional database URL variable.")
+	cmd.Flags().String("env-database-url-name", "DATABASE_URL", "Use with --format env, the name for the database URL variable.")
 	markUsageRequired(cmd, "db-cluster-id")
 	return cmd
 }
@@ -594,7 +594,7 @@ func newDBCreateConnectionStringCommand(info version.Info) *cobra.Command {
 func newDBExecuteSQLCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "execute-sql-statement",
-		Short:      "Execute one SQL statement.",
+		Short:      "Execute single SQL statement. You need to call create-db-sql-users at least once to prepare the credentials.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.StarterSQLExecute,
 		Run: func(ctx commandContext) (any, error) {
@@ -610,18 +610,18 @@ func newDBExecuteSQLCommand(info version.Info) *cobra.Command {
 		},
 	}, info)
 	addSQLCredentialFlags(cmd)
-	cmd.Flags().String("database", "", "database/default schema name")
-	cmd.Flags().String("sql", "", "one SQL statement to execute")
-	cmd.Flags().String("transport", "https", "SQL execution transport: https or mysql")
+	cmd.Flags().String("database", "", "Default database (aka. schema) name.")
+	cmd.Flags().String("sql", "", "The SQL statement to execute.")
+	cmd.Flags().String("transport", "https", "SQL execution transport protocal: https or mysql.")
 	markUsageRequired(cmd, "db-cluster-id", "sql")
 	return cmd
 }
 
 func addSQLCredentialFlags(cmd *cobra.Command) {
-	cmd.Flags().String("db-cluster-id", "", "Starter DB cluster id")
-	cmd.Flags().Bool("read-only", false, "use prepared read_only DB SQL credentials")
-	cmd.Flags().Bool("read-write", false, "use prepared read_write DB SQL credentials")
-	cmd.Flags().Bool("admin", false, "use prepared admin DB SQL credentials")
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
+	cmd.Flags().Bool("read-only", false, "Use the prepared read_only role for credentials.")
+	cmd.Flags().Bool("read-write", false, "Use the prepared read_write role for credentials.")
+	cmd.Flags().Bool("admin", false, "Use the prepared admin role for credentials.")
 }
 
 func dbServiceAndProfile(ctx commandContext) (db.Service, *config.Profile, error) {
@@ -845,7 +845,7 @@ func sqlCommonOptions(ctx commandContext) (sqlCommon, error) {
 }
 
 func newFSCommand(info version.Info) *cobra.Command {
-	cmd := newParentCommand("fs", "Manage and access TiDB Cloud Filesystem (FS) - distributed serverless agentFS.", info)
+	cmd := newParentCommand("fs", "Manage TiDB Cloud Filesystem — serverless, distributed POSIX-compatible file systems.", info)
 	commands := []*cobra.Command{
 		newFSCreateFileSystemCommand(info),
 		newFSDeleteFileSystemCommand(info),
@@ -2483,7 +2483,7 @@ func fsDeleteFileSystemName(ctx commandContext) (string, error) {
 }
 
 func newFSVaultCommand(info version.Info) *cobra.Command {
-	cmd := newParentCommand("fs-vault", "Manage FS vault secrets and delegated access.", info)
+	cmd := newParentCommand("fs-vault", "Manage file system vault secrets and delegated access.", info)
 	commands := []*cobra.Command{
 		newVaultCreateSecretCommand(info),
 		newVaultReplaceSecretCommand(info),
@@ -2530,8 +2530,8 @@ func newVaultCreateSecretCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("secret-name", "", "vault secret name")
-	cmd.Flags().StringArray("field", nil, "secret field assignment key=value, key=@file, or key=-; repeatable")
+	cmd.Flags().String("secret-name", "", "Vault secret name.")
+	cmd.Flags().StringArray("field", nil, "Secret field assignment key=value, key=@file, or key=-; repeatable.")
 	markUsageRequired(cmd, "secret-name", "field")
 	return cmd
 }
@@ -2539,7 +2539,7 @@ func newVaultCreateSecretCommand(info version.Info) *cobra.Command {
 func newVaultReplaceSecretCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "replace-secret",
-		Short:      "Replace all fields in a tdc fs-vault secret from a directory.",
+		Short:      "Replace all fields in a file systemvault secret from a directory.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVaultSecretUpdate,
 		Run: func(ctx commandContext) (any, error) {
@@ -2562,8 +2562,8 @@ func newVaultReplaceSecretCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("secret-path", "", "vault path in the form /n/vault/<secret>")
-	cmd.Flags().String("from-directory", "", "directory whose files become secret fields")
+	cmd.Flags().String("secret-path", "", "Vault path in the form /n/vault/<secret>.")
+	cmd.Flags().String("from-directory", "", "Directory that contains files to become secret fields.")
 	markUsageRequired(cmd, "secret-path", "from-directory")
 	return cmd
 }
@@ -2571,7 +2571,7 @@ func newVaultReplaceSecretCommand(info version.Info) *cobra.Command {
 func newVaultReadSecretCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "read-secret",
-		Short:      "Read a tdc fs-vault secret.",
+		Short:      "Read a file system vault secret.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSVaultSecretRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -2611,10 +2611,10 @@ func newVaultReadSecretCommand(info version.Info) *cobra.Command {
 			return result, nil
 		},
 	}, info)
-	cmd.Flags().String("secret-name", "", "vault secret name")
-	cmd.Flags().String("field", "", "optional field name to read")
-	cmd.Flags().String("format", "json", "read output format: json, raw, or env")
-	cmd.Flags().String("vault-token", "", "delegated tdc fs-vault token; prefer TDC_VAULT_TOKEN")
+	cmd.Flags().String("secret-name", "", "Vault secret name.")
+	cmd.Flags().String("field", "", "Field name to read.")
+	cmd.Flags().String("format", "json", "Read output format: json, raw, or env.")
+	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TDC_VAULT_TOKEN environment variable.")
 	markUsageRequired(cmd, "secret-name")
 	return cmd
 }
@@ -2622,7 +2622,7 @@ func newVaultReadSecretCommand(info version.Info) *cobra.Command {
 func newVaultListSecretsCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "list-secrets",
-		Short:      "List tdc fs-vault secrets visible to the active credential.",
+		Short:      "List file system vault secrets visible to the active credentials.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSVaultSecretRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -2637,14 +2637,14 @@ func newVaultListSecretsCommand(info version.Info) *cobra.Command {
 			return service.ListVaultSecrets(ctx.cmd.Context(), tdcfs.VaultListSecretsOptions{Profile: profile, VaultToken: token})
 		},
 	}, info)
-	cmd.Flags().String("vault-token", "", "delegated tdc fs-vault token; prefer TDC_VAULT_TOKEN")
+	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TDC_VAULT_TOKEN environment variable.")
 	return cmd
 }
 
 func newVaultDeleteSecretCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "delete-secret",
-		Short:      "Delete a tdc fs-vault secret.",
+		Short:      "Delete a file system vault secret.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVaultSecretDelete,
 		Run: func(ctx commandContext) (any, error) {
@@ -2689,12 +2689,12 @@ func newVaultCreateGrantCommand(info version.Info) *cobra.Command {
 			return result, nil
 		},
 	}, info)
-	cmd.Flags().String("agent-id", "", "agent id for the delegated grant")
-	cmd.Flags().StringArray("scope", nil, "vault scope such as secret or secret/field; repeatable")
-	cmd.Flags().String("permission", "", "grant permission: read or write")
-	cmd.Flags().Duration("ttl", 0, "grant time to live, for example 1h")
-	cmd.Flags().String("label-hint", "", "optional grant label hint")
-	cmd.Flags().Bool("token-only", false, "print only the delegated bearer token")
+	cmd.Flags().String("agent-id", "", "Agent ID for the delegated grant.")
+	cmd.Flags().StringArray("scope", nil, "The vault scope such as secret or secret/field; repeatable.")
+	cmd.Flags().String("permission", "", "Grant permission: read or write.")
+	cmd.Flags().Duration("ttl", 0, "Grant time to live, for example 1h.")
+	cmd.Flags().String("label-hint", "", "Grant label hint.")
+	cmd.Flags().Bool("token-only", false, "Print the delegated bearer token only.")
 	markUsageRequired(cmd, "agent-id", "scope", "permission", "ttl")
 	return cmd
 }
@@ -2702,7 +2702,7 @@ func newVaultCreateGrantCommand(info version.Info) *cobra.Command {
 func newVaultDeleteGrantCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "delete-grant",
-		Short:      "Delete a tdc fs-vault grant.",
+		Short:      "Delete a file systemvault grant.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVaultGrantDelete,
 		Run: func(ctx commandContext) (any, error) {
@@ -2725,9 +2725,9 @@ func newVaultDeleteGrantCommand(info version.Info) *cobra.Command {
 			return service.DeleteVaultGrant(ctx.cmd.Context(), tdcfs.VaultDeleteGrantOptions{Profile: profile, GrantID: grantID, RevokedBy: revokedBy, Reason: reason})
 		},
 	}, info)
-	cmd.Flags().String("grant-id", "", "vault grant id")
-	cmd.Flags().String("revoked-by", "tdc", "actor label for the revoke audit entry")
-	cmd.Flags().String("reason", "", "optional revoke reason")
+	cmd.Flags().String("grant-id", "", "Vault grant ID.")
+	cmd.Flags().String("revoked-by", "tdc", "Actor label for the revoke audit entry.")
+	cmd.Flags().String("reason", "", "The reason for the revoke.")
 	markUsageRequired(cmd, "grant-id")
 	return cmd
 }
@@ -2735,7 +2735,7 @@ func newVaultDeleteGrantCommand(info version.Info) *cobra.Command {
 func newVaultListAuditEventsCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "list-audit-events",
-		Short:      "List tdc fs-vault audit events.",
+		Short:      "List file system vault audit events.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSVaultAuditRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -2768,17 +2768,17 @@ func newVaultListAuditEventsCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("secret-name", "", "filter by vault secret name")
-	cmd.Flags().String("agent-id", "", "filter by agent id")
-	cmd.Flags().Duration("since", 0, "client-side relative time filter, for example 24h")
-	cmd.Flags().Int32("limit", int32(tdcfs.DefaultVaultAuditLimit), "maximum events to return")
+	cmd.Flags().String("secret-name", "", "Filter by vault secret name.")
+	cmd.Flags().String("agent-id", "", "Filter by agent ID.")
+	cmd.Flags().Duration("since", 0, "Relative time filter for client-side time, for example 24h.")
+	cmd.Flags().Int32("limit", int32(tdcfs.DefaultVaultAuditLimit), "The maximum number of events to return.")
 	return cmd
 }
 
 func newVaultRunWithSecretCommand(info version.Info) *cobra.Command {
 	cmd := newCommand(commandSpec{
 		Use:   "run-with-secret",
-		Short: "Run a command with one tdc fs-vault secret injected into its environment.",
+		Short: "Run a command with one file system vault secret injected into its environment.",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := commandContext{cmd: cmd}
 			service, profile, err := fsVaultServiceAndProfile(ctx)
@@ -2805,8 +2805,8 @@ func newVaultRunWithSecretCommand(info version.Info) *cobra.Command {
 		},
 	}, info)
 	cmd.Args = cobra.ArbitraryArgs
-	cmd.Flags().String("secret-path", "", "vault path in the form /n/vault/<secret>")
-	cmd.Flags().String("vault-token", "", "delegated tdc fs-vault token; prefer TDC_VAULT_TOKEN")
+	cmd.Flags().String("secret-path", "", "Vault path in the form /n/vault/<secret>.")
+	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TDC_VAULT_TOKEN.")
 	markUsageRequired(cmd, "secret-path")
 	return cmd
 }
@@ -2814,7 +2814,7 @@ func newVaultRunWithSecretCommand(info version.Info) *cobra.Command {
 func newVaultMountCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "mount-vault",
-		Short:      "Mount readable tdc fs-vault secrets as a local read-only FUSE filesystem.",
+		Short:      "Mount readable file system vaule secrets as a local read-only FUSE filesystem.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVaultSecretRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -2840,10 +2840,10 @@ func newVaultMountCommand(info version.Info) *cobra.Command {
 			return service.DryRunMountVault(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("mount-path", "", "local mount path")
-	cmd.Flags().Bool("foreground", false, "run mount runtime in the foreground until interrupted")
-	cmd.Flags().Duration("ready-timeout", 30*time.Second, "time to wait for a background mount to become ready")
-	cmd.Flags().String("vault-token", "", "delegated tdc fs-vault token; prefer TDC_VAULT_TOKEN")
+	cmd.Flags().String("mount-path", "", "The local mount path.")
+	cmd.Flags().Bool("foreground", false, "Run mount runtime in the foreground until interrupted.")
+	cmd.Flags().Duration("ready-timeout", 30*time.Second, "The time to wait for a background mount to become ready.")
+	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TDC_VAULT_TOKEN environment variable.")
 	markUsageRequired(cmd, "mount-path")
 	return cmd
 }
@@ -2851,7 +2851,7 @@ func newVaultMountCommand(info version.Info) *cobra.Command {
 func newVaultUnmountCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "unmount-vault",
-		Short:      "Unmount a local tdc fs-vault filesystem.",
+		Short:      "Unmount a local vault file system.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVaultSecretRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -2915,10 +2915,10 @@ func newVaultUnmountCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("mount-path", "", "local mount path")
-	cmd.Flags().Duration("timeout", 30*time.Second, "time to wait for the mount process to exit")
-	cmd.Flags().Bool("force", false, "force-kill the mount process if graceful unmount times out")
-	cmd.Flags().Bool("ignore-absent", false, "return success when no tdc fs-vault mount state exists for the path")
+	cmd.Flags().String("mount-path", "", "The local mount path.")
+	cmd.Flags().Duration("timeout", 30*time.Second, "The time to wait for the mount process to exit.")
+	cmd.Flags().Bool("force", false, "Forcefully kill the mount process if graceful unmount times out.")
+	cmd.Flags().Bool("ignore-absent", false, "Return success when no file system vault mount state exists for the path.")
 	markUsageRequired(cmd, "mount-path")
 	return cmd
 }
@@ -3005,7 +3005,7 @@ func newFSGitCommand(info version.Info) *cobra.Command {
 func newGitCloneWorkspaceCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "clone-git-workspace",
-		Short:      "Fast clone a repository into a mounted tdc fs path.",
+		Short:      "Fast clone a repository into a mounted file system path.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSGitWorkspaceWrite,
 		Run: func(ctx commandContext) (any, error) {
@@ -3031,7 +3031,7 @@ func newGitCloneWorkspaceCommand(info version.Info) *cobra.Command {
 func newGitHydrateWorkspaceCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "hydrate-git-workspace",
-		Short:      "Hydrate clean git objects for a tdc fs-git workspace.",
+		Short:      "Hydrate clean git objects for a fs-git workspace.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSGitWorkspaceRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -3050,8 +3050,8 @@ func newGitHydrateWorkspaceCommand(info version.Info) *cobra.Command {
 			return service.HydrateGitWorkspace(ctx.cmd.Context(), tdcfs.GitWorkspaceHydrateOptions{Profile: profile, TargetPath: targetPath, Timeout: timeout})
 		},
 	}, info)
-	cmd.Flags().String("target-path", "", "mounted tdc fs workspace path")
-	cmd.Flags().Duration("timeout", 30*time.Minute, "maximum hydrate duration")
+	cmd.Flags().String("target-path", "", "The workspace path with a file system mounted.")
+	cmd.Flags().Duration("timeout", 30*time.Minute, "The maximum hydrate duration.")
 	markUsageRequired(cmd, "target-path")
 	return cmd
 }
@@ -3059,7 +3059,7 @@ func newGitHydrateWorkspaceCommand(info version.Info) *cobra.Command {
 func newGitAddWorktreeCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "add-git-worktree",
-		Short:      "Fast add a linked git worktree in a mounted tdc fs path.",
+		Short:      "Fast add a linked fs-git worktree in a mounted file system path.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSGitWorkspaceWrite,
 		Run: func(ctx commandContext) (any, error) {
@@ -3088,7 +3088,7 @@ func newGitAddWorktreeCommand(info version.Info) *cobra.Command {
 func newGitRemoveWorktreeCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "remove-git-worktree",
-		Short:      "Remove a linked tdc fs-git worktree without recursive clean-tree deletes.",
+		Short:      "Remove a linked fs-git worktree without recursive clean-tree deletes.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSGitWorkspaceWrite,
 		Run: func(ctx commandContext) (any, error) {
@@ -3107,8 +3107,8 @@ func newGitRemoveWorktreeCommand(info version.Info) *cobra.Command {
 			return service.RemoveGitWorktree(ctx.cmd.Context(), tdcfs.GitWorktreeRemoveOptions{Profile: profile, WorktreePath: worktreePath, Force: force})
 		},
 	}, info)
-	cmd.Flags().String("worktree-path", "", "mounted tdc fs path of the linked worktree")
-	cmd.Flags().Bool("force", false, "remove even when the linked worktree has local changes")
+	cmd.Flags().String("worktree-path", "", "Mounted file system path of the linked worktree.")
+	cmd.Flags().Bool("force", false, "Remove even when the linked worktree has local changes.")
 	markUsageRequired(cmd, "worktree-path")
 	return cmd
 }
@@ -3230,11 +3230,11 @@ func newJournalCreateCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("journal-id", "", "journal id; generated when omitted")
-	cmd.Flags().String("journal-kind", "agent", "journal kind")
-	cmd.Flags().String("title", "", "journal title")
-	cmd.Flags().String("actor", "", "actor in the form type:id")
-	cmd.Flags().StringArray("label", nil, "journal label key=value; repeatable")
+	cmd.Flags().String("journal-id", "", "Journal ID; auto generated when omitted.")
+	cmd.Flags().String("journal-kind", "agent", "Journal kind.")
+	cmd.Flags().String("title", "", "Journal title.")
+	cmd.Flags().String("actor", "", "Actor in the form type:id.")
+	cmd.Flags().StringArray("label", nil, "Journal label key=value; repeatable.")
 	return cmd
 }
 
@@ -3290,13 +3290,13 @@ func newJournalAppendEntriesCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("journal-id", "", "journal id")
-	cmd.Flags().String("idempotency-key", "", "append idempotency key; generated when omitted")
-	cmd.Flags().String("entry-type", "", "default entry type for entries missing type")
-	cmd.Flags().String("source", "", "entry source")
-	cmd.Flags().StringArray("subject", nil, "entry subject; repeatable")
-	cmd.Flags().StringArray("entry-json", nil, "one JSON journal entry object; repeatable")
-	cmd.Flags().Bool("json-array", false, "read a JSON array from stdin instead of JSONL")
+	cmd.Flags().String("journal-id", "", "The journal ID.")
+	cmd.Flags().String("idempotency-key", "", "Append idempotency key; generated when omitted.")
+	cmd.Flags().String("entry-type", "", "Default entry type for entries missing type.")
+	cmd.Flags().String("source", "", "Entry source.")
+	cmd.Flags().StringArray("subject", nil, "Entry subject; repeatable.")
+	cmd.Flags().StringArray("entry-json", nil, "JSON journal entry; repeatable.")
+	cmd.Flags().Bool("json-array", false, "Read a JSON array from stdin instead of JSONL.")
 	markUsageRequired(cmd, "journal-id")
 	return cmd
 }
@@ -3304,7 +3304,7 @@ func newJournalAppendEntriesCommand(info version.Info) *cobra.Command {
 func newJournalReadEntriesCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "read-journal-entries",
-		Short:      "Read entries from a tdc fs-journal.",
+		Short:      "Read entries from a file system journal.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSJournalRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -3332,9 +3332,9 @@ func newJournalReadEntriesCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("journal-id", "", "journal id")
-	cmd.Flags().Int64("after-seq", 0, "read entries after this sequence")
-	cmd.Flags().Int32("limit", 100, "maximum entries to read")
+	cmd.Flags().String("journal-id", "", "The journal ID.")
+	cmd.Flags().Int64("after-seq", 0, "Read journal entries after the specified sequence#.")
+	cmd.Flags().Int32("limit", 100, "The maximum number of entries to read.")
 	markUsageRequired(cmd, "journal-id")
 	return cmd
 }
@@ -3342,7 +3342,7 @@ func newJournalReadEntriesCommand(info version.Info) *cobra.Command {
 func newJournalSearchEntriesCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "search-journal-entries",
-		Short:      "Search tdc fs-journal entries and journals.",
+		Short:      "Search file system journal entries.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSJournalSearch,
 		Run: func(ctx commandContext) (any, error) {
@@ -3410,24 +3410,24 @@ func newJournalSearchEntriesCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("entry-type", "", "entry type filter")
-	cmd.Flags().String("status", "", "entry status filter")
-	cmd.Flags().String("journal-kind", "", "journal kind filter")
-	cmd.Flags().String("actor", "", "actor in the form type:id")
-	cmd.Flags().StringArray("subject", nil, "subject filter; repeatable")
-	cmd.Flags().StringArray("label", nil, "label filter key=value; repeatable")
-	cmd.Flags().String("since", "", "relative duration or RFC3339 lower time bound")
-	cmd.Flags().String("until", "", "RFC3339 upper time bound")
-	cmd.Flags().Int32("limit", 100, "maximum matches to read")
-	cmd.Flags().String("cursor", "", "pagination cursor")
-	cmd.Flags().Bool("include-entries", false, "include full entry payloads in matches")
+	cmd.Flags().String("entry-type", "", "Journal entry type filter.")
+	cmd.Flags().String("status", "", "Journal entry status filter.")
+	cmd.Flags().String("journal-kind", "", "Journal kind filter.")
+	cmd.Flags().String("actor", "", "Actor in the form type:id.")
+	cmd.Flags().StringArray("subject", nil, "Journal entry subject filter; repeatable.")
+	cmd.Flags().StringArray("label", nil, "Journal entry label filter key=value; repeatable.")
+	cmd.Flags().String("since", "", "Relative duration or RFC3339 lower time bound.")
+	cmd.Flags().String("until", "", "RFC3339 upper time bound.")
+	cmd.Flags().Int32("limit", 100, "The maximum number of matches to read.")
+	cmd.Flags().String("cursor", "", "The cursor for pagination.")
+	cmd.Flags().Bool("include-entries", false, "Toggle to include full entry payloads.")
 	return cmd
 }
 
 func newJournalVerifyCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "verify-journal",
-		Short:      "Verify a tdc fs-journal hash chain.",
+		Short:      "Verify a file system journal hash chain.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSJournalVerify,
 		Run: func(ctx commandContext) (any, error) {
@@ -3445,7 +3445,7 @@ func newJournalVerifyCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("journal-id", "", "journal id")
+	cmd.Flags().String("journal-id", "", "Journal ID")
 	markUsageRequired(cmd, "journal-id")
 	return cmd
 }
@@ -3493,7 +3493,7 @@ func newOrganizationListProjectsCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().Int32("page-size", 0, "number of projects to request; 0 uses the API default")
-	cmd.Flags().String("page-token", "", "page token returned by a previous list-projects call")
+	cmd.Flags().Int32("page-size", 0, "The number of projects to request; 0 uses the default.")
+	cmd.Flags().String("page-token", "", "The page token returned by a previous list-projects call.")
 	return cmd
 }
