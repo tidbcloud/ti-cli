@@ -15,8 +15,9 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	root := cli.NewRootCommand(version.Current())
-	if err := cli.Execute(ctx, root, os.Args[1:], os.Stdout, os.Stderr); err != nil {
+	info := version.Current()
+	root := cli.NewRootCommand(info)
+	if err := cli.Execute(ctx, root, info, os.Args[1:], os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "\ntdc [ERROR]: %s\n", apperr.MessageFor(err))
 		os.Exit(apperr.ExitCodeFor(err))
 	}

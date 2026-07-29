@@ -2,6 +2,11 @@ name: deploy-telemetry
 
 on:
   workflow_dispatch:
+    inputs:
+      public_host:
+        description: Optional public hostname to persist in the server-side telemetry .env
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -20,10 +25,13 @@ jobs:
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
+        env:
+          TELEMETRY_PUBLIC_HOST: ${{ inputs.public_host }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USERNAME }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: TELEMETRY_PUBLIC_HOST
           command_timeout: 30m
           script: |
             set -euo pipefail
@@ -33,6 +41,14 @@ jobs:
             git pull --ff-only origin main
             test -f deploy/telemetry/.env
             test ! -L deploy/telemetry/.env
+            if [ -n "${TELEMETRY_PUBLIC_HOST:-}" ]; then
+              printf '%s' "$TELEMETRY_PUBLIC_HOST" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'
+              if grep -q '^TELEMETRY_PUBLIC_HOST=' deploy/telemetry/.env; then
+                sed -i "s|^TELEMETRY_PUBLIC_HOST=.*$|TELEMETRY_PUBLIC_HOST=$TELEMETRY_PUBLIC_HOST|" deploy/telemetry/.env
+              else
+                printf '\nTELEMETRY_PUBLIC_HOST=%s\n' "$TELEMETRY_PUBLIC_HOST" >> deploy/telemetry/.env
+              fi
+            fi
             docker compose \
               --env-file deploy/telemetry/.env \
               -f deploy/telemetry/docker-compose.yml \

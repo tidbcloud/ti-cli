@@ -16,11 +16,13 @@ import (
 	"github.com/tidbcloud/tdc/internal/auth"
 	"github.com/tidbcloud/tdc/internal/authz"
 	"github.com/tidbcloud/tdc/internal/config"
+	"github.com/tidbcloud/tdc/internal/config/region"
 	"github.com/tidbcloud/tdc/internal/config/store"
 	"github.com/tidbcloud/tdc/internal/dryrun"
 	"github.com/tidbcloud/tdc/internal/oplog"
 	"github.com/tidbcloud/tdc/internal/output"
 	"github.com/tidbcloud/tdc/internal/settings"
+	"github.com/tidbcloud/tdc/internal/telemetry"
 	"github.com/tidbcloud/tdc/internal/version"
 )
 
@@ -102,31 +104,137 @@ To see help information, you can run:
 	)
 }
 
-func Execute(ctx context.Context, root *cobra.Command, args []string, stdout, stderr io.Writer) error {
+func Execute(ctx context.Context, root *cobra.Command, info version.Info, args []string, stdout, stderr io.Writer) error {
 	recorder, recordCommand := commandRecorder(args, stderr)
 	ctx = oplog.WithRecorder(ctx, recorder)
-	start := time.Now()
+	operationStart := time.Now()
 	if err := rejectShortFlags(args); err != nil {
 		if recordCommand {
-			recorder.Record(ctx, commandEvent(root, root, err, time.Since(start)))
+			recorder.Record(ctx, commandEvent(root, root, err, time.Since(operationStart)))
 		}
 		return err
 	}
 	root.SetArgs(args)
 	root.SetOut(stdout)
 	root.SetErr(stderr)
+	telemetryCommand := resolvedTelemetryCommand(root, args)
+	var telemetrySession *telemetry.Session
+	if telemetryCommand != nil {
+		telemetrySession = telemetry.Start(telemetry.Config{
+			Eligible:    true,
+			Endpoint:    effectiveTelemetryEndpoint(info),
+			Info:        info,
+			Debug:       debugRequested(args),
+			DebugWriter: stderr,
+		})
+	}
+	commandStart := time.Now()
 	cmd, err := root.ExecuteContextC(ctx)
+	commandDuration := time.Since(commandStart)
 	if err == nil {
 		if recordCommand {
-			recorder.Record(ctx, commandEvent(root, cmd, nil, time.Since(start)))
+			recorder.Record(ctx, commandEvent(root, cmd, nil, time.Since(operationStart)))
 		}
+		finishTelemetry(telemetrySession, telemetryCommand, cmd, nil, commandDuration)
 		return nil
 	}
 	normalized := normalizeError(err)
 	if recordCommand {
-		recorder.Record(ctx, commandEvent(root, cmd, normalized, time.Since(start)))
+		recorder.Record(ctx, commandEvent(root, cmd, normalized, time.Since(operationStart)))
 	}
+	finishTelemetry(telemetrySession, telemetryCommand, cmd, normalized, commandDuration)
 	return normalized
+}
+
+func resolvedTelemetryCommand(root *cobra.Command, args []string) *cobra.Command {
+	if root == nil || isUpdateInvocation(args) || hasTelemetryExclusionFlag(args) {
+		return nil
+	}
+	cmd, _, err := root.Find(args)
+	if err != nil || cmd == nil || cmd == root || cmd.Name() == "help" || hasBusinessSubcommands(cmd) {
+		return nil
+	}
+	return cmd
+}
+
+func hasBusinessSubcommands(cmd *cobra.Command) bool {
+	for _, child := range cmd.Commands() {
+		if child.Name() != "help" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTelemetryExclusionFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--" {
+			return false
+		}
+		name, value, hasValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
+		if !strings.HasPrefix(arg, "--") || (name != "help" && name != "version") {
+			continue
+		}
+		if !hasValue || strings.EqualFold(value, "true") || value == "1" {
+			return true
+		}
+	}
+	return false
+}
+
+func effectiveTelemetryEndpoint(info version.Info) string {
+	if endpoint := strings.TrimSpace(info.TelemetryEndpoint); endpoint != "" {
+		return endpoint
+	}
+	if info.InstallSource == "local" && os.Getenv("TDC_ALLOW_TEST_ENDPOINTS") == "1" {
+		return strings.TrimSpace(os.Getenv("TDC_TEST_TELEMETRY_ENDPOINT"))
+	}
+	return ""
+}
+
+func finishTelemetry(session *telemetry.Session, candidate, executed *cobra.Command, err error, duration time.Duration) {
+	if session == nil || candidate == nil {
+		return
+	}
+	if executed == nil {
+		executed = candidate
+	}
+	provider, regionCode := telemetryPlacement(executed)
+	session.Finish(telemetry.EventInput{
+		CommandPath:   candidate.CommandPath(),
+		FlagNames:     changedFlagNames(executed),
+		ExitCode:      apperr.ExitCodeFor(err),
+		ErrorCode:     apperr.CodeFor(err),
+		Duration:      duration,
+		CloudProvider: provider,
+		RegionCode:    regionCode,
+		ProfileSource: telemetryProfileSource(executed),
+	})
+}
+
+func telemetryPlacement(cmd *cobra.Command) (string, string) {
+	_, regionCode := commandProfileSummary(cmd)
+	if regionCode == "" {
+		return "", ""
+	}
+	placement, err := region.ParsePlacementCode(regionCode)
+	if err != nil {
+		return "unknown", "unknown"
+	}
+	return placement.Provider, placement.Code
+}
+
+func telemetryProfileSource(cmd *cobra.Command) string {
+	if cmd == nil {
+		return "unknown"
+	}
+	if flag := cmd.Flag("profile"); flag != nil && flag.Changed {
+		return "explicit"
+	}
+	if value := strings.TrimSpace(os.Getenv("TDC_PROFILE")); value != "" {
+		return "env"
+	}
+	return "default"
 }
 
 func commandRecorder(args []string, stderr io.Writer) (oplog.Recorder, bool) {

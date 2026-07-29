@@ -306,6 +306,25 @@ print_next_steps() {
   printf "  Docs: ${DIM}https://github.com/tidbcloud/tdc${RESET}\n"
 }
 
+print_telemetry_notice() {
+  printf "\n"
+  printf "  ${BOLD}Anonymous telemetry:${RESET}\n"
+  printf "\n"
+  printf "  tdc collects anonymous command usage and reliability telemetry in release builds.\n"
+  printf "  It collects command and flag names (never values), exit and stable error codes,\n"
+  printf "  duration, region, tdc version, OS, and architecture.\n"
+  printf "\n"
+  printf "  It never collects credentials, tokens, SQL text, file paths or contents,\n"
+  printf "  command output, API response payloads, or cloud resource IDs.\n"
+  printf "\n"
+  printf "  To disable telemetry, create or edit ~/.tdc/.preferences:\n"
+  printf "\n"
+  printf "    [telemetry]\n"
+  printf "    enabled = false\n"
+  printf "\n"
+  printf "  For one process: ${DIM}TDC_TELEMETRY=off tdc ...${RESET}\n"
+}
+
 TMP_DIR="$(mktemp -d)"
 cleanup() {
   rm -rf "$TMP_DIR"
@@ -371,4 +390,5 @@ success "tdc fs companion installed to ${COMPANION_TARGET}"
 bootstrap_config
 report_path_status
 print_regions
+print_telemetry_notice
 print_next_steps
