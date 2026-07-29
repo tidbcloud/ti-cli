@@ -179,6 +179,8 @@ tdc fs mount-file-system --file-system-name agent-workspace --mount-path /path_t
 
 ### TiDB Cloud Starter
 
+`tdc db` manages TiDB Cloud Starter clusters only. Cluster lists omit Essential and other service plans, and every cluster, branch, SQL-user, connection-string, and SQL command verifies the cluster service plan before continuing. If TiDB Cloud does not return enough plan metadata to prove that a cluster is Starter, `tdc` fails without issuing the requested mutation.
+
 ```shell
 tdc db create-db-cluster --db-cluster-name my-distributed-mysql --wait
 ```

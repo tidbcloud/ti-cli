@@ -285,6 +285,67 @@ func TestOutputQueryAndDryRun(t *testing.T) {
 	readOnlyDryRun.wantStderrContains("tdc [ERROR]: invalid flag for tdc db list-db-clusters: unknown flag: --dry-run")
 }
 
+func TestStarterOnlyDBGuardrailsThroughBinary(t *testing.T) {
+	bin := tdcBinary(t)
+	home := t.TempDir()
+	mutations := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters":
+			_, _ = w.Write([]byte(`{
+				"clusters":[
+					{"clusterId":"starter-1","displayName":"starter","servicePlan":"Starter"},
+					{"clusterId":"essential-1","displayName":"essential","servicePlan":"Essential"}
+				],
+				"nextPageToken":"token-2",
+				"totalSize":2
+			}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/essential-1":
+			_, _ = w.Write([]byte(`{"clusterId":"essential-1","displayName":"essential","servicePlan":"Essential"}`))
+		default:
+			mutations++
+			t.Errorf("unexpected request after Starter guard: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusInternalServerError)
+		}
+	}))
+	defer server.Close()
+
+	writeE2EFile(t, filepath.Join(home, ".tdc", "config"), "[default]\nregion_code = 'aws-us-east-1'\nproject_id = 'project-1'\n", 0o600)
+	writeE2EFile(t, filepath.Join(home, ".tdc", "credentials"), "[default]\ntdc_public_key = 'public'\ntdc_private_key = 'private'\n", 0o600)
+	env := []string{
+		"HOME=" + home,
+		"TDC_ALLOW_TEST_ENDPOINTS=1",
+		"TDC_TEST_STARTER_BASE_URL=" + server.URL,
+		"TDC_LOGGING=on",
+	}
+
+	list := runTDCWithInput(t, bin, "", env, "db", "list-db-clusters")
+	list.wantExitCode(0)
+	list.wantStdoutContains(`"id": "starter-1"`)
+	list.wantStdoutContains(`"next_page_token": "token-2"`)
+	list.wantStdoutNotContains("essential-1")
+	list.wantStdoutNotContains("total_size")
+
+	describe := runTDCWithInput(t, bin, "", env, "db", "describe-db-cluster", "--db-cluster-id", "essential-1")
+	describe.wantExitCode(2)
+	describe.wantStderrContains(`cluster "essential-1" uses service plan "Essential"`)
+
+	update := runTDCWithInput(t, bin, "", env, "db", "update-db-cluster", "--db-cluster-id", "essential-1", "--db-cluster-name", "renamed")
+	update.wantExitCode(2)
+	update.wantStderrContains(`tdc db only manages Starter clusters`)
+	if mutations != 0 {
+		t.Fatalf("non-Starter commands sent %d mutation requests", mutations)
+	}
+
+	logData, err := os.ReadFile(filepath.Join(home, ".tdc", "logs", "tdc.jsonl"))
+	if err != nil {
+		t.Fatalf("read operation log: %v", err)
+	}
+	if !strings.Contains(string(logData), `"error_code":"db.not_starter_cluster"`) {
+		t.Fatalf("operation log does not contain stable guard error code:\n%s", logData)
+	}
+}
+
 func tdcConfigEnv() []string {
 	return []string{
 		"TDC_REGION_CODE=aws-us-east-1",

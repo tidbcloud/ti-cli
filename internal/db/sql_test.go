@@ -67,6 +67,47 @@ func TestPrepareQueryAccessCreatesAndStoresCredentials(t *testing.T) {
 	}
 }
 
+func TestPrepareQueryAccessRejectsNonStarterBeforeIAMOrCredentialWrite(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1beta1/clusters/cluster-1" {
+			t.Fatalf("IAM request was sent before rejection: %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Essential"}`))
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	_, err := testSQLService(server.URL, home).PrepareQueryAccess(context.Background(), PrepareQueryAccessOptions{
+		Profile: testProfile(), ClusterID: "cluster-1",
+	})
+	if apperr.CodeFor(err) != "db.not_starter_cluster" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("requests = %d, want only the cluster preflight", requests)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".tdc", "db_users")); !os.IsNotExist(err) {
+		t.Fatalf("non-Starter rejection wrote local DB credentials: %v", err)
+	}
+}
+
+func TestDryRunPrepareQueryAccessDescribesStarterPrecondition(t *testing.T) {
+	result, err := Service{}.DryRunPrepareQueryAccess(context.Background(), "tdc db create-db-sql-users", PrepareQueryAccessOptions{
+		Profile: testProfile(), ClusterID: "cluster-1",
+	})
+	if err != nil {
+		t.Fatalf("DryRunPrepareQueryAccess failed: %v", err)
+	}
+	for _, check := range result.Checks {
+		if check.Name == "starter_cluster_precondition" {
+			return
+		}
+	}
+	t.Fatalf("dry-run should describe the Starter precondition: %#v", result.Checks)
+}
+
 func TestCreateConnectionString(t *testing.T) {
 	home := t.TempDir()
 	writeSQLCreds(t, home, "cluster-1")
@@ -123,6 +164,59 @@ func TestExecuteSQLHTTP(t *testing.T) {
 	}
 	if result.Transport != "https" || result.AccessMode != sqlcred.ReadWrite || result.RowCount != 1 {
 		t.Fatalf("unexpected result: %#v", result)
+	}
+}
+
+func TestConnectionAndSQLRejectNonStarterBeforeCredentialOrSQLAccess(t *testing.T) {
+	clusterRequests := 0
+	clusterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		clusterRequests++
+		if r.Method != http.MethodGet || r.URL.Path != "/v1beta1/clusters/cluster-1" {
+			t.Fatalf("unexpected cluster request %s %s", r.Method, r.URL.Path)
+		}
+		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Essential","endpoints":{"public":{"host":"gateway.example.com","port":4000}}}`))
+	}))
+	defer clusterServer.Close()
+
+	sqlRequests := 0
+	sqlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sqlRequests++
+		t.Fatalf("SQL request was sent after non-Starter rejection: %s %s", r.Method, r.URL.Path)
+	}))
+	defer sqlServer.Close()
+
+	home := t.TempDir()
+	service := testSQLService(clusterServer.URL, home).withSQLHTTPBaseURL(sqlServer.URL)
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "connection string", run: func() error {
+			_, err := service.CreateConnectionString(context.Background(), CreateConnectionStringOptions{Profile: testProfile(), ClusterID: "cluster-1"})
+			return err
+		}},
+		{name: "SQL execution", run: func() error {
+			_, err := service.ExecuteSQL(context.Background(), ExecuteSQLOptions{Profile: testProfile(), ClusterID: "cluster-1", SQL: "select 1"})
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.run()
+			if apperr.CodeFor(err) != "db.not_starter_cluster" {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+	if clusterRequests != len(tests) {
+		t.Fatalf("cluster requests = %d, want %d", clusterRequests, len(tests))
+	}
+	if sqlRequests != 0 {
+		t.Fatalf("SQL requests = %d, want 0", sqlRequests)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".tdc", "db_users")); !os.IsNotExist(err) {
+		t.Fatalf("non-Starter connection path accessed local DB credentials: %v", err)
 	}
 }
 

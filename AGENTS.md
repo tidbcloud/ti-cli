@@ -39,6 +39,8 @@ Implemented:
   `docs/spec/done/0008-starter-db-sql-access-and-query.md`
 - Default virtual project discovery and DB create resolution from
   `docs/spec/done/0017-default-virtual-project-resolution.md`
+- Starter-only DB resource guardrails from
+  `docs/spec/done/0023-starter-only-db-resource-guardrails.md`
 - tdc fs Unix-style command aliases from
   `docs/spec/done/0014-tdc-fs-unix-command-aliases.md`
 - tdc fs control plane from
@@ -351,6 +353,13 @@ Follow these rules unless `docs/priciples.md` is updated:
 - Apply `--query` after command execution and before rendering.
 - Users provide cloud placement as one canonical `region_code`, never as
   separate provider/region fields or server URLs.
+- Every `tdc db` command must enforce the Starter-only product boundary from
+  API resource metadata. Treat `servicePlan` as canonical and `clusterPlan` as
+  a legacy fallback. Reject non-Starter, missing, or conflicting plans before
+  any cluster, branch, IAM SQL-user, local SQL-credential, or SQL mutation.
+- `tdc db list-db-clusters` filters each API page to verified Starter clusters,
+  preserves the API next-page token, and omits the API total size because that
+  total includes service plans outside the tdc product boundary.
 - The global `--region <canonical-region-code>` flag overrides placement for
   the current command only. It has higher priority than `TDC_REGION_CODE` and
   profile `region_code`, but it must not change the selected profile or

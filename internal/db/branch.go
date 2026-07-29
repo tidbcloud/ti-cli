@@ -64,6 +64,9 @@ func (s Service) ListBranches(ctx context.Context, opts ListBranchesOptions) (Li
 	if err != nil {
 		return ListBranchesResult{}, err
 	}
+	if err := ensureStarterClusterByID(ctx, client, clusterID); err != nil {
+		return ListBranchesResult{}, err
+	}
 	response, err := client.ListBranches(ctx, clusterID, apistarter.ListBranchesOptions{
 		PageSize:  opts.PageSize,
 		PageToken: opts.PageToken,
@@ -85,6 +88,9 @@ func (s Service) CreateBranch(ctx context.Context, opts CreateBranchOptions) (Br
 	}
 	client, err := s.starterClient(opts.Profile, authz.StarterBranchCreate, "create Starter DB cluster branch")
 	if err != nil {
+		return BranchResult{}, err
+	}
+	if err := ensureStarterClusterByID(ctx, client, clusterID); err != nil {
 		return BranchResult{}, err
 	}
 	branch, err := client.CreateBranch(ctx, clusterID, request)
@@ -112,6 +118,9 @@ func (s Service) DescribeBranch(ctx context.Context, opts DescribeBranchOptions)
 	if err != nil {
 		return BranchResult{}, err
 	}
+	if err := ensureStarterClusterByID(ctx, client, clusterID); err != nil {
+		return BranchResult{}, err
+	}
 	branch, err := client.GetBranch(ctx, clusterID, branchID, apistarter.GetBranchOptions{View: opts.View})
 	if err != nil {
 		return BranchResult{}, err
@@ -126,6 +135,9 @@ func (s Service) DeleteBranch(ctx context.Context, opts DeleteBranchOptions) (Br
 	}
 	client, err := s.starterClient(opts.Profile, authz.StarterBranchDelete, "delete Starter DB cluster branch")
 	if err != nil {
+		return BranchResult{}, err
+	}
+	if err := ensureStarterClusterByID(ctx, client, clusterID); err != nil {
 		return BranchResult{}, err
 	}
 	branch, err := client.GetBranch(ctx, clusterID, branchID, apistarter.GetBranchOptions{})
@@ -149,6 +161,7 @@ func (s Service) DryRunCreateBranch(ctx context.Context, commandPath string, opt
 		{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)},
 		{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterBranchCreate)},
 		{Name: "cluster_id", Status: "passed", Message: clusterID},
+		{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the parent cluster is Starter before creating the branch"},
 	}
 	if opts.WaitUntilActive {
 		checks = append(checks, dryrun.Check{
@@ -271,14 +284,23 @@ func (s Service) DryRunDeleteBranch(ctx context.Context, commandPath string, opt
 		dryrun.RequestSummary{
 			Method:      http.MethodDelete,
 			Path:        "/v1beta1/clusters/" + clusterID + "/branches/" + branchID,
-			Description: "normal execution first reads the branch before deleting",
+			Description: "normal execution first verifies the parent cluster is Starter, then reads the branch before deleting",
 		},
 		dryrun.Check{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		dryrun.Check{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)},
 		dryrun.Check{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterBranchDelete)},
 		dryrun.Check{Name: "cluster_id", Status: "passed", Message: clusterID},
 		dryrun.Check{Name: "branch_id", Status: "passed", Message: branchID},
+		dryrun.Check{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the parent cluster is Starter before deleting the branch"},
 	), nil
+}
+
+func ensureStarterClusterByID(ctx context.Context, client *apistarter.Client, clusterID string) error {
+	cluster, err := client.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{})
+	if err != nil {
+		return err
+	}
+	return ensureStarterCluster(cluster)
 }
 
 func (s Service) createBranchRequest(opts CreateBranchOptions) (string, apistarter.CreateBranchRequest, error) {

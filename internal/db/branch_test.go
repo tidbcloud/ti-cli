@@ -15,6 +15,10 @@ import (
 
 func TestCreateBranch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1" {
+			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Starter"}`))
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1beta1/clusters/cluster-1/branches" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -43,14 +47,16 @@ func TestCreateBranch(t *testing.T) {
 }
 
 func TestCreateBranchWaitsUntilActive(t *testing.T) {
-	requests := make([]string, 0, 3)
+	requests := make([]string, 0, 4)
 	gets := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.Method)
-		switch r.Method {
-		case http.MethodPost:
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1":
+			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Starter"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1beta1/clusters/cluster-1/branches":
 			_, _ = w.Write([]byte(`{"branchId":"branch-1","displayName":"dev","clusterId":"cluster-1","state":"CREATING"}`))
-		case http.MethodGet:
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1/branches/branch-1":
 			gets++
 			state := "CREATING"
 			if gets == 2 {
@@ -58,7 +64,7 @@ func TestCreateBranchWaitsUntilActive(t *testing.T) {
 			}
 			_, _ = fmt.Fprintf(w, `{"branchId":"branch-1","displayName":"dev","clusterId":"cluster-1","state":%q}`, state)
 		default:
-			t.Fatalf("unexpected method %s", r.Method)
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 	}))
 	defer server.Close()
@@ -78,7 +84,7 @@ func TestCreateBranchWaitsUntilActive(t *testing.T) {
 	if result.ID != "branch-1" || result.State != "ACTIVE" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if got := strings.Join(requests, ","); got != "POST,GET,GET" {
+	if got := strings.Join(requests, ","); got != "GET /v1beta1/clusters/cluster-1,POST /v1beta1/clusters/cluster-1/branches,GET /v1beta1/clusters/cluster-1/branches/branch-1,GET /v1beta1/clusters/cluster-1/branches/branch-1" {
 		t.Fatalf("unexpected requests %q", got)
 	}
 }
@@ -123,13 +129,15 @@ func TestCreateBranchWaitErrorsPreserveCreatedBranch(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.Method {
-				case http.MethodPost:
+				switch {
+				case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1":
+					_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Starter"}`))
+				case r.Method == http.MethodPost && r.URL.Path == "/v1beta1/clusters/cluster-1/branches":
 					_, _ = w.Write([]byte(`{"branchId":"branch-1","displayName":"dev","clusterId":"cluster-1","state":"CREATING"}`))
-				case http.MethodGet:
+				case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1/branches/branch-1":
 					tt.getResponse(w)
 				default:
-					t.Fatalf("unexpected method %s", r.Method)
+					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 				}
 			}))
 			defer server.Close()
@@ -156,6 +164,13 @@ func TestCreateBranchWaitErrorsPreserveCreatedBranch(t *testing.T) {
 
 func TestListBranches(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1beta1/clusters/cluster-1" {
+			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Starter"}`))
+			return
+		}
+		if r.URL.Path != "/v1beta1/clusters/cluster-1/branches" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
 		if r.URL.Query().Get("pageSize") != "1" {
 			t.Fatalf("unexpected query %s", r.URL.RawQuery)
 		}
@@ -185,6 +200,10 @@ func TestListBranches(t *testing.T) {
 
 func TestDescribeBranch(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1" {
+			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Starter"}`))
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/v1beta1/clusters/cluster-1/branches/branch-1" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -210,16 +229,18 @@ func TestDescribeBranch(t *testing.T) {
 }
 
 func TestDeleteBranch(t *testing.T) {
-	requests := make([]string, 0, 2)
+	requests := make([]string, 0, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests = append(requests, r.Method)
-		switch r.Method {
-		case http.MethodGet:
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1":
+			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Starter"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1/branches/branch-1":
 			_, _ = w.Write([]byte(`{"branchId":"branch-1","displayName":"dev","clusterId":"cluster-1","state":"ACTIVE"}`))
-		case http.MethodDelete:
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1beta1/clusters/cluster-1/branches/branch-1":
 			_, _ = w.Write([]byte(`{"branchId":"branch-1","displayName":"dev","clusterId":"cluster-1","state":"DELETED"}`))
 		default:
-			t.Fatalf("unexpected method %s", r.Method)
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 	}))
 	defer server.Close()
@@ -235,8 +256,54 @@ func TestDeleteBranch(t *testing.T) {
 	if result.State != "DELETED" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if strings.Join(requests, ",") != "GET,DELETE" {
+	if strings.Join(requests, ",") != "GET /v1beta1/clusters/cluster-1,GET /v1beta1/clusters/cluster-1/branches/branch-1,DELETE /v1beta1/clusters/cluster-1/branches/branch-1" {
 		t.Fatalf("unexpected requests: %#v", requests)
+	}
+}
+
+func TestBranchCommandsRejectNonStarterBeforeBranchRequest(t *testing.T) {
+	tests := []struct {
+		name string
+		run  func(Service) error
+	}{
+		{name: "list", run: func(service Service) error {
+			_, err := service.ListBranches(context.Background(), ListBranchesOptions{Profile: testProfile(), ClusterID: "cluster-1"})
+			return err
+		}},
+		{name: "create", run: func(service Service) error {
+			_, err := service.CreateBranch(context.Background(), CreateBranchOptions{Profile: testProfile(), ClusterID: "cluster-1", DisplayName: "dev"})
+			return err
+		}},
+		{name: "describe", run: func(service Service) error {
+			_, err := service.DescribeBranch(context.Background(), DescribeBranchOptions{Profile: testProfile(), ClusterID: "cluster-1", BranchID: "branch-1"})
+			return err
+		}},
+		{name: "delete", run: func(service Service) error {
+			_, err := service.DeleteBranch(context.Background(), DeleteBranchOptions{Profile: testProfile(), ClusterID: "cluster-1", BranchID: "branch-1"})
+			return err
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Method != http.MethodGet || r.URL.Path != "/v1beta1/clusters/cluster-1" {
+					t.Fatalf("branch endpoint was called before rejection: %s %s", r.Method, r.URL.Path)
+				}
+				_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Essential"}`))
+			}))
+			defer server.Close()
+
+			err := tt.run(testService(server.URL))
+			if apperr.CodeFor(err) != "db.not_starter_cluster" {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if requests != 1 {
+				t.Fatalf("requests = %d, want only the cluster preflight", requests)
+			}
+		})
 	}
 }
 
@@ -263,13 +330,17 @@ func TestDryRunCreateBranchDoesNotSendRequest(t *testing.T) {
 		t.Fatal("dry-run should not send a request")
 	}
 	foundWait := false
+	foundGuard := false
 	for _, check := range result.Checks {
 		if check.Name == "post_create_wait" && strings.Contains(check.Message, "5m0s") {
 			foundWait = true
 		}
+		if check.Name == "starter_cluster_precondition" {
+			foundGuard = true
+		}
 	}
-	if !foundWait {
-		t.Fatalf("dry-run should describe the post-create wait: %#v", result.Checks)
+	if !foundWait || !foundGuard {
+		t.Fatalf("dry-run should describe the post-create wait and Starter precondition: %#v", result.Checks)
 	}
 }
 
@@ -294,6 +365,12 @@ func TestDryRunDeleteBranchDoesNotSendRequest(t *testing.T) {
 	if called {
 		t.Fatal("dry-run should not send a request")
 	}
+	for _, check := range result.Checks {
+		if check.Name == "starter_cluster_precondition" {
+			return
+		}
+	}
+	t.Fatalf("dry-run should describe the Starter precondition: %#v", result.Checks)
 }
 
 func TestCreateBranchRequiresName(t *testing.T) {

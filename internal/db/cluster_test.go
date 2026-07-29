@@ -508,15 +508,34 @@ func TestDryRunDeleteClusterDescribesWait(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DryRunDeleteCluster failed: %v", err)
 	}
-	found := false
+	foundWait := false
+	foundGuard := false
 	for _, check := range result.Checks {
 		if check.Name == "post_delete_wait" && strings.Contains(check.Message, "12m0s") {
-			found = true
+			foundWait = true
+		}
+		if check.Name == "starter_cluster_precondition" {
+			foundGuard = true
 		}
 	}
-	if !found {
-		t.Fatalf("dry-run should describe the post-delete wait: %#v", result.Checks)
+	if !foundWait || !foundGuard {
+		t.Fatalf("dry-run should describe the post-delete wait and Starter precondition: %#v", result.Checks)
 	}
+}
+
+func TestDryRunUpdateClusterDescribesStarterPrecondition(t *testing.T) {
+	result, err := testService("https://starter.test").DryRunUpdateCluster(context.Background(), "tdc db update-db-cluster", UpdateClusterOptions{
+		Profile: testProfile(), ClusterID: "cluster-1", DisplayName: "renamed", MonthlySpendingLimitUSDCents: -1,
+	})
+	if err != nil {
+		t.Fatalf("DryRunUpdateCluster failed: %v", err)
+	}
+	for _, check := range result.Checks {
+		if check.Name == "starter_cluster_precondition" {
+			return
+		}
+	}
+	t.Fatalf("dry-run should describe the Starter precondition: %#v", result.Checks)
 }
 
 func TestCreateDefaultsToStarterType(t *testing.T) {
