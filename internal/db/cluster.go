@@ -236,22 +236,25 @@ func (s Service) DryRunCreateCluster(ctx context.Context, commandPath string, op
 			Message: fmt.Sprintf("normal execution waits up to %s for state ACTIVE", s.clusterWaitTimeout()),
 		})
 	}
+	body := map[string]any{
+		"displayName": request.DisplayName,
+		"region": map[string]string{
+			"name": request.RegionName,
+		},
+		"spendingLimit": request.SpendingLimit,
+	}
+	if request.ProjectID != "" {
+		body["labels"] = map[string]string{
+			apistarter.ProjectLabelKey: request.ProjectID,
+		}
+	}
 	return dryrun.New(
 		commandPath,
 		"create_db_cluster",
 		dryrun.RequestSummary{
 			Method: "POST",
 			Path:   "/v1beta1/clusters",
-			Body: map[string]any{
-				"displayName": request.DisplayName,
-				"region": map[string]string{
-					"name": request.RegionName,
-				},
-				"labels": map[string]string{
-					apistarter.ProjectLabelKey: request.ProjectID,
-				},
-				"spendingLimit": request.SpendingLimit,
-			},
+			Body:   body,
 		},
 		checks...,
 	), nil
@@ -541,13 +544,7 @@ func resolveCreateProjectID(opts CreateClusterOptions) (string, error) {
 	if projectID != "" {
 		return projectID, nil
 	}
-	profileName := profileName(opts.Profile)
-	return "", apperr.New(
-		"db.missing_project_id",
-		"config",
-		2,
-		fmt.Sprintf("project id is required: run `tdc configure --profile %s` to discover the default virtual project, or provide `--project-id`", profileName),
-	)
+	return "", nil
 }
 
 func (s Service) updateRequest(opts UpdateClusterOptions) (string, apistarter.UpdateClusterRequest, error) {

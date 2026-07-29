@@ -1423,7 +1423,7 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 	bin := tdcBinary(t)
 	profileName := liveProfileName(t)
 	releaseAutoCreatedLiveFSResource(t, bin, profileName)
-	projectID := liveProfile(t).ProjectID
+	profile := liveProfile(t)
 
 	suffix := time.Now().UTC().Format("20060102150405")
 	clusterName := "tdc-e2e-" + suffix
@@ -1440,10 +1440,16 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 		}
 	}()
 
-	create := runTDC(
+	create := runTDCWithInput(
 		t,
 		bin,
-		"--profile", profileName,
+		"",
+		[]string{
+			"HOME=" + t.TempDir(),
+			"TDC_REGION_CODE=" + profile.PlacementRegionCode,
+			"TDC_PUBLIC_KEY=" + profile.TDCPublicKey,
+			"TDC_PRIVATE_KEY=" + profile.TDCPrivateKey,
+		},
 		"db", "create-db-cluster",
 		"--db-cluster-name", clusterName,
 		"--wait",
@@ -1468,8 +1474,8 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 	if described.ClusterPlan != "" && described.ClusterPlan != "STARTER" {
 		t.Fatalf("expected STARTER cluster, got %#v", described)
 	}
-	if described.Labels["tidb.cloud/project"] != projectID {
-		t.Fatalf("cluster project label = %q, want configured default %q: %#v", described.Labels["tidb.cloud/project"], projectID, described)
+	if strings.TrimSpace(described.Labels["tidb.cloud/project"]) == "" {
+		t.Fatalf("server-selected project label is empty: %#v", described)
 	}
 
 	prepare := runTDC(t, bin, "--profile", profileName, "db", "create-db-sql-users", "--db-cluster-id", clusterID)

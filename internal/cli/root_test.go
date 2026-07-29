@@ -1137,6 +1137,30 @@ func TestCreateClusterUsesConfiguredDefaultProject(t *testing.T) {
 	}
 }
 
+func TestCreateClusterAllowsMissingConfiguredProject(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TDC_REGION_CODE", "")
+	t.Setenv("TDC_PUBLIC_KEY", "")
+	t.Setenv("TDC_PRIVATE_KEY", "")
+	if err := store.WriteProfile(home, "default", store.ConfigProfile{
+		RegionCode: "aws-us-east-1",
+	}, store.CredentialsProfile{
+		TDCPublicKey:  "test-public",
+		TDCPrivateKey: "test-private",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--dry-run")
+	if err != nil {
+		t.Fatalf("expected server-default project fallback to succeed: %v", err)
+	}
+	if strings.Contains(stdout, "tidb.cloud/project") || strings.Contains(stdout, `"labels"`) {
+		t.Fatalf("dry-run unexpectedly included a project label:\n%s", stdout)
+	}
+}
+
 func TestCreateClusterExplicitEmptyProjectDoesNotFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

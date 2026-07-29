@@ -207,12 +207,13 @@ Live e2e must strictly cover every implemented interface and command for the
 current project stage, including real create/update/delete flows when those
 commands are implemented. For Starter DB clusters, the live suite creates a
 uniquely named `tdc-e2e-*` cluster with `--wait`, without a
-spending limit or explicit `--project-id`, verifies the returned state is
-`ACTIVE` and its project label matches the configured default, and deletes only
-that cluster. For Starter DB branches, the live suite creates, reads, lists,
-and deletes only a `tdc-e2e-branch-*` branch on the cluster created by the same
-test run. Branch creation must use `--wait`; cluster deletion must
-use `--wait`. For Starter DB SQL access, the live suite prepares tdc-managed
+spending limit or explicit/configured project ID, verifies the returned state
+is `ACTIVE` and has a non-empty server-selected project label, and deletes only
+that cluster. The server-selected account default is not required to equal the
+`tidbx_virtual` project discovered by `tdc configure`. For Starter DB branches,
+the live suite creates, reads, lists, and deletes only a `tdc-e2e-branch-*`
+branch on the cluster created by the same test run. Branch creation must use
+`--wait`; cluster deletion must use `--wait`. For Starter DB SQL access, the live suite prepares tdc-managed
 read-only, read-write, and admin SQL users on the temporary cluster, verifies
 connection string output, and executes the HTTPS SQL API with all three access
 modes.
@@ -662,7 +663,7 @@ All tdc local state belongs under `~/.tdc/`.
 - The credentials file is restricted to owner read/write permissions where
   POSIX mode bits are meaningful.
 
-Minimum current keys:
+Typical configured profile keys:
 
 ```toml
 # ~/.tdc/config
@@ -675,6 +676,10 @@ project_id = "..."
 tdc_public_key = "..."
 tdc_private_key = "..."
 ```
+
+`project_id` is written by `tdc configure` but is not required to create a
+Starter cluster. If it is absent and `--project-id` is not provided, the create
+request omits the project label and TiDB Cloud selects the account default.
 
 One profile can own multiple tdc fs resources. The main config stores neither a
 default resource name nor resource credentials.
@@ -778,13 +783,14 @@ Starter DB cluster creation project lookup order is:
 1. Explicit non-empty `--project-id`.
 2. The selected profile's `project_id`, discovered by `tdc configure` from the
    unique accessible project whose type is `tidbx_virtual`.
-3. Otherwise fail before making a Starter API request. Never silently omit the
-   `tidb.cloud/project` label.
+3. Otherwise omit the `tidb.cloud/project` label and let the Starter API select
+   the account's default project.
 
 An explicitly empty `--project-id` is an error and must not use the profile
-fallback. Other DB commands identify existing resources by cluster or branch
-ID and do not send `project_id`. Drive9-backed tdc fs commands do not consume
-this DB project default.
+or server fallback. When no project ID resolves, omit the label entirely; do
+not send `tidb.cloud/project` with an empty value. Other DB commands identify
+existing resources by cluster or branch ID and do not send `project_id`.
+Drive9-backed tdc fs commands do not consume this DB project default.
 
 Environment credentials are a credential source only; they must not change the
 local profile namespace and must not cause tdc to write local `[env]` sections.

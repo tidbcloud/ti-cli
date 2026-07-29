@@ -2,9 +2,9 @@
 
 ## Goal
 
-Make TiDB Cloud project selection deterministic for Starter DB cluster creation without requiring users to pass `--project-id` on every command. `tdc configure` discovers the authenticated account's `tidbx_virtual` project and stores its ID in the selected profile. `tdc db create-db-cluster` uses that stored ID when the user does not explicitly select another project.
+Make TiDB Cloud project selection convenient and deterministic when local project information is available without requiring users to pass `--project-id` on every command. `tdc configure` discovers the authenticated account's `tidbx_virtual` project and stores its ID in the selected profile. `tdc db create-db-cluster` uses that stored ID when the user does not explicitly select another project.
 
-Although the Starter API accepts cluster creation without a project label, tdc must not delegate project selection to undocumented server-side defaults. Every tdc-created DB cluster must carry an explicitly resolved `tidb.cloud/project` label.
+The Starter API also accepts cluster creation without a project label and selects the account's default project. When neither an explicit nor configured project ID is available, tdc uses this server-side fallback instead of rejecting the command locally.
 
 ## User-facing Behavior
 
@@ -19,7 +19,7 @@ tdc configure --non-interactive \
 
 The private key may continue to come from `TDC_PRIVATE_KEY` for automation. After collecting the region and TiDB Cloud API key pair, configure calls the project-list API, finds the unique project whose `type` is `tidbx_virtual`, and stores its ID in the selected profile.
 
-Cluster creation no longer requires `--project-id` when the selected profile contains a discovered default:
+Cluster creation does not require `--project-id`. It uses the selected profile's discovered default when present and otherwise lets TiDB Cloud select the account's default project:
 
 ```bash
 tdc db create-db-cluster \
@@ -102,17 +102,11 @@ Resolve the project for `tdc db create-db-cluster` in this order:
 
 1. Explicit non-empty `--project-id`.
 2. `project_id` from the selected profile in `~/.tdc/config`.
-3. Otherwise fail locally before making a Starter API request.
-
-Do not fall back to omitting the project label. A missing default returns an actionable error such as:
-
-```text
-tdc [ERROR]: project id is required: run `tdc configure --profile default` to discover the default virtual project, or provide `--project-id`
-```
+3. Otherwise omit `labels["tidb.cloud/project"]` and let the Starter API select the account's default project.
 
 An explicitly provided empty value, `--project-id ""`, is invalid and must not fall back to profile config. This matches the explicit-empty behavior of global profile and region flags.
 
-Normal and dry-run creation must use the same resolver. The final Starter request contains:
+Normal and dry-run creation must use the same resolver. When a project ID resolves, the final Starter request contains:
 
 ```json
 {
@@ -126,7 +120,18 @@ Normal and dry-run creation must use the same resolver. The final Starter reques
 }
 ```
 
-Dry-run output must show the resolved project label regardless of whether it came from the flag or profile, but it must not claim the API request was sent.
+When no project ID resolves, the request omits `labels`:
+
+```json
+{
+  "displayName": "demo",
+  "region": {
+    "name": "us-east-1"
+  }
+}
+```
+
+Dry-run output must show the resolved project label when it came from the flag or profile, but it must omit the entire `labels` field when no project ID resolves. It must not claim the API request was sent.
 
 ## Command Scope
 
@@ -151,8 +156,8 @@ Configure:
 Default cluster creation:
 
 1. `internal/cli` loads the selected profile and reads the optional `--project-id` flag state.
-2. `internal/db` resolves the explicit or profile project ID.
-3. `internal/api/starter.Client.CreateCluster` sends Digest-authenticated `POST /v1beta1/clusters` with `labels["tidb.cloud/project"]` set to the resolved ID.
+2. `internal/db` resolves the explicit or profile project ID, or leaves it absent for server-side default selection.
+3. `internal/api/starter.Client.CreateCluster` sends Digest-authenticated `POST /v1beta1/clusters`. It includes `labels["tidb.cloud/project"]` only when an ID resolved and omits the label otherwise.
 4. The existing Starter response and authorization handling remains unchanged.
 
 The IAM project-list request does not take a project ID. No new service URL or user-provided endpoint is introduced.
@@ -177,7 +182,6 @@ Required stable error cases:
 - API key lacks project-list permission: existing authorization error, naming the project-read operation.
 - No `tidbx_virtual` project: a configuration error explaining that no default virtual project is available for the account.
 - Multiple `tidbx_virtual` projects: an ambiguity error containing non-secret matching project IDs.
-- Missing profile `project_id` during default creation: a local usage/configuration error with configure and explicit-flag remediation.
 - Explicit empty `--project-id`: a usage error; do not use the profile fallback.
 - Invalid or inaccessible explicit project ID: propagate the Starter API response through existing API error mapping.
 
@@ -208,13 +212,13 @@ Unit tests must cover:
 - Explicit `--project-id` overriding profile `project_id`.
 - Omitted `--project-id` using profile `project_id`.
 - Explicit empty `--project-id` failing without fallback.
-- Missing flag and missing profile default failing before an HTTP create request.
-- Dry-run and normal creation resolving the same project label.
+- Missing flag and missing profile default sending an HTTP create request without a project label.
+- Dry-run and normal creation using the same optional project-label behavior.
 - Other DB commands continuing to send no project ID.
 
-Black-box e2e tests must cover help showing `--project-id` as optional, configure output containing the selected project ID, and cluster-creation dry-run using the stored default.
+Black-box e2e tests must cover help showing `--project-id` as optional, configure output containing the selected project ID, cluster-creation dry-run using the stored default, and an actual create request omitting labels when no project is configured.
 
-`make live-e2e` must verify the authenticated account exposes exactly one `tidbx_virtual` project, create its temporary `tdc-e2e-*` Starter cluster without passing `--project-id`, assert the resulting cluster's `tidb.cloud/project` label equals the configured default, and delete only that temporary cluster through the existing lifecycle cleanup.
+`make live-e2e` must verify the authenticated account exposes exactly one `tidbx_virtual` project, create its temporary `tdc-e2e-*` Starter cluster with environment credentials and a clean local home that has no configured project ID, assert the resulting cluster has a non-empty server-selected `tidb.cloud/project` label, and delete only that temporary cluster through the existing lifecycle cleanup. The server-selected account default is not required to equal the virtual project discovered by `tdc configure`.
 
 ## Documentation Updates During Implementation
 
@@ -232,9 +236,10 @@ When this spec is implemented:
 - Successful configure stores its ID as flat `project_id` under the selected profile in `~/.tdc/config`.
 - Configure fails without partial profile changes when discovery cannot produce exactly one virtual project.
 - `tdc db create-db-cluster` treats `--project-id` as optional.
-- Omitted `--project-id` resolves to the profile's `project_id` and sends it as `tidb.cloud/project`.
+- Omitted `--project-id` resolves to the profile's `project_id` and sends it as `tidb.cloud/project` when configured.
+- Missing flag and missing profile `project_id` omit the project label and let TiDB Cloud select the default project.
 - Explicit `--project-id` overrides the profile default.
-- tdc never creates a DB cluster without an explicitly resolved project label.
+- tdc never sends `tidb.cloud/project` with an empty value.
 - No unrelated DB or fs command begins sending or requiring Project ID.
 - Unit, e2e, and live-e2e tests cover the resolution and real project placement.
 
