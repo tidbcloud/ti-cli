@@ -43,8 +43,8 @@ func NewRootCommand(info version.Info) *cobra.Command {
 
 	root := newCommand(commandSpec{
 		Use:   "tdc",
-		Short: "CLI for TiDB Cloud Filesystem (FS) and TiDB Cloud Starter.",
-		Long:  "The TiDB Cloud Command Line Interface is a unified tool to manage your TiDB Cloud Filesystem (FS) and Starter services.",
+		Short: "CLI for TiDB Cloud Filesystem and TiDB Cloud Starter.",
+		Long:  "The TiDB Cloud Command Line Interface is a unified tool to manage your TiDB Cloud Filesystem and Starter services.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return rootCommandRequiredError(cmd)
 		},

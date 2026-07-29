@@ -215,7 +215,7 @@ func Apply(ctx context.Context, info version.Info, opts ApplyOptions) (ApplyResu
 			"update.no_update_available",
 			"runtime",
 			1,
-			fmt.Sprintf("tdc %s is already installed", info.Version),
+			fmt.Sprintf("The latest version of tdc (%s) is already installed", info.Version),
 		)
 	}
 
