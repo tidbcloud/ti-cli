@@ -64,3 +64,45 @@ func TestInstallersDoNotEscalatePrivileges(t *testing.T) {
 		t.Fatalf("install.ps1 should default to $HOME\\.tdc\\bin")
 	}
 }
+
+func TestInstallersExplainTelemetryControls(t *testing.T) {
+	for _, path := range []string{
+		filepath.Join("..", "scripts", "install.sh"),
+		filepath.Join("..", "scripts", "install.ps1"),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(data)
+		for _, want := range []string{
+			"anonymous command usage and reliability telemetry",
+			"~/.tdc/.preferences",
+			"[telemetry]",
+			"enabled = false",
+			"TDC_TELEMETRY=off tdc ...",
+		} {
+			if !strings.Contains(strings.ToLower(content), strings.ToLower(want)) {
+				t.Fatalf("%s does not contain telemetry notice text %q", path, want)
+			}
+		}
+	}
+}
+
+func TestReleaseBuildConfiguresProductTelemetryEndpoint(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := string(data)
+	const assignment = "internal/version.telemetryEndpoint=https://tdc-telemetry.tidbcloud.com/v1/telemetry/batch"
+	if !strings.Contains(config, assignment) {
+		t.Fatalf("GoReleaser config does not set the production telemetry endpoint %q", assignment)
+	}
+	if strings.Contains(config, "internal/version.telemetryEndpoint=http://") {
+		t.Fatal("GoReleaser telemetry endpoint must use HTTPS")
+	}
+	if strings.Contains(config, "sslip.io") {
+		t.Fatal("GoReleaser telemetry endpoint must not use a temporary sslip.io hostname")
+	}
+}

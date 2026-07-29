@@ -29,6 +29,7 @@ builds:
       - -X github.com/tidbcloud/tdc/internal/version.date={{ .Date }}
       - -X github.com/tidbcloud/tdc/internal/version.installSource=archive
       - -X github.com/tidbcloud/tdc/internal/version.releaseChannel=stable
+      - -X github.com/tidbcloud/tdc/internal/version.telemetryEndpoint=https://tdc-telemetry.tidbcloud.com/v1/telemetry/batch
 
 archives:
   - id: tdc

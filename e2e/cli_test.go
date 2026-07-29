@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tidbcloud/tdc/internal/fs/fscred"
 )
@@ -189,6 +191,69 @@ func TestErrorsAreRenderedAtCLIBoundary(t *testing.T) {
 	invalidQuery := runTDCWithInput(t, bin, "", tdcConfigEnv(), append(createClusterDryRunArgs(), "--query", "command[")...)
 	invalidQuery.wantExitCode(2)
 	invalidQuery.wantStderrContains("tdc [ERROR]: invalid --query expression")
+}
+
+func TestTelemetryUsesFakeIngestionServer(t *testing.T) {
+	bin := tdcBinary(t)
+	home := t.TempDir()
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != http.MethodPost || request.URL.Path != "/v1/telemetry/batch" {
+			t.Errorf("unexpected telemetry request %s %s", request.Method, request.URL.Path)
+		}
+		body, _ := io.ReadAll(request.Body)
+		requests <- body
+		writer.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	secretName := "must-not-appear-in-telemetry"
+	result := runTDCWithInput(t, bin, "", []string{
+		"HOME=" + home,
+		"TDC_ALLOW_TEST_ENDPOINTS=1",
+		"TDC_TEST_TELEMETRY_ENDPOINT=" + server.URL + "/v1/telemetry/batch",
+		"TDC_TELEMETRY=on",
+		"TDC_LOGGING=off",
+		"TDC_REGION_CODE=aws-us-east-1",
+		"TDC_PUBLIC_KEY=must-not-appear-public-key",
+		"TDC_PRIVATE_KEY=must-not-appear-private-key",
+	}, "db", "create-db-cluster", "--db-cluster-name", secretName, "--project-id", "must-not-appear-project", "--dry-run")
+	result.wantExitCode(0)
+	result.wantStdoutContains(`"dry_run": true`)
+
+	var body []byte
+	select {
+	case body = <-requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tdc did not send telemetry to the fake ingestion server")
+	}
+	for _, prohibited := range []string{secretName, "must-not-appear-public-key", "must-not-appear-private-key", "must-not-appear-project"} {
+		if strings.Contains(string(body), prohibited) {
+			t.Fatalf("telemetry payload leaked %q: %s", prohibited, body)
+		}
+	}
+	if !strings.Contains(string(body), `"command_path":"tdc db create-db-cluster"`) ||
+		!strings.Contains(string(body), `"db-cluster-name"`) ||
+		!strings.Contains(string(body), `"project-id"`) {
+		t.Fatalf("unexpected telemetry payload: %s", body)
+	}
+	idPath := filepath.Join(home, ".tdc", ".telemetry-installation-id")
+	id, err := os.ReadFile(idPath)
+	if err != nil {
+		t.Fatalf("read telemetry installation ID: %v", err)
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(id)), "tdc_") {
+		t.Fatalf("unexpected telemetry installation ID %q", id)
+	}
+	if runtime.GOOS != "windows" {
+		info, err := os.Stat(idPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("telemetry installation ID mode = %o, want 0600", info.Mode().Perm())
+		}
+	}
 }
 
 func TestOutputQueryAndDryRun(t *testing.T) {

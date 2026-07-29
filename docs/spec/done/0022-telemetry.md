@@ -171,7 +171,7 @@ For one process:
   TDC_TELEMETRY=off tdc ...
 ```
 
-`tdc configure` may show the same notice for users who build or copy the binary without the installer. It must not ask a telemetry question or create `settings` or `.telemetry-installation-id`.
+`tdc configure` does not display a telemetry notice, ask a telemetry question, or create telemetry preferences. The release installers are the only CLI distribution surfaces that display the notice.
 
 The first release that enables telemetry by default must state this in its release notes. A successful update to that release may print the same static notice, but update must not read telemetry state or send an event.
 
@@ -240,7 +240,7 @@ Delivery behavior:
 - `internal/cli` identifies excluded help/version/update invocations, starts timing for eligible commands, and finalizes events after exit-code mapping.
 - `internal/apperr` exposes stable error codes without exposing raw errors.
 - `internal/config` and `internal/config/store` do not parse, write, or preserve telemetry preferences or installation state.
-- Install scripts and `tdc configure` display the static notice without prompting.
+- Install scripts display the static notice without prompting. `tdc configure` does not display it.
 - `internal/update` remains telemetry-free and independent from all tdc local state.
 
 Use the existing `github.com/pelletier/go-toml/v2` dependency through `internal/settings` and Go standard packages for HTTP, runtime metadata, time, context, filesystem operations, and cryptographic randomness. Do not add cgo or a platform-specific telemetry dependency.
@@ -276,7 +276,7 @@ The CLI depends on these guarantees:
 - Tests verify captured events contain flag names but never flag values.
 - Tests verify credentials, SQL text, paths, file contents, command output, API payloads, raw errors, profile names, host identity, and cloud resource IDs are absent.
 - Tests verify telemetry network failures and non-`202` responses do not alter command stdout, stderr, or exit status.
-- Tests verify installer and configure notice text names the settings path and process-scoped environment override.
+- Tests verify the installer notice names the settings path and process-scoped environment override.
 - Black-box e2e tests use a temporary HOME and a local fake ingestion server; live cloud credentials are not required.
 
 ## Dependencies

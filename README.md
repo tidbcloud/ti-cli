@@ -129,6 +129,21 @@ max_files = 5
 
 Use `TDC_LOGGING=off` to disable logging for one process. Accepted values are `on`, `true`, `1`, `yes`, `off`, `false`, `0`, and `no`. An existing `[logging]` section in `~/.tdc/config` is migrated automatically to `~/.tdc/.preferences`; profiles and credentials are preserved. `tdc update` does not read or write settings, profiles, credentials, operation logs, or other `~/.tdc/` state.
 
+### Anonymous Telemetry
+
+Release builds collect minimal command usage and reliability telemetry through the tdc-owned ingestion service. Events contain canonical command and explicitly supplied flag names, stable exit and error codes, duration, region, tdc version, OS, architecture, install source, and a random installation ID. They never contain flag values, credentials, tokens, SQL text, paths, file contents, command output, API payloads, profile names, or cloud resource IDs.
+
+Telemetry is disabled by default for development builds and recognized CI environments. To disable it persistently for release builds, create or edit `~/.tdc/.preferences`:
+
+```toml
+schema_version = 1
+
+[telemetry]
+enabled = false
+```
+
+Use `TDC_TELEMETRY=off` to disable telemetry for one process, or `TDC_TELEMETRY=on` to explicitly enable it for an eligible release or development invocation whose build contains the product endpoint. Accepted values are `on`, `true`, `1`, `off`, `false`, `0`. Help, version, commandless usage, and every `tdc update` mode never send telemetry. The pseudonymous ID is stored with owner-only permissions at `~/.tdc/.telemetry-installation-id`; deleting that file resets the identity without changing the preference.
+
 ### TiDB Cloud Filesystem
 
 ```shell

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tidbcloud/tdc/internal/apperr"
@@ -18,6 +20,7 @@ import (
 	"github.com/tidbcloud/tdc/internal/dryrun"
 	"github.com/tidbcloud/tdc/internal/oplog"
 	"github.com/tidbcloud/tdc/internal/settings"
+	"github.com/tidbcloud/tdc/internal/telemetry"
 	"github.com/tidbcloud/tdc/internal/version"
 )
 
@@ -322,6 +325,266 @@ func TestUpdateInvocationsDoNotReadOrWriteTDCHome(t *testing.T) {
 	if _, err := os.Stat(oplog.Path(home)); !os.IsNotExist(err) {
 		t.Fatalf("update invocation wrote operation log: %v", err)
 	}
+}
+
+func TestTelemetryExclusionsDoNotReadStateOrSend(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TDC_LOGGING", "off")
+	for _, key := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "TF_BUILD", "JENKINS_URL", "TDC_TELEMETRY"} {
+		t.Setenv(key, "")
+	}
+	legacyConfig := "[logging]\nenabled = false\n"
+	if err := os.MkdirAll(filepath.Dir(store.ConfigPath(home)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.ConfigPath(home), []byte(legacyConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	releaseServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"tag_name":"v0.2.0","html_url":"https://example.test/v0.2.0","assets":[]}`))
+	}))
+	defer releaseServer.Close()
+	t.Setenv("TDC_RELEASE_API_BASE_URL", releaseServer.URL)
+	info := testVersion()
+	info.Version = "0.2.0"
+	info.InstallSource = "archive"
+	info.TelemetryEndpoint = server.URL
+
+	invocations := [][]string{
+		nil,
+		{"help"},
+		{"--help"},
+		{"--version"},
+		{"db"},
+		{"db", "help"},
+		{"db", "--help"},
+		{"db", "--version"},
+		{"db", "create-db-cluster", "help"},
+		{"db", "create-db-cluster", "--help"},
+		{"db", "create-db-cluster", "--version"},
+		{"update"},
+		{"update", "--check"},
+		{"update", "--dry-run"},
+		{"update", "--target-version", "v0.2.0"},
+		{"update", "help"},
+		{"update", "--help"},
+		{"update", "--version"},
+		{"help", "update"},
+		{"--profile", "stage", "update", "--check"},
+		{"unknown-command"},
+	}
+	for _, args := range invocations {
+		var stdout, stderr bytes.Buffer
+		root := NewRootCommand(info)
+		_ = Execute(context.Background(), root, info, args, &stdout, &stderr)
+	}
+	if requests != 0 {
+		t.Fatalf("excluded invocations sent %d telemetry requests", requests)
+	}
+	data, err := os.ReadFile(store.ConfigPath(home))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != legacyConfig {
+		t.Fatalf("excluded invocation read and migrated settings:\n%s", data)
+	}
+	for _, path := range []string{settings.Path(home), telemetry.InstallationIDPath(home)} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("excluded invocation created %s: %v", path, err)
+		}
+	}
+}
+
+func TestTelemetrySendsCanonicalSafeCommandEvent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TDC_LOGGING", "off")
+	t.Setenv("TDC_TELEMETRY", "on")
+	withConfigEnv(t)
+
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	info := testVersion()
+	info.TelemetryEndpoint = server.URL
+
+	clusterName := "must-not-appear-cluster-name"
+	stdout, stderr, err := executeForTestWithInfo(info,
+		"--profile", "must-not-appear-profile",
+		"db", "create-db-cluster",
+		"--db-cluster-name", clusterName,
+		"--project-id", "must-not-appear-project-id",
+		"--dry-run",
+	)
+	if err != nil {
+		t.Fatalf("dry-run failed: %v", err)
+	}
+	if stdout == "" || stderr != "" {
+		t.Fatalf("unexpected command streams: stdout=%q stderr=%q", stdout, stderr)
+	}
+	var body []byte
+	select {
+	case body = <-requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("eligible command did not send telemetry")
+	}
+	for _, prohibited := range []string{clusterName, "must-not-appear-profile", "must-not-appear-project-id", "test-public", "test-private"} {
+		if strings.Contains(string(body), prohibited) {
+			t.Fatalf("telemetry payload leaked %q: %s", prohibited, body)
+		}
+	}
+	var payload struct {
+		Events []struct {
+			CommandPath   string   `json:"command_path"`
+			FlagNames     []string `json:"flag_names"`
+			ExitCode      int      `json:"exit_code"`
+			ErrorCode     string   `json:"error_code"`
+			CloudProvider string   `json:"cloud_provider"`
+			RegionCode    string   `json:"region_code"`
+			ProfileSource string   `json:"profile_source"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if len(payload.Events) != 1 {
+		t.Fatalf("event count = %d", len(payload.Events))
+	}
+	event := payload.Events[0]
+	if event.CommandPath != "tdc db create-db-cluster" || event.ExitCode != 0 || event.ErrorCode != "" || event.CloudProvider != "aws" || event.RegionCode != "aws-us-east-1" || event.ProfileSource != "explicit" {
+		t.Fatalf("unexpected telemetry event: %#v", event)
+	}
+	for _, want := range []string{"db-cluster-name", "dry-run", "profile", "project-id"} {
+		if !containsString(event.FlagNames, want) {
+			t.Fatalf("missing changed flag %q in %#v", want, event.FlagNames)
+		}
+	}
+}
+
+func TestTelemetryCapturesResolvedValidationError(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TDC_LOGGING", "off")
+	t.Setenv("TDC_TELEMETRY", "on")
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		requests <- body
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+	info := testVersion()
+	info.TelemetryEndpoint = server.URL
+
+	_, _, commandErr := executeForTestWithInfo(info, "db", "describe-db-cluster")
+	if commandErr == nil {
+		t.Fatal("expected missing required flag error")
+	}
+	var payload struct {
+		Events []struct {
+			CommandPath string `json:"command_path"`
+			ExitCode    int    `json:"exit_code"`
+			ErrorCode   string `json:"error_code"`
+		} `json:"events"`
+	}
+	var body []byte
+	select {
+	case body = <-requests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("resolved validation error did not send telemetry")
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if got := payload.Events[0]; got.CommandPath != "tdc db describe-db-cluster" || got.ExitCode != 2 || got.ErrorCode == "" {
+		t.Fatalf("unexpected validation event: %#v", got)
+	}
+}
+
+func TestResolvedTelemetryCommandUsesCanonicalLeaf(t *testing.T) {
+	root := NewRootCommand(testVersion())
+	tests := []struct {
+		args []string
+		want string
+	}{
+		{args: []string{"db", "create-db-cluster"}, want: "tdc db create-db-cluster"},
+		{args: []string{"--profile", "stage", "db", "create-db-cluster"}, want: "tdc db create-db-cluster"},
+		{args: []string{"fs", "cp"}, want: "tdc fs copy-file"},
+		{args: []string{"configure"}, want: "tdc configure"},
+		{args: []string{"db"}},
+		{args: []string{"db", "help"}},
+		{args: []string{"db", "missing"}},
+		{args: []string{"update"}},
+	}
+	for _, test := range tests {
+		cmd := resolvedTelemetryCommand(root, test.args)
+		got := ""
+		if cmd != nil {
+			got = cmd.CommandPath()
+		}
+		if got != test.want {
+			t.Errorf("resolvedTelemetryCommand(%q) = %q, want %q", test.args, got, test.want)
+		}
+	}
+}
+
+func TestNoTelemetryManagementCommandIsRegistered(t *testing.T) {
+	root := NewRootCommand(testVersion())
+	for _, command := range root.Commands() {
+		if command.Name() == "telemetry" || strings.Contains(command.Name(), "telemetry") {
+			t.Fatalf("unexpected telemetry management command %q", command.CommandPath())
+		}
+	}
+}
+
+func TestTelemetryFailureDoesNotChangeCommandResult(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TDC_LOGGING", "off")
+	withConfigEnv(t)
+	args := []string{"db", "create-db-cluster", "--db-cluster-name", "demo", "--project-id", "project-1", "--dry-run"}
+
+	t.Setenv("TDC_TELEMETRY", "off")
+	wantStdout, wantStderr, wantErr := executeForTestWithInfo(testVersion(), args...)
+
+	t.Setenv("TDC_TELEMETRY", "on")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte("backend-sensitive-message"))
+	}))
+	non202Endpoint := server.URL
+	closedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	networkFailureEndpoint := closedServer.URL
+	closedServer.Close()
+
+	for name, endpoint := range map[string]string{
+		"non-202 response": non202Endpoint,
+		"network failure":  networkFailureEndpoint,
+	} {
+		t.Run(name, func(t *testing.T) {
+			info := testVersion()
+			info.TelemetryEndpoint = endpoint
+			gotStdout, gotStderr, gotErr := executeForTestWithInfo(info, args...)
+			if gotStdout != wantStdout || gotStderr != wantStderr || apperr.CodeFor(gotErr) != apperr.CodeFor(wantErr) || apperr.ExitCodeFor(gotErr) != apperr.ExitCodeFor(wantErr) {
+				t.Fatalf("telemetry failure changed result:\nwant stdout=%q stderr=%q err=%v\ngot stdout=%q stderr=%q err=%v", wantStdout, wantStderr, wantErr, gotStdout, gotStderr, gotErr)
+			}
+		})
+	}
+	server.Close()
 }
 
 func TestConfigureRejectsReservedLoggingProfileBeforeWrites(t *testing.T) {
@@ -742,7 +1005,7 @@ func TestControlPlaneCommandSpecRendersImplementedResult(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	err := Execute(context.Background(), root, []string{"implemented-command", "--query", "items[0].id"}, &stdout, &stderr)
+	err := Execute(context.Background(), root, testVersion(), []string{"implemented-command", "--query", "items[0].id"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("expected implemented command to succeed, got %v", err)
 	}
@@ -783,7 +1046,7 @@ func TestControlPlaneCommandSpecUsesCustomDryRun(t *testing.T) {
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	err := Execute(context.Background(), root, []string{"create-resource", "--dry-run", "--query", "request.path"}, &stdout, &stderr)
+	err := Execute(context.Background(), root, testVersion(), []string{"create-resource", "--dry-run", "--query", "request.path"}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("expected custom dry-run to succeed, got %v", err)
 	}
@@ -915,6 +1178,24 @@ func TestConfigureUsesTDCProfileNamespace(t *testing.T) {
 	}
 	if _, exists := doc["default"]; exists {
 		t.Fatalf("configure unexpectedly wrote default profile: %#v", doc)
+	}
+}
+
+func TestConfigureDoesNotDisplayTelemetryNotice(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("TDC_TELEMETRY", "off")
+	configureIAMForTest(t)
+	_, stderr, err := executeForTest(
+		"configure", "--non-interactive",
+		"--region-code", "aws-us-east-1",
+		"--tdc-public-key", "public",
+		"--tdc-private-key", "private",
+	)
+	if err != nil {
+		t.Fatalf("configure failed: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("configure unexpectedly wrote to stderr: %q", stderr)
 	}
 }
 
@@ -1069,14 +1350,18 @@ func writeConfigOnlyProfile(t *testing.T, profileName string) {
 }
 
 func executeForTest(args ...string) (string, string, error) {
+	return executeForTestWithInfo(testVersion(), args...)
+}
+
+func executeForTestWithInfo(info version.Info, args ...string) (string, string, error) {
 	if _, ok := os.LookupEnv("TDC_LOGGING"); !ok {
 		_ = os.Setenv("TDC_LOGGING", "off")
 		defer os.Unsetenv("TDC_LOGGING")
 	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
-	root := NewRootCommand(testVersion())
-	err := Execute(context.Background(), root, args, &stdout, &stderr)
+	root := NewRootCommand(info)
+	err := Execute(context.Background(), root, info, args, &stdout, &stderr)
 	return stdout.String(), stderr.String(), err
 }
 

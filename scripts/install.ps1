@@ -116,6 +116,25 @@ function Print-NextSteps {
     Write-Output "  Docs: https://github.com/tidbcloud/tdc"
 }
 
+function Print-TelemetryNotice {
+    Write-Output ""
+    Write-Output "  Anonymous telemetry:"
+    Write-Output ""
+    Write-Output "  tdc collects anonymous command usage and reliability telemetry in release builds."
+    Write-Output "  It collects command and flag names (never values), exit and stable error codes,"
+    Write-Output "  duration, region, tdc version, OS, and architecture."
+    Write-Output ""
+    Write-Output "  It never collects credentials, tokens, SQL text, file paths or contents,"
+    Write-Output "  command output, API response payloads, or cloud resource IDs."
+    Write-Output ""
+    Write-Output "  To disable telemetry, create or edit ~/.tdc/.preferences:"
+    Write-Output ""
+    Write-Output "    [telemetry]"
+    Write-Output "    enabled = false"
+    Write-Output ""
+    Write-Output "  For one process: TDC_TELEMETRY=off tdc ..."
+}
+
 $arch = [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture
 if ($arch -ne [System.Runtime.InteropServices.Architecture]::X64) {
     Fail "unsupported Windows architecture: $arch"
@@ -212,6 +231,7 @@ try {
     Bootstrap-Config
     Report-PathStatus
     Print-Regions
+    Print-TelemetryNotice
     Print-NextSteps
 } finally {
     Remove-Item -Recurse -Force $TempDir.FullName -ErrorAction SilentlyContinue

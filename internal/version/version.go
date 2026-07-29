@@ -6,32 +6,35 @@ import (
 )
 
 var (
-	version        = "dev"
-	commit         = "none"
-	date           = "unknown"
-	installSource  = "unknown"
-	releaseChannel = "stable"
+	version           = "dev"
+	commit            = "none"
+	date              = "unknown"
+	installSource     = "unknown"
+	releaseChannel    = "stable"
+	telemetryEndpoint = ""
 )
 
 type Info struct {
-	Version        string
-	Commit         string
-	Date           string
-	OS             string
-	Arch           string
-	InstallSource  string
-	ReleaseChannel string
+	Version           string
+	Commit            string
+	Date              string
+	OS                string
+	Arch              string
+	InstallSource     string
+	ReleaseChannel    string
+	TelemetryEndpoint string
 }
 
 func Current() Info {
 	return Info{
-		Version:        version,
-		Commit:         commit,
-		Date:           date,
-		OS:             runtime.GOOS,
-		Arch:           runtime.GOARCH,
-		InstallSource:  installSource,
-		ReleaseChannel: releaseChannel,
+		Version:           version,
+		Commit:            commit,
+		Date:              date,
+		OS:                runtime.GOOS,
+		Arch:              runtime.GOARCH,
+		InstallSource:     installSource,
+		ReleaseChannel:    releaseChannel,
+		TelemetryEndpoint: telemetryEndpoint,
 	}
 }
 

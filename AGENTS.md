@@ -23,6 +23,8 @@ Implemented:
   `docs/spec/done/0002-local-config-and-credentials.md`
 - Global settings and operation logging configuration from
   `docs/spec/done/0021-global-settings.md`
+- Privacy-preserving CLI telemetry from
+  `docs/spec/done/0022-telemetry.md`
 - Output, query, and dry-run contracts from
   `docs/spec/done/0003-output-error-query-dry-run.md`
 - API client auth, authorization, and region routing from
@@ -289,6 +291,7 @@ internal/organization/      organization project command use cases
 internal/query/             JMESPath query application
 internal/secretinput/       no-echo secret input helper
 internal/settings/          global settings parsing and legacy logging migration
+internal/telemetry/         CLI eligibility, identity, event, and delivery path
 internal/telemetrybackend/  telemetry API, batcher, TiDB, and PostHog sinks
 internal/update/            GitHub Releases update checks and self-update logic
 internal/version/           build version metadata
@@ -627,6 +630,10 @@ All tdc local state belongs under `~/.tdc/`.
   never selected by profile. Fresh installs and `tdc configure` do not create
   it. Do not create or migrate the unshipped intermediate `~/.tdc/settings`
   path.
+- `~/.tdc/.telemetry-installation-id` is a machine-generated pseudonymous
+  telemetry identity, not TOML configuration. It is created lazily with mode
+  `0600` only for an eligible, effectively enabled invocation with a
+  build-configured endpoint. Users can delete it to reset the identity.
 - The profile name `logging` is reserved so legacy global logging configuration
   cannot be confused with a profile.
 - The default profile name is `default`.
@@ -955,19 +962,27 @@ boundary writes to stdout/stderr and maps errors to exit codes.
 ## Telemetry Rules
 
 The product-owned telemetry backend is implemented as the independent
-`tdc-telemetry-backend` process. The CLI collection and delivery path remains
-governed by `docs/spec/0022-telemetry.md`. Telemetry must be opt-aware and
-privacy-preserving. Allowed fields:
+`tdc-telemetry-backend` process. The CLI collection and delivery path is
+implemented by `internal/telemetry` under
+`docs/spec/done/0022-telemetry.md`. Release archives contain a build-configured
+product endpoint; local builds and CI default to disabled. `TDC_TELEMETRY`
+overrides `[telemetry].enabled` in `~/.tdc/.preferences`. Help, version,
+commandless usage, and all `tdc update` forms must be excluded before telemetry
+reads preferences or installation state. Allowed fields:
 
 - command and subcommand invoked
 - flag names used, never flag values
 - error codes and execution time
-- TiDB Cloud region
-- CLI version
-- OS type
+- TiDB Cloud provider and canonical region
+- CLI version, OS, architecture, and install source
+- anonymous installation ID and profile source category, never profile name
 
-Never collect credentials, file contents, SQL text, query output, local paths
-that can reveal sensitive data, or API response payloads.
+Never collect credentials, tokens, resource IDs, file contents, SQL text, query
+output, flag values, raw errors, profile names, local or remote paths, host
+identity, command output, or API request/response payloads. Delivery is one
+best-effort HTTPS POST with a three-second hard timeout, no foreground retry, no
+redirect following, and no local durable queue. Any failure must preserve the
+command's stdout, stderr, output format, and exit status.
 
 ## Go Style
 
