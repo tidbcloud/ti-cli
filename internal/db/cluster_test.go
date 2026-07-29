@@ -229,6 +229,29 @@ func TestCreateClusterUsesProfileProjectAndAllowsExplicitOverride(t *testing.T) 
 	}
 }
 
+func TestCreateClusterAllowsServerDefaultProject(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := body["labels"]; ok {
+			t.Fatalf("request with no resolved project must omit labels: %#v", body)
+		}
+		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo-cluster","clusterPlan":"STARTER"}`))
+	}))
+	defer server.Close()
+
+	if _, err := testService(server.URL).CreateCluster(context.Background(), CreateClusterOptions{
+		Profile:                      testProfile(),
+		DisplayName:                  "demo-cluster",
+		ClusterType:                  "starter",
+		MonthlySpendingLimitUSDCents: -1,
+	}); err != nil {
+		t.Fatalf("CreateCluster failed: %v", err)
+	}
+}
+
 func TestCreateClusterProjectResolutionErrors(t *testing.T) {
 	t.Run("explicit empty", func(t *testing.T) {
 		profile := testProfile()
@@ -241,14 +264,6 @@ func TestCreateClusterProjectResolutionErrors(t *testing.T) {
 		}
 	})
 
-	t.Run("missing default", func(t *testing.T) {
-		_, err := Service{}.DryRunCreateCluster(context.Background(), "tdc db create-db-cluster", CreateClusterOptions{
-			Profile: testProfile(), DisplayName: "demo", ClusterType: "starter", MonthlySpendingLimitUSDCents: -1,
-		})
-		if apperr.CodeFor(err) != "db.missing_project_id" || !strings.Contains(apperr.MessageFor(err), "tdc configure --profile test") {
-			t.Fatalf("unexpected error: %v", err)
-		}
-	})
 }
 
 func TestListClusters(t *testing.T) {
@@ -496,6 +511,25 @@ func TestDryRunCreateClusterDoesNotSendRequest(t *testing.T) {
 	}
 	if !foundWait {
 		t.Fatalf("dry-run should describe the post-create wait: %#v", result.Checks)
+	}
+}
+
+func TestDryRunCreateClusterOmitsProjectLabelWhenUnset(t *testing.T) {
+	result, err := testService("https://starter.test").DryRunCreateCluster(context.Background(), "tdc db create-db-cluster", CreateClusterOptions{
+		Profile:                      testProfile(),
+		DisplayName:                  "demo-cluster",
+		ClusterType:                  "starter",
+		MonthlySpendingLimitUSDCents: -1,
+	})
+	if err != nil {
+		t.Fatalf("DryRunCreateCluster failed: %v", err)
+	}
+	body, ok := result.Request.Body.(map[string]any)
+	if !ok {
+		t.Fatalf("unexpected dry-run body type %T", result.Request.Body)
+	}
+	if _, ok := body["labels"]; ok {
+		t.Fatalf("dry-run with no resolved project must omit labels: %#v", body)
 	}
 }
 

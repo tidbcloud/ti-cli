@@ -346,6 +346,48 @@ func TestStarterOnlyDBGuardrailsThroughBinary(t *testing.T) {
 	}
 }
 
+func TestCreateDBClusterUsesServerDefaultProjectThroughBinary(t *testing.T) {
+	bin := tdcBinary(t)
+	home := t.TempDir()
+	created := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1beta1/clusters" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode create request: %v", err)
+			http.Error(w, "invalid request", http.StatusBadRequest)
+			return
+		}
+		if _, ok := body["labels"]; ok {
+			t.Errorf("create request with no configured project must omit labels: %#v", body)
+			http.Error(w, "unexpected labels", http.StatusBadRequest)
+			return
+		}
+		created = true
+		_, _ = w.Write([]byte(`{"clusterId":"starter-1","displayName":"server-default-project","servicePlan":"Starter","state":"CREATING"}`))
+	}))
+	defer server.Close()
+
+	writeE2EFile(t, filepath.Join(home, ".tdc", "config"), "[default]\nregion_code = 'aws-us-east-1'\n", 0o600)
+	writeE2EFile(t, filepath.Join(home, ".tdc", "credentials"), "[default]\ntdc_public_key = 'public'\ntdc_private_key = 'private'\n", 0o600)
+	env := []string{
+		"HOME=" + home,
+		"TDC_ALLOW_TEST_ENDPOINTS=1",
+		"TDC_TEST_STARTER_BASE_URL=" + server.URL,
+	}
+
+	result := runTDCWithInput(t, bin, "", env, "db", "create-db-cluster", "--db-cluster-name", "server-default-project")
+	result.wantExitCode(0)
+	result.wantStdoutContains(`"id": "starter-1"`)
+	if !created {
+		t.Fatal("create request was not sent")
+	}
+}
+
 func tdcConfigEnv() []string {
 	return []string{
 		"TDC_REGION_CODE=aws-us-east-1",

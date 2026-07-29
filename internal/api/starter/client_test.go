@@ -120,6 +120,28 @@ func TestCreateCluster(t *testing.T) {
 	}
 }
 
+func TestCreateClusterOmitsProjectLabelWhenUnset(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if _, ok := body["labels"]; ok {
+			t.Fatalf("request with no project ID must omit labels: %#v", body)
+		}
+		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo-cluster","clusterPlan":"STARTER"}`))
+	}))
+	defer server.Close()
+
+	client := New(newTestAPIClient(t, server.URL))
+	if _, err := client.CreateCluster(context.Background(), CreateClusterRequest{
+		DisplayName: "demo-cluster",
+		RegionName:  "regions/aws-us-east-1",
+	}); err != nil {
+		t.Fatalf("CreateCluster failed: %v", err)
+	}
+}
+
 func TestGetUpdateDeleteCluster(t *testing.T) {
 	requests := make([]string, 0, 3)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

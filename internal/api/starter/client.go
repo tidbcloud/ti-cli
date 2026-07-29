@@ -141,14 +141,18 @@ func (c *Client) ListClusters(ctx context.Context, opts ListClustersOptions) (Li
 }
 
 func (c *Client) CreateCluster(ctx context.Context, input CreateClusterRequest) (Cluster, error) {
+	var labels map[string]string
+	if projectID := strings.TrimSpace(input.ProjectID); projectID != "" {
+		labels = map[string]string{
+			ProjectLabelKey: projectID,
+		}
+	}
 	body := createClusterWireRequest{
 		DisplayName: input.DisplayName,
 		Region: &regionWire{
 			Name: input.RegionName,
 		},
-		Labels: map[string]string{
-			ProjectLabelKey: input.ProjectID,
-		},
+		Labels:        labels,
 		SpendingLimit: input.SpendingLimit,
 	}
 	req, err := c.api.NewRequest(ctx, http.MethodPost, "/v1beta1/clusters", body)
