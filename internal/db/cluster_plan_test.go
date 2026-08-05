@@ -90,10 +90,10 @@ func TestListClustersFiltersNonStarterAndUnverifiableResources(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{
 			"clusters":[
-				{"clusterId":"starter-1","displayName":"starter","servicePlan":"Starter"},
-				{"clusterId":"essential-1","displayName":"essential","servicePlan":"Essential"},
-				{"clusterId":"unknown-1","displayName":"unknown"},
-				{"clusterId":"conflict-1","displayName":"conflict","servicePlan":"Starter","clusterPlan":"ESSENTIAL"}
+				{"clusterId":"starter-1","displayName":"starter","servicePlan":"Starter","region":{"name":"regions/aws-us-east-1"}},
+				{"clusterId":"essential-1","displayName":"essential","servicePlan":"Essential","region":{"name":"regions/aws-us-east-1"}},
+				{"clusterId":"unknown-1","displayName":"unknown","region":{"name":"regions/aws-us-east-1"}},
+				{"clusterId":"conflict-1","displayName":"conflict","servicePlan":"Starter","clusterPlan":"ESSENTIAL","region":{"name":"regions/aws-us-east-1"}}
 			],
 			"nextPageToken":"token-2",
 			"totalSize":4
@@ -121,7 +121,7 @@ func TestListClustersFiltersNonStarterAndUnverifiableResources(t *testing.T) {
 
 func TestListClustersCanReturnEmptyFilteredPageWithNextToken(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"clusters":[{"clusterId":"essential-1","servicePlan":"Essential"}],"nextPageToken":"token-2","totalSize":1}`))
+		_, _ = w.Write([]byte(`{"clusters":[{"clusterId":"essential-1","servicePlan":"Essential","region":{"name":"regions/aws-us-east-1"}}],"nextPageToken":"token-2","totalSize":1}`))
 	}))
 	defer server.Close()
 

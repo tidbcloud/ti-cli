@@ -41,6 +41,8 @@ Implemented:
   `docs/spec/done/0017-default-virtual-project-resolution.md`
 - Starter-only DB resource guardrails from
   `docs/spec/done/0023-starter-only-db-resource-guardrails.md`
+- Region-scoped Starter DB cluster listing from
+  `docs/spec/done/0024-region-scoped-db-cluster-listing.md`
 - tdc fs Unix-style command aliases from
   `docs/spec/done/0014-tdc-fs-unix-command-aliases.md`
 - tdc fs control plane from
@@ -358,9 +360,11 @@ Follow these rules unless `docs/priciples.md` is updated:
   API resource metadata. Treat `servicePlan` as canonical and `clusterPlan` as
   a legacy fallback. Reject non-Starter, missing, or conflicting plans before
   any cluster, branch, IAM SQL-user, local SQL-credential, or SQL mutation.
-- `tdc db list-db-clusters` filters each API page to verified Starter clusters,
-  preserves the API next-page token, and omits the API total size because that
-  total includes service plans outside the tdc product boundary.
+- `tdc db list-db-clusters` adds an immutable API filter for the effective
+  provider and region, then defensively filters each API page to verified
+  Starter clusters in that same region. It preserves the API next-page token
+  and omits the API total size because that total can include resources outside
+  tdc's verified result. Missing or conflicting region metadata is excluded.
 - The global `--region <canonical-region-code>` flag overrides placement for
   the current command only. It has higher priority than `TDC_REGION_CODE` and
   profile `region_code`, but it must not change the selected profile or

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -289,16 +290,21 @@ func TestStarterOnlyDBGuardrailsThroughBinary(t *testing.T) {
 	bin := tdcBinary(t)
 	home := t.TempDir()
 	mutations := 0
+	var listFilters []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters":
+			listFilters = append(listFilters, r.URL.Query().Get("filter"))
 			_, _ = w.Write([]byte(`{
 				"clusters":[
-					{"clusterId":"starter-1","displayName":"starter","servicePlan":"Starter"},
-					{"clusterId":"essential-1","displayName":"essential","servicePlan":"Essential"}
+					{"clusterId":"starter-east","displayName":"starter-east","servicePlan":"Starter","region":{"name":"regions/aws-us-east-1"}},
+					{"clusterId":"starter-west","displayName":"starter-west","servicePlan":"Starter","region":{"regionId":"us-west-2","cloudProvider":"aws"}},
+					{"clusterId":"starter-ali","displayName":"starter-ali","servicePlan":"Starter","region":{"regionId":"ap-southeast-1","cloudProvider":"alicloud"}},
+					{"clusterId":"starter-unknown","displayName":"starter-unknown","servicePlan":"Starter"},
+					{"clusterId":"essential-1","displayName":"essential","servicePlan":"Essential","region":{"name":"regions/aws-us-east-1"}}
 				],
 				"nextPageToken":"token-2",
-				"totalSize":2
+				"totalSize":5
 			}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/essential-1":
 			_, _ = w.Write([]byte(`{"clusterId":"essential-1","displayName":"essential","servicePlan":"Essential"}`))
@@ -321,10 +327,28 @@ func TestStarterOnlyDBGuardrailsThroughBinary(t *testing.T) {
 
 	list := runTDCWithInput(t, bin, "", env, "db", "list-db-clusters")
 	list.wantExitCode(0)
-	list.wantStdoutContains(`"id": "starter-1"`)
+	list.wantStdoutContains(`"id": "starter-east"`)
 	list.wantStdoutContains(`"next_page_token": "token-2"`)
+	list.wantStdoutNotContains("starter-west")
+	list.wantStdoutNotContains("starter-ali")
+	list.wantStdoutNotContains("starter-unknown")
 	list.wantStdoutNotContains("essential-1")
 	list.wantStdoutNotContains("total_size")
+
+	westList := runTDCWithInput(t, bin, "", env, "--region", "aws-us-west-2", "db", "list-db-clusters")
+	westList.wantExitCode(0)
+	westList.wantStdoutContains(`"id": "starter-west"`)
+	westList.wantStdoutNotContains("starter-east")
+	westList.wantStdoutNotContains("starter-ali")
+	westList.wantStdoutNotContains("starter-unknown")
+
+	wantFilters := []string{
+		`region.provider="aws" AND region.name="regions/aws-us-east-1"`,
+		`region.provider="aws" AND region.name="regions/aws-us-west-2"`,
+	}
+	if !reflect.DeepEqual(listFilters, wantFilters) {
+		t.Fatalf("list filters = %#v, want %#v", listFilters, wantFilters)
+	}
 
 	describe := runTDCWithInput(t, bin, "", env, "db", "describe-db-cluster", "--db-cluster-id", "essential-1")
 	describe.wantExitCode(2)

@@ -179,7 +179,7 @@ tdc fs mount-file-system --file-system-name agent-workspace --mount-path /path_t
 
 ### TiDB Cloud Starter
 
-`tdc db` manages TiDB Cloud Starter clusters only. Cluster lists omit Essential and other service plans, and every cluster, branch, SQL-user, connection-string, and SQL command verifies the cluster service plan before continuing. If TiDB Cloud does not return enough plan metadata to prove that a cluster is Starter, `tdc` fails without issuing the requested mutation.
+`tdc db` manages TiDB Cloud Starter clusters only. Cluster lists include only verified Starter clusters in the effective region and omit Essential, other service plans, cross-region resources, and resources whose region cannot be verified. Use global `--region`, for example `tdc --region aws-us-west-2 db list-db-clusters`, to inspect another region without changing the stored profile. Every cluster, branch, SQL-user, connection-string, and SQL command verifies the cluster service plan before continuing. If TiDB Cloud does not return enough plan metadata to prove that a cluster is Starter, `tdc` fails without issuing the requested mutation.
 
 `tdc configure` discovers the account's virtual project and saves its ID in the selected profile. Cluster creation uses an explicit `--project-id` first, then that saved project ID. If neither is available, `tdc` omits the project label and lets TiDB Cloud select the account's default project.
 
