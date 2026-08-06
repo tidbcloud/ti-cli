@@ -192,7 +192,7 @@ Backend tests must cover:
 - PostHog nested properties with person profiles disabled;
 - independent TiDB and PostHog sink failure behavior remaining unchanged.
 
-Black-box e2e should use a local telemetry receiver to inspect schema v2 payloads without contacting production. A focused backend integration test may use `TDC_TEST_TELEMETRY_TIDB_DSN`; ordinary `make test` and `make e2e` must not require a live TiDB instance.
+Black-box `make e2e` uses a local telemetry receiver to inspect schema v2 payloads without contacting production. A separate opt-in `make telemetry-e2e` loads the ignored `e2e/.env.telemetry` file and requires a test-only `TDC_TEST_TELEMETRY_TIDB_DSN` with database create/drop privileges. It creates a unique empty database, migrates it through legacy schema version 1, inserts a legacy event, migrates to the latest version, proves that event is preserved, then starts a local telemetry backend and fake PostHog receiver. It executes a no-side-effect CLI dry run against that local backend, verifies the stored schema v2 event and extra JSON, and drops only its temporary database. Ordinary `make test`, `make e2e`, and all live-e2e targets must not read the dotenv file or require a live TiDB instance.
 
 ## Documentation Updates
 

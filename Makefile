@@ -5,6 +5,8 @@ BINARY_NAME := tdc
 BIN_DIR := bin
 TDC_BIN := $(BIN_DIR)/$(BINARY_NAME)
 TELEMETRY_BACKEND_BIN := $(BIN_DIR)/tdc-telemetry-backend
+TELEMETRY_MIGRATOR_BIN := $(BIN_DIR)/tdc-telemetry-migrate
+TELEMETRY_E2E_ENV := e2e/.env.telemetry
 LIVE_E2E_PROFILE ?= live-e2e
 LIVE_E2E_RUN = TDC_E2E_BIN="$(abspath $(TDC_BIN))" TDC_LIVE=1 TDC_PROFILE="$(LIVE_E2E_PROFILE)" $(GO) test ./e2e -count=1 -v -timeout 30m
 
@@ -19,7 +21,11 @@ LDFLAGS := -s -w \
 	-X $(MODULE)/internal/version.installSource=local \
 	-X $(MODULE)/internal/version.releaseChannel=stable
 
-.PHONY: all build build-telemetry-backend test e2e live-e2e live-e2e-configure live-e2e-organization live-e2e-db live-e2e-fs live-e2e-fs-git live-e2e-fs-journal live-e2e-fs-vault release-snapshot clean
+ifneq ($(strip $(TELEMETRY_ENDPOINT)),)
+LDFLAGS += -X $(MODULE)/internal/version.telemetryEndpoint=$(TELEMETRY_ENDPOINT)
+endif
+
+.PHONY: all build build-telemetry-backend build-telemetry-migrator test e2e telemetry-e2e live-e2e live-e2e-configure live-e2e-organization live-e2e-db live-e2e-fs live-e2e-fs-git live-e2e-fs-journal live-e2e-fs-vault release-snapshot clean
 
 all: build
 
@@ -31,11 +37,20 @@ build-telemetry-backend:
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -trimpath -o $(TELEMETRY_BACKEND_BIN) ./cmd/tdc-telemetry-backend
 
+build-telemetry-migrator:
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -trimpath -o $(TELEMETRY_MIGRATOR_BIN) ./cmd/tdc-telemetry-migrate
+
 test:
 	$(GO) test ./...
 
 e2e: build
 	TDC_E2E_BIN="$(abspath $(TDC_BIN))" $(GO) test ./e2e -count=1 -v
+
+telemetry-e2e: build build-telemetry-backend build-telemetry-migrator
+	@test -f "$(TELEMETRY_E2E_ENV)" || { echo "missing $(TELEMETRY_E2E_ENV); set TDC_TEST_TELEMETRY_TIDB_DSN in that ignored file" >&2; exit 2; }
+	@set -a; . "$(TELEMETRY_E2E_ENV)"; set +a; \
+		TDC_E2E_BIN="$(abspath $(TDC_BIN))" TDC_TELEMETRY_BACKEND_E2E_BIN="$(abspath $(TELEMETRY_BACKEND_BIN))" TDC_TELEMETRY_MIGRATOR_E2E_BIN="$(abspath $(TELEMETRY_MIGRATOR_BIN))" TDC_TELEMETRY_E2E=1 $(GO) test ./e2e -count=1 -v -run '^TestTelemetryDeliveryToTiDB$$'
 
 live-e2e: build
 	$(LIVE_E2E_RUN) -run '^TestLive'

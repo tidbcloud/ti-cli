@@ -25,6 +25,8 @@ Implemented:
   `docs/spec/done/0021-global-settings.md`
 - Privacy-preserving CLI telemetry from
   `docs/spec/done/0022-telemetry.md`
+- Telemetry environment metadata from
+  `docs/spec/done/0025-telemetry-environment-metadata.md`
 - Output, query, and dry-run contracts from
   `docs/spec/done/0003-output-error-query-dry-run.md`
 - API client auth, authorization, and region routing from
@@ -178,6 +180,7 @@ make build
 make build-telemetry-backend
 make test
 make e2e
+make telemetry-e2e
 make live-e2e-configure
 make live-e2e-organization
 make live-e2e-db
@@ -193,10 +196,19 @@ make clean
 `make build` writes the binary to `bin/tdc`.
 `make build-telemetry-backend` writes the independent ingestion service to
 `bin/tdc-telemetry-backend`.
+`make build-telemetry-migrator` writes the one-shot Goose migration runner to
+`bin/tdc-telemetry-migrate`.
 
 `make test` runs ordinary Go tests and must not require live cloud credentials.
 `make e2e` builds `bin/tdc` and runs black-box tests against the real binary via
 `TDC_E2E_BIN`.
+`make telemetry-e2e` is separately opt-in. It loads the ignored
+`e2e/.env.telemetry` file, requires a test-only `TDC_TEST_TELEMETRY_TIDB_DSN`
+whose user can create and drop databases, and creates a unique temporary TiDB
+database. It verifies Goose initialization from empty state, an additive
+upgrade preserving a legacy event, and the real local CLI-to-backend-to-TiDB
+delivery path before dropping only that temporary database. It must not run as
+part of `make test`, `make e2e`, or any live-e2e target.
 The `make live-e2e-<family>` targets build `bin/tdc` and run only the selected
 top-level command family against the `live-e2e` profile by default. Keep
 configure, organization, db, fs, fs-git, fs-journal, and fs-vault tests
@@ -265,6 +277,7 @@ Current layout:
 ```text
 cmd/tdc/                    CLI entrypoint
 cmd/tdc-telemetry-backend/  independent telemetry ingestion service entrypoint
+cmd/tdc-telemetry-migrate/  one-shot embedded Goose migration runner
 internal/api/               shared HTTP API client and service clients
 internal/api/endpoints/     provider/region endpoint resolver
 internal/api/transport/     Digest/Bearer/debug HTTP transports
@@ -995,6 +1008,8 @@ reads preferences or installation state. Allowed fields:
 - TiDB Cloud provider and canonical region
 - CLI version, OS, architecture, and install source
 - anonymous installation ID and profile source category, never profile name
+- an explicit process-scoped `TDC_TELEMETRY_TAG` value, bounded to 128 UTF-8 bytes
+- an explicit process-scoped `TDC_TELEMETRY_EXTRA` JSON value, accepted only when complete, bounded to 2 KiB, depth-limited, and free of prohibited field names
 
 Never collect credentials, tokens, resource IDs, file contents, SQL text, query
 output, flag values, raw errors, profile names, local or remote paths, host
@@ -1002,6 +1017,12 @@ identity, command output, or API request/response payloads. Delivery is one
 best-effort HTTPS POST with a three-second hard timeout, no foreground retry, no
 redirect following, and no local durable queue. Any failure must preserve the
 command's stdout, stderr, output format, and exit status.
+
+`TDC_TELEMETRY_TAG` and `TDC_TELEMETRY_EXTRA` are read only after telemetry is
+eligible and enabled, are never persisted under `~/.tdc/`, and must never appear
+in normal output, errors, debug diagnostics, or operation logs. The CLI emits
+schema version 2; the backend must continue to accept schema version 1 without
+metadata during rollout.
 
 ## Go Style
 

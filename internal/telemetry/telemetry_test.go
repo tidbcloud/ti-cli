@@ -12,7 +12,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
+	"github.com/tidbcloud/tdc/internal/config/store"
 	"github.com/tidbcloud/tdc/internal/settings"
 	"github.com/tidbcloud/tdc/internal/version"
 )
@@ -311,6 +313,154 @@ func TestFinishSendsOnlyAllowlistedEventFields(t *testing.T) {
 	flags := event["flag_names"].([]any)
 	if strings.Join([]string{flags[0].(string), flags[1].(string), flags[2].(string)}, ",") != "db-cluster-id,sql,tdc-private-key" {
 		t.Fatalf("flags were not canonical names only: %#v", flags)
+	}
+}
+
+func TestTelemetryEnvironmentMetadataIsBoundedAndNotPersisted(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		requests <- body
+		writer.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	cfg := enabledConfig(home)
+	cfg.Endpoint = server.URL
+	cfg.Environment[TagEnvironmentVariable] = strings.Repeat("a", 127) + "界"
+	cfg.Environment[ExtraEnvironmentVariable] = ` { "campaign" : "launch" , "runtime" : "e2b" } `
+	session := Start(cfg)
+	if session == nil {
+		t.Fatal("telemetry session was not created")
+	}
+	session.Finish(EventInput{CommandPath: "tdc db list-db-clusters"})
+	body := <-requests
+	var payload struct {
+		SchemaVersion int `json:"schema_version"`
+		Events        []struct {
+			Tag   string          `json:"tag"`
+			Extra json.RawMessage `json:"extra"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if payload.SchemaVersion != 2 || len(payload.Events) != 1 {
+		t.Fatalf("payload = %s", body)
+	}
+	if got := payload.Events[0].Tag; len(got) > maxTagBytes || !utf8.ValidString(got) {
+		t.Fatalf("tag = %q (%d bytes), want valid bounded value", got, len(got))
+	}
+	if got := string(payload.Events[0].Extra); got != `{"campaign":"launch","runtime":"e2b"}` {
+		t.Fatalf("extra = %s", got)
+	}
+	for _, path := range []string{settings.Path(home), store.ConfigPath(home), filepath.Join(home, ".tdc", "credentials")} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("metadata unexpectedly persisted to %s: %v", path, err)
+		}
+	}
+}
+
+func TestInvalidTelemetryEnvironmentMetadataIsOmittedWithoutLeaking(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		requests <- body
+		writer.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	home := t.TempDir()
+	var diagnostic strings.Builder
+	cfg := enabledConfig(home)
+	cfg.Endpoint = server.URL
+	cfg.Debug = true
+	cfg.DebugWriter = &diagnostic
+	cfg.Environment[TagEnvironmentVariable] = string([]byte{0xff})
+	cfg.Environment[ExtraEnvironmentVariable] = `{"password":"must-not-leak"}`
+	Start(cfg).Finish(EventInput{CommandPath: "tdc db list-db-clusters"})
+	body := <-requests
+	if strings.Contains(string(body), "must-not-leak") || strings.Contains(diagnostic.String(), "must-not-leak") {
+		t.Fatalf("metadata leaked: payload=%s debug=%s", body, diagnostic.String())
+	}
+	var payload struct {
+		Events []map[string]any `json:"events"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := payload.Events[0]["tag"]; exists {
+		t.Fatalf("invalid tag was sent: %s", body)
+	}
+	if _, exists := payload.Events[0]["extra"]; exists {
+		t.Fatalf("invalid extra was sent: %s", body)
+	}
+}
+
+func TestTelemetryEnvironmentMetadataIsNotReadWhenDisabled(t *testing.T) {
+	home := t.TempDir()
+	cfg := enabledConfig(home)
+	cfg.Environment[EnvironmentVariable] = "off"
+	cfg.Environment[ExtraEnvironmentVariable] = `{"password":"must-not-parse"}`
+	if session := Start(cfg); session != nil {
+		t.Fatal("disabled telemetry created a session")
+	}
+	if _, err := os.Stat(InstallationIDPath(home)); !os.IsNotExist(err) {
+		t.Fatalf("disabled telemetry wrote state: %v", err)
+	}
+}
+
+func TestNormalizeTelemetryMetadata(t *testing.T) {
+	t.Run("tag", func(t *testing.T) {
+		for _, test := range []struct {
+			name  string
+			value string
+			ok    bool
+		}{
+			{name: "absent", ok: true},
+			{name: "exact", value: "agent-demo", ok: true},
+			{name: "multibyte truncation", value: strings.Repeat("界", 50), ok: true},
+			{name: "invalid utf8", value: string([]byte{0xff}), ok: false},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				got, ok := normalizeTag(test.value, test.name != "absent")
+				if ok != test.ok || (ok && (len(got) > maxTagBytes || !utf8.ValidString(got))) {
+					t.Fatalf("normalizeTag(%q) = %q, %t", test.value, got, ok)
+				}
+			})
+		}
+	})
+
+	for _, test := range []struct {
+		name  string
+		value string
+		ok    bool
+		want  string
+	}{
+		{name: "object", value: ` { "campaign" : "launch" } `, ok: true, want: `{"campaign":"launch"}`},
+		{name: "array", value: `[1, "two"]`, ok: true, want: `[1,"two"]`},
+		{name: "number", value: `1.25`, ok: true, want: `1.25`},
+		{name: "boolean", value: `true`, ok: true, want: `true`},
+		{name: "null", value: `null`, ok: true, want: `null`},
+		{name: "malformed", value: `{`, ok: false},
+		{name: "multiple values", value: `{} {}`, ok: false},
+		{name: "prohibited key", value: `{"token":"secret"}`, ok: false},
+		{name: "oversized", value: `"` + strings.Repeat("a", maxExtraBytes) + `"`, ok: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := normalizeExtra(test.value, true)
+			if ok != test.ok || (ok && string(got) != test.want) {
+				t.Fatalf("normalizeExtra(%q) = %s, %t", test.value, got, ok)
+			}
+		})
+	}
+	tooDeep := `"leaf"`
+	for range maxExtraDepth + 1 {
+		tooDeep = `{"level":` + tooDeep + `}`
+	}
+	if got, ok := normalizeExtra(tooDeep, true); ok || got != nil {
+		t.Fatalf("too-deep extra was accepted: %s", got)
 	}
 }
 

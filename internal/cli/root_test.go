@@ -408,6 +408,8 @@ func TestTelemetrySendsCanonicalSafeCommandEvent(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("TDC_LOGGING", "off")
 	t.Setenv("TDC_TELEMETRY", "on")
+	t.Setenv("TDC_TELEMETRY_TAG", "e2b-preview")
+	t.Setenv("TDC_TELEMETRY_EXTRA", `{"campaign":"launch","runtime":"e2b"}`)
 	withConfigEnv(t)
 
 	requests := make(chan []byte, 1)
@@ -446,24 +448,27 @@ func TestTelemetrySendsCanonicalSafeCommandEvent(t *testing.T) {
 		}
 	}
 	var payload struct {
-		Events []struct {
-			CommandPath   string   `json:"command_path"`
-			FlagNames     []string `json:"flag_names"`
-			ExitCode      int      `json:"exit_code"`
-			ErrorCode     string   `json:"error_code"`
-			CloudProvider string   `json:"cloud_provider"`
-			RegionCode    string   `json:"region_code"`
-			ProfileSource string   `json:"profile_source"`
+		SchemaVersion int `json:"schema_version"`
+		Events        []struct {
+			CommandPath   string          `json:"command_path"`
+			FlagNames     []string        `json:"flag_names"`
+			ExitCode      int             `json:"exit_code"`
+			ErrorCode     string          `json:"error_code"`
+			CloudProvider string          `json:"cloud_provider"`
+			RegionCode    string          `json:"region_code"`
+			ProfileSource string          `json:"profile_source"`
+			Tag           string          `json:"tag"`
+			Extra         json.RawMessage `json:"extra"`
 		} `json:"events"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Events) != 1 {
+	if payload.SchemaVersion != 2 || len(payload.Events) != 1 {
 		t.Fatalf("event count = %d", len(payload.Events))
 	}
 	event := payload.Events[0]
-	if event.CommandPath != "tdc db create-db-cluster" || event.ExitCode != 0 || event.ErrorCode != "" || event.CloudProvider != "aws" || event.RegionCode != "aws-us-east-1" || event.ProfileSource != "explicit" {
+	if event.CommandPath != "tdc db create-db-cluster" || event.ExitCode != 0 || event.ErrorCode != "" || event.CloudProvider != "aws" || event.RegionCode != "aws-us-east-1" || event.ProfileSource != "explicit" || event.Tag != "e2b-preview" || string(event.Extra) != `{"campaign":"launch","runtime":"e2b"}` {
 		t.Fatalf("unexpected telemetry event: %#v", event)
 	}
 	for _, want := range []string{"db-cluster-name", "dry-run", "profile", "project-id"} {

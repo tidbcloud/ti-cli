@@ -34,13 +34,6 @@ func main() {
 	db.SetConnMaxLifetime(5 * time.Minute)
 
 	tidbSink := telemetrybackend.NewTiDBSink(db)
-	startupContext, startupCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	if err := tidbSink.EnsureSchema(startupContext); err != nil {
-		startupCancel()
-		logger.Error("initialize TiDB telemetry schema failed")
-		os.Exit(1)
-	}
-	startupCancel()
 
 	postHogSink, err := telemetrybackend.NewPostHogSink(
 		config.PostHogAPIHost,

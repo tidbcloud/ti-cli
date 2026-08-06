@@ -4,13 +4,20 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
 )
 
-const eventSchemaVersion = 1
+const (
+	eventSchemaVersionV1 = 1
+	eventSchemaVersionV2 = 2
+	maxTagBytes          = 128
+	maxExtraBytes        = 2048
+	maxExtraDepth        = 8
+)
 
 var (
 	eventIDPattern        = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
@@ -48,6 +55,7 @@ var disallowedFieldNames = map[string]struct{}{
 	"resource_id":    {},
 	"sql":            {},
 	"sql_text":       {},
+	"secret":         {},
 	"tenant_id":      {},
 	"token":          {},
 	"username":       {},
@@ -95,6 +103,8 @@ type Event struct {
 	Arch                    string
 	InstallSource           string
 	ProfileSource           string
+	Tag                     string
+	Extra                   json.RawMessage
 	SchemaVersion           int
 }
 
@@ -105,22 +115,24 @@ type batchRequest struct {
 }
 
 type wireEvent struct {
-	EventID                 string   `json:"event_id"`
-	EventName               string   `json:"event_name"`
-	OccurredAt              string   `json:"occurred_at"`
-	AnonymousInstallationID string   `json:"anonymous_installation_id"`
-	CommandPath             string   `json:"command_path"`
-	FlagNames               []string `json:"flag_names"`
-	ExitCode                *int     `json:"exit_code"`
-	ErrorCode               string   `json:"error_code"`
-	DurationMS              *int64   `json:"duration_ms"`
-	CloudProvider           string   `json:"cloud_provider"`
-	RegionCode              string   `json:"region_code"`
-	CLIVersion              string   `json:"cli_version"`
-	OS                      string   `json:"os"`
-	Arch                    string   `json:"arch"`
-	InstallSource           string   `json:"install_source"`
-	ProfileSource           string   `json:"profile_source"`
+	EventID                 string          `json:"event_id"`
+	EventName               string          `json:"event_name"`
+	OccurredAt              string          `json:"occurred_at"`
+	AnonymousInstallationID string          `json:"anonymous_installation_id"`
+	CommandPath             string          `json:"command_path"`
+	FlagNames               []string        `json:"flag_names"`
+	ExitCode                *int            `json:"exit_code"`
+	ErrorCode               string          `json:"error_code"`
+	DurationMS              *int64          `json:"duration_ms"`
+	CloudProvider           string          `json:"cloud_provider"`
+	RegionCode              string          `json:"region_code"`
+	CLIVersion              string          `json:"cli_version"`
+	OS                      string          `json:"os"`
+	Arch                    string          `json:"arch"`
+	InstallSource           string          `json:"install_source"`
+	ProfileSource           string          `json:"profile_source"`
+	Tag                     *string         `json:"tag,omitempty"`
+	Extra                   json.RawMessage `json:"extra,omitempty"`
 }
 
 func decodeAndValidateBatch(body []byte, maxEvents int, receivedAt time.Time) ([]Event, error) {
@@ -134,10 +146,10 @@ func decodeAndValidateBatch(body []byte, maxEvents int, receivedAt time.Time) ([
 	if err := decoder.Decode(&request); err != nil {
 		return nil, errors.New("invalid JSON schema")
 	}
-	if decoder.Decode(&struct{}{}) == nil {
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
 		return nil, errors.New("multiple JSON values")
 	}
-	if request.SchemaVersion != eventSchemaVersion {
+	if request.SchemaVersion != eventSchemaVersionV1 && request.SchemaVersion != eventSchemaVersionV2 {
 		return nil, errors.New("unsupported schema version")
 	}
 	if _, err := time.Parse(time.RFC3339Nano, request.SentAt); err != nil {
@@ -149,7 +161,7 @@ func decodeAndValidateBatch(body []byte, maxEvents int, receivedAt time.Time) ([
 
 	events := make([]Event, 0, len(request.Events))
 	for _, raw := range request.Events {
-		event, err := validateEvent(raw, receivedAt)
+		event, err := validateEvent(raw, request.SchemaVersion, receivedAt)
 		if err != nil {
 			return nil, err
 		}
@@ -158,7 +170,7 @@ func decodeAndValidateBatch(body []byte, maxEvents int, receivedAt time.Time) ([
 	return events, nil
 }
 
-func validateEvent(raw wireEvent, receivedAt time.Time) (Event, error) {
+func validateEvent(raw wireEvent, schemaVersion int, receivedAt time.Time) (Event, error) {
 	if !eventIDPattern.MatchString(raw.EventID) {
 		return Event{}, errors.New("invalid event_id")
 	}
@@ -213,6 +225,10 @@ func validateEvent(raw wireEvent, receivedAt time.Time) (Event, error) {
 	if !oneOf(raw.ProfileSource, "", "default", "explicit", "env", "unknown") {
 		return Event{}, errors.New("invalid profile_source")
 	}
+	tag, extra, err := validateMetadata(raw, schemaVersion)
+	if err != nil {
+		return Event{}, err
+	}
 
 	return Event{
 		EventID:                 raw.EventID,
@@ -232,8 +248,75 @@ func validateEvent(raw wireEvent, receivedAt time.Time) (Event, error) {
 		Arch:                    raw.Arch,
 		InstallSource:           raw.InstallSource,
 		ProfileSource:           raw.ProfileSource,
-		SchemaVersion:           eventSchemaVersion,
+		Tag:                     tag,
+		Extra:                   extra,
+		SchemaVersion:           schemaVersion,
 	}, nil
+}
+
+func validateMetadata(raw wireEvent, schemaVersion int) (string, json.RawMessage, error) {
+	if schemaVersion == eventSchemaVersionV1 {
+		if raw.Tag != nil || raw.Extra != nil {
+			return "", nil, errors.New("metadata requires schema version 2")
+		}
+		return "", nil, nil
+	}
+	var tag string
+	if raw.Tag != nil {
+		tag = *raw.Tag
+		if !validString(tag, maxTagBytes) {
+			return "", nil, errors.New("invalid tag")
+		}
+	}
+	extra, err := validateExtra(raw.Extra)
+	if err != nil {
+		return "", nil, err
+	}
+	return tag, extra, nil
+}
+
+func validateExtra(raw json.RawMessage) (json.RawMessage, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, errors.New("invalid extra")
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, errors.New("invalid extra")
+	}
+	if walkForInvalidExtra(value, 0) {
+		return nil, errors.New("invalid extra")
+	}
+	encoded, err := json.Marshal(value)
+	if err != nil || len(encoded) > maxExtraBytes {
+		return nil, errors.New("invalid extra")
+	}
+	return json.RawMessage(encoded), nil
+}
+
+func walkForInvalidExtra(value any, depth int) bool {
+	if depth > maxExtraDepth {
+		return true
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if _, prohibited := disallowedFieldNames[strings.ToLower(key)]; prohibited || walkForInvalidExtra(child, depth+1) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if walkForInvalidExtra(child, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func estimateEventBytes(event Event) int {
@@ -262,6 +345,8 @@ func eventForSize(event Event) map[string]any {
 		"arch":                      event.Arch,
 		"install_source":            event.InstallSource,
 		"profile_source":            event.ProfileSource,
+		"tag":                       event.Tag,
+		"extra":                     event.Extra,
 		"schema_version":            event.SchemaVersion,
 	}
 }

@@ -213,6 +213,8 @@ func TestTelemetryUsesFakeIngestionServer(t *testing.T) {
 		"TDC_ALLOW_TEST_ENDPOINTS=1",
 		"TDC_TEST_TELEMETRY_ENDPOINT=" + server.URL + "/v1/telemetry/batch",
 		"TDC_TELEMETRY=on",
+		"TDC_TELEMETRY_TAG=e2b-preview",
+		`TDC_TELEMETRY_EXTRA={"campaign":"launch","runtime":"e2b"}`,
 		"TDC_LOGGING=off",
 		"TDC_REGION_CODE=aws-us-east-1",
 		"TDC_PUBLIC_KEY=must-not-appear-public-key",
@@ -232,9 +234,12 @@ func TestTelemetryUsesFakeIngestionServer(t *testing.T) {
 			t.Fatalf("telemetry payload leaked %q: %s", prohibited, body)
 		}
 	}
-	if !strings.Contains(string(body), `"command_path":"tdc db create-db-cluster"`) ||
+	if !strings.Contains(string(body), `"schema_version":2`) ||
+		!strings.Contains(string(body), `"command_path":"tdc db create-db-cluster"`) ||
 		!strings.Contains(string(body), `"db-cluster-name"`) ||
-		!strings.Contains(string(body), `"project-id"`) {
+		!strings.Contains(string(body), `"project-id"`) ||
+		!strings.Contains(string(body), `"tag":"e2b-preview"`) ||
+		!strings.Contains(string(body), `"extra":{"campaign":"launch","runtime":"e2b"}`) {
 		t.Fatalf("unexpected telemetry payload: %s", body)
 	}
 	idPath := filepath.Join(home, ".tdc", ".telemetry-installation-id")

@@ -108,7 +108,7 @@ Request body:
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "sent_at": "2026-07-08T12:00:00Z",
   "events": [
     {
@@ -127,7 +127,9 @@ Request body:
       "os": "darwin",
       "arch": "arm64",
       "install_source": "github-release",
-      "profile_source": "default"
+      "profile_source": "default",
+      "tag": "e2b-preview",
+      "extra": {"campaign":"launch","runtime":"e2b"}
     }
   ]
 }
@@ -144,7 +146,7 @@ Content-Type: application/json
 {
   "accepted": true,
   "accepted_events": 1,
-  "schema_version": 1
+  "schema_version": 2
 }
 ```
 
@@ -174,7 +176,7 @@ Allowed top-level fields:
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `schema_version` | integer | yes | Must be `1`. |
+| `schema_version` | integer | yes | `1` without metadata or `2` with optional metadata. |
 | `sent_at` | RFC3339 string | yes | CLI send time. |
 | `events` | array | yes | 1 to `TELEMETRY_MAX_EVENTS_PER_REQUEST`. |
 
@@ -198,8 +200,10 @@ Allowed event fields:
 | `arch` | string | yes | Known Go `runtime.GOARCH` value. |
 | `install_source` | string | no | `github-release`, `homebrew`, `scoop`, `source`, `dev`, `unknown`, or empty. |
 | `profile_source` | string | no | `default`, `explicit`, `env`, `unknown`, or empty. |
+| `tag` | string | no, v2 only | Explicit caller metadata, valid UTF-8, at most 128 bytes. |
+| `extra` | JSON value | no, v2 only | Explicit caller metadata, one compact JSON value at most 2048 bytes and eight levels deep. |
 
-The backend must reject any attempt to send profile names, flag values, SQL text, local paths, API payloads, command output, resource IDs, or credentials. Prefer strict JSON decoding with unknown-field rejection over best-effort redaction.
+Schema version 1 retains the original exact contract: `tag` and `extra` are absent, TiDB stores an empty tag and null extra, and unknown fields remain rejected. Schema version 2 adds only the two optional metadata fields. The backend must reject any attempt to send profile names, flag values, SQL text, local paths, API payloads, command output, resource IDs, or credentials. It recursively rejects prohibited metadata object keys, including `password`, `token`, `credential`, `sql_text`, `file_path`, `profile_name`, `project_id`, `cluster_id`, `branch_id`, `tenant_id`, and `resource_id`. Prefer strict JSON decoding with unknown-field rejection over best-effort redaction.
 
 ## In-memory Batcher
 
@@ -239,14 +243,19 @@ CREATE TABLE IF NOT EXISTS telemetry_events (
   arch VARCHAR(32) NOT NULL,
   install_source VARCHAR(32) NOT NULL DEFAULT '',
   profile_source VARCHAR(32) NOT NULL DEFAULT '',
+  tag VARCHAR(128) NOT NULL DEFAULT '',
+  extra_json JSON NULL,
   schema_version INT UNSIGNED NOT NULL,
   PRIMARY KEY (event_id),
   KEY idx_received_at (received_at),
   KEY idx_command_received (command_path, received_at),
   KEY idx_version_received (cli_version, received_at),
-  KEY idx_region_received (cloud_provider, region_code, received_at)
+  KEY idx_region_received (cloud_provider, region_code, received_at),
+  KEY idx_tag_received (tag, received_at)
 );
 ```
+
+Schema changes are managed only by embedded [Goose](https://github.com/pressly/goose) SQL migrations under `internal/telemetrybackend/migrations/sql/`. The one-shot `tdc-telemetry-migrate` process owns the `tdc_telemetry_schema_migrations` history table and runs before the API starts. The API process never runs DDL. Migration `00001` creates the historical v1 table with `CREATE TABLE IF NOT EXISTS`; migration `00002` only adds `tag`, `extra_json`, and `idx_tag_received` with TiDB's `IF NOT EXISTS` syntax. These migrations are additive and contain no `DROP`, `TRUNCATE`, `DELETE`, rename, or data rewrite operation. Existing telemetry rows remain intact. `extra_json` is intentionally not indexed.
 
 TiDB write behavior:
 
@@ -262,10 +271,12 @@ Before the first deployment, create the database and a dedicated least-privilege
 ```sql
 CREATE DATABASE IF NOT EXISTS `tdc_telemetry`;
 CREATE USER IF NOT EXISTS 'tdc_telemetry'@'%' IDENTIFIED BY 'replace-with-a-generated-password';
-GRANT CREATE, INSERT ON `tdc_telemetry`.* TO 'tdc_telemetry'@'%';
+GRANT CREATE, ALTER, INSERT ON `tdc_telemetry`.* TO 'tdc_telemetry'@'%';
 ```
 
-The backend runs `CREATE TABLE IF NOT EXISTS` during startup and then uses only batch `INSERT IGNORE` statements. Operators and analytics jobs should use separate read-only identities; do not grant analytics permissions to the ingestion identity.
+The same deployment identity runs the one-shot migrations and the API, so it needs `CREATE`, `ALTER`, and `INSERT` on the telemetry database. After migration completes, API writes use only batch `INSERT IGNORE` statements. Operators and analytics jobs should use separate read-only identities; do not grant analytics permissions to the ingestion identity.
+
+`make telemetry-e2e` is intentionally isolated from this production database. Its ignored `e2e/.env.telemetry` must point to a test-only TiDB identity with `CREATE` and `DROP` database privileges. The test creates a unique `tdc_telemetry_e2e_*` database, validates initial migration and an additive upgrade with a preserved legacy row, verifies a real event write through a local backend, then drops that temporary database. It never queries, deletes, or migrates production telemetry rows.
 
 ## PostHog Forwarding
 
@@ -289,7 +300,7 @@ PostHog request body:
       "properties": {
         "distinct_id": "tdc_01j0a0n8m9f4q2x6cn0b9q3k3z",
         "$process_person_profile": false,
-        "schema_version": 1,
+        "schema_version": 2,
         "event_id": "018f7e67-8fe4-7cc2-9ca5-2d3536c7fb44",
         "command_path": "tdc fs create-file-system",
         "flag_names": ["file-system-name", "output"],
@@ -303,7 +314,9 @@ PostHog request body:
         "arch": "arm64",
         "install_source": "github-release",
         "profile_source": "default",
-        "tdc_environment": "production"
+        "tdc_environment": "production",
+        "tag": "e2b-preview",
+        "extra": {"campaign":"launch","runtime":"e2b"}
       }
     }
   ]
@@ -377,6 +390,7 @@ Implemented production layout:
 
 ```text
 cmd/tdc-telemetry-backend/
+cmd/tdc-telemetry-migrate/
 internal/telemetrybackend/
 deploy/telemetry/
   .env
@@ -416,7 +430,7 @@ POSTHOG_API_HOST=https://us.i.posthog.com
 POSTHOG_PROJECT_TOKEN=phc_xxx
 ```
 
-The checked-in Compose definition is `deploy/telemetry/docker-compose.yml`. It builds `cmd/tdc-telemetry-backend`, runs the API as a non-root user with a read-only root filesystem, exposes the API only to the private Compose network, and publishes only Caddy on ports 80 and 443. The checked-in Caddy configuration does not enable access logging, so client IP addresses are not persisted by default.
+The checked-in Compose definition is `deploy/telemetry/docker-compose.yml`. It first runs the non-root one-shot `migrate` service, then starts `api` only after migration completes successfully. Both use the same embedded Go migrations and server-local `.env`. The API has a read-only root filesystem, is exposed only to the private Compose network, and only Caddy publishes ports 80 and 443. The checked-in Caddy configuration does not enable access logging, so client IP addresses are not persisted by default.
 
 Manual deploy from the server:
 
@@ -427,7 +441,7 @@ git fetch --prune origin
 git checkout main
 git pull --ff-only origin main
 test -f deploy/telemetry/.env
-docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml build api
+docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml build migrate api
 docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml up -d --no-build --remove-orphans
 docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml restart caddy
 docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml ps
@@ -478,7 +492,7 @@ jobs:
             test -f deploy/telemetry/.env
             test ! -L deploy/telemetry/.env
             docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml config --quiet
-            docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml build api
+            docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml build migrate api
             docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml up -d --no-build --remove-orphans
             docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml restart caddy
             docker compose --env-file deploy/telemetry/.env -f deploy/telemetry/docker-compose.yml ps
@@ -497,7 +511,7 @@ curl -fsS -X POST https://telemetry.example.com/v1/telemetry/batch \
   -H 'Content-Type: application/json' \
   -H 'User-Agent: tdc/0.2.0' \
   --data '{
-    "schema_version": 1,
+    "schema_version": 2,
     "sent_at": "2026-07-24T12:00:00Z",
     "events": [
       {
@@ -516,7 +530,9 @@ curl -fsS -X POST https://telemetry.example.com/v1/telemetry/batch \
         "os": "linux",
         "arch": "amd64",
         "install_source": "github-release",
-        "profile_source": "unknown"
+        "profile_source": "unknown",
+        "tag": "e2b-preview",
+        "extra": {"campaign":"launch"}
       }
     ]
   }'
@@ -528,7 +544,7 @@ Expected response:
 {
   "accepted": true,
   "accepted_events": 1,
-  "schema_version": 1
+  "schema_version": 2
 }
 ```
 
@@ -567,6 +583,6 @@ Until then, in-memory batching plus independent best-effort TiDB/PostHog sink wr
 - Sink failures do not crash the service.
 - `GET /healthz` and `GET /readyz` work behind Caddy.
 - Private `GET /metrics` exposes aggregate counters without event values, and Caddy does not expose it publicly.
-- Docker Compose deploy starts both `api` and `caddy`.
+- Docker Compose deploy runs `migrate` successfully before starting `api` and `caddy`.
 - GitHub Actions SSH deploy can rebuild and restart the service with one manual workflow dispatch after approval through the `telemetry-production` Environment.
 - `TIDB_DSN`, `POSTHOG_PROJECT_TOKEN`, and other application credentials exist only in the server-side `.env` and are absent from GitHub secrets, workflow inputs, logs, and artifacts.

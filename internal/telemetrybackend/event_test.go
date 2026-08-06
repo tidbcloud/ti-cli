@@ -22,6 +22,86 @@ func TestDecodeAndValidateBatchAcceptsAllowlistedEvent(t *testing.T) {
 	}
 }
 
+func TestDecodeAndValidateBatchSupportsV1AndV2Metadata(t *testing.T) {
+	receivedAt := time.Now()
+	for _, test := range []struct {
+		name          string
+		schemaVersion int
+		tag           any
+		extra         any
+		extraSet      bool
+		wantTag       string
+		wantExtra     string
+		wantAccepted  bool
+	}{
+		{name: "v1 unchanged", schemaVersion: 1, wantAccepted: true},
+		{name: "v1 metadata rejected", schemaVersion: 1, tag: "e2b", wantAccepted: false},
+		{name: "v2 metadata", schemaVersion: 2, tag: "e2b-preview", extra: map[string]any{"campaign": "launch"}, wantTag: "e2b-preview", wantExtra: `{"campaign":"launch"}`, wantAccepted: true},
+		{name: "v2 string extra", schemaVersion: 2, extra: "sandbox", wantExtra: `"sandbox"`, wantAccepted: true},
+		{name: "v2 array extra", schemaVersion: 2, extra: []any{"sandbox", float64(1)}, wantExtra: `["sandbox",1]`, wantAccepted: true},
+		{name: "v2 number extra", schemaVersion: 2, extra: float64(1.25), wantExtra: `1.25`, wantAccepted: true},
+		{name: "v2 boolean extra", schemaVersion: 2, extra: true, wantExtra: `true`, wantAccepted: true},
+		{name: "v2 null extra", schemaVersion: 2, extraSet: true, wantExtra: `null`, wantAccepted: true},
+		{name: "v2 prohibited extra", schemaVersion: 2, extra: map[string]any{"nested": map[string]any{"token": "secret"}}, wantAccepted: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var request map[string]any
+			if err := json.Unmarshal(validRequestBody(), &request); err != nil {
+				t.Fatal(err)
+			}
+			request["schema_version"] = test.schemaVersion
+			event := request["events"].([]any)[0].(map[string]any)
+			if test.tag != nil {
+				event["tag"] = test.tag
+			}
+			if test.extra != nil || test.extraSet {
+				event["extra"] = test.extra
+			}
+			body, _ := json.Marshal(request)
+			events, err := decodeAndValidateBatch(body, 20, receivedAt)
+			if (err == nil) != test.wantAccepted {
+				t.Fatalf("decodeAndValidateBatch error = %v, accepted = %t", err, test.wantAccepted)
+			}
+			if err == nil && (events[0].SchemaVersion != test.schemaVersion || events[0].Tag != test.wantTag || string(events[0].Extra) != test.wantExtra) {
+				t.Fatalf("event = %#v", events[0])
+			}
+		})
+	}
+}
+
+func TestDecodeAndValidateBatchRejectsInvalidV2Metadata(t *testing.T) {
+	tooDeep := any("leaf")
+	for range maxExtraDepth + 1 {
+		tooDeep = map[string]any{"level": tooDeep}
+	}
+	for _, test := range []struct {
+		name  string
+		tag   any
+		extra any
+	}{
+		{name: "too long tag", tag: strings.Repeat("a", maxTagBytes+1)},
+		{name: "too large extra", extra: strings.Repeat("a", maxExtraBytes+1)},
+		{name: "too deep extra", extra: tooDeep},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var request map[string]any
+			_ = json.Unmarshal(validRequestBody(), &request)
+			request["schema_version"] = 2
+			event := request["events"].([]any)[0].(map[string]any)
+			if test.tag != nil {
+				event["tag"] = test.tag
+			}
+			if test.extra != nil {
+				event["extra"] = test.extra
+			}
+			body, _ := json.Marshal(request)
+			if _, err := decodeAndValidateBatch(body, 20, time.Now()); err == nil {
+				t.Fatal("invalid metadata was accepted")
+			}
+		})
+	}
+}
+
 func TestDecodeAndValidateBatchRejectsUnknownAndProhibitedFields(t *testing.T) {
 	base := validRequestBody()
 	var request map[string]any

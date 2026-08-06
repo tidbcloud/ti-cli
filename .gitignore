@@ -1,6 +1,8 @@
 /bin/
 /dist/
 /tdc
-/deploy/telemetry/.env
+.env
+.env.local
+.env.telemetry
 
 .DS_Store

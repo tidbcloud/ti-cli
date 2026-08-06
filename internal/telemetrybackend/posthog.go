@@ -31,23 +31,25 @@ type postHogEvent struct {
 }
 
 type postHogProperties struct {
-	DistinctID           string   `json:"distinct_id"`
-	ProcessPersonProfile bool     `json:"$process_person_profile"`
-	SchemaVersion        int      `json:"schema_version"`
-	EventID              string   `json:"event_id"`
-	CommandPath          string   `json:"command_path"`
-	FlagNames            []string `json:"flag_names"`
-	ExitCode             int      `json:"exit_code"`
-	ErrorCode            string   `json:"error_code"`
-	DurationMS           int64    `json:"duration_ms"`
-	CloudProvider        string   `json:"cloud_provider"`
-	RegionCode           string   `json:"region_code"`
-	CLIVersion           string   `json:"cli_version"`
-	OS                   string   `json:"os"`
-	Arch                 string   `json:"arch"`
-	InstallSource        string   `json:"install_source"`
-	ProfileSource        string   `json:"profile_source"`
-	TDCEnvironment       string   `json:"tdc_environment"`
+	DistinctID           string          `json:"distinct_id"`
+	ProcessPersonProfile bool            `json:"$process_person_profile"`
+	SchemaVersion        int             `json:"schema_version"`
+	EventID              string          `json:"event_id"`
+	CommandPath          string          `json:"command_path"`
+	FlagNames            []string        `json:"flag_names"`
+	ExitCode             int             `json:"exit_code"`
+	ErrorCode            string          `json:"error_code"`
+	DurationMS           int64           `json:"duration_ms"`
+	CloudProvider        string          `json:"cloud_provider"`
+	RegionCode           string          `json:"region_code"`
+	CLIVersion           string          `json:"cli_version"`
+	OS                   string          `json:"os"`
+	Arch                 string          `json:"arch"`
+	InstallSource        string          `json:"install_source"`
+	ProfileSource        string          `json:"profile_source"`
+	TDCEnvironment       string          `json:"tdc_environment"`
+	Tag                  string          `json:"tag,omitempty"`
+	Extra                json.RawMessage `json:"extra,omitempty"`
 }
 
 func NewPostHogSink(apiHost, projectToken, environment string, client *http.Client) (*PostHogSink, error) {
@@ -109,6 +111,8 @@ func (s *PostHogSink) Write(ctx context.Context, events []Event) error {
 				InstallSource:        event.InstallSource,
 				ProfileSource:        event.ProfileSource,
 				TDCEnvironment:       s.environment,
+				Tag:                  event.Tag,
+				Extra:                event.Extra,
 			},
 		})
 	}
