@@ -96,6 +96,7 @@ func (s Service) ListClusters(ctx context.Context, opts ListClustersOptions) (Li
 	if err := validateListOptions(opts); err != nil {
 		return ListClustersResult{}, err
 	}
+	regionScope := newClusterRegionScope(opts.Profile)
 	client, err := s.starterClient(opts.Profile, authz.StarterClusterRead, "list Starter DB clusters")
 	if err != nil {
 		return ListClustersResult{}, err
@@ -103,7 +104,7 @@ func (s Service) ListClusters(ctx context.Context, opts ListClustersOptions) (Li
 	response, err := client.ListClusters(ctx, apistarter.ListClustersOptions{
 		PageSize:  opts.PageSize,
 		PageToken: opts.PageToken,
-		Filter:    opts.Filter,
+		Filter:    regionScope.apiFilter(opts.Filter),
 		OrderBy:   opts.OrderBy,
 		Skip:      opts.Skip,
 	})
@@ -111,7 +112,7 @@ func (s Service) ListClusters(ctx context.Context, opts ListClustersOptions) (Li
 		return ListClustersResult{}, err
 	}
 	return ListClustersResult{
-		Clusters:      filterStarterClusters(response.Clusters),
+		Clusters:      filterClustersByRegion(filterStarterClusters(response.Clusters), regionScope),
 		NextPageToken: response.NextPageToken,
 	}, nil
 }

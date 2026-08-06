@@ -271,6 +271,9 @@ func TestListClusters(t *testing.T) {
 		if r.URL.Query().Get("pageSize") != "1" {
 			t.Fatalf("unexpected query %s", r.URL.RawQuery)
 		}
+		if got := r.URL.Query().Get("filter"); got != `region.provider="aws" AND region.name="regions/aws-us-east-1" AND state="ACTIVE"` {
+			t.Fatalf("unexpected region-scoped filter %q", got)
+		}
 		_, _ = w.Write([]byte(`{
 			"clusters":[{"clusterId":"cluster-1","displayName":"demo-cluster","clusterPlan":"STARTER","state":"ACTIVE","region":{"name":"regions/aws-us-east-1"}}],
 			"nextPageToken":"token-2",
@@ -282,6 +285,7 @@ func TestListClusters(t *testing.T) {
 	result, err := testService(server.URL).ListClusters(context.Background(), ListClustersOptions{
 		Profile:  testProfile(),
 		PageSize: 1,
+		Filter:   `state="ACTIVE"`,
 	})
 	if err != nil {
 		t.Fatalf("ListClusters failed: %v", err)

@@ -213,6 +213,8 @@ func TestLiveDBCommandSurface(t *testing.T) {
 	requireLive(t)
 	bin := tdcBinary(t)
 	profileName := liveProfileName(t)
+	profile := liveProfile(t)
+	expectedRegionName := "regions/" + endpoints.APIProvider(profile.CloudProvider) + "-" + profile.RegionCode
 	testLiveHelpCommands(t, bin, [][]string{
 		{"db", "help"},
 		{"db", "create-db-cluster", "help"},
@@ -240,10 +242,18 @@ func TestLiveDBCommandSurface(t *testing.T) {
 		Clusters []struct {
 			ID          string `json:"id"`
 			DisplayName string `json:"display_name"`
+			Region      struct {
+				Name string `json:"name"`
+			} `json:"region"`
 		} `json:"clusters"`
 	}
 	if err := json.Unmarshal([]byte(clusters.stdout), &clusterList); err != nil {
 		t.Fatalf("decode db list-db-clusters output: %v\n%s", err, clusters.stdout)
+	}
+	for _, cluster := range clusterList.Clusters {
+		if cluster.Region.Name != expectedRegionName {
+			t.Fatalf("listed cluster %q has region %q, want %q", cluster.ID, cluster.Region.Name, expectedRegionName)
+		}
 	}
 
 	clusterQuery := runTDC(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1", "--query", "clusters[].id")
