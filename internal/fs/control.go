@@ -40,29 +40,45 @@ type Service struct {
 
 type CreateFileSystemOptions struct {
 	Profile        *config.Profile
-	FileSystemName string
 	WaitUntilReady bool
 }
 
 type DeleteFileSystemOptions struct {
-	Profile        *config.Profile
-	FileSystemName string
+	Profile      *config.Profile
+	FileSystemID string
 }
 
 type CheckFileSystemOptions struct {
 	Profile *config.Profile
 }
 
+type ImportFileSystemTokenOptions struct {
+	Profile      *config.Profile
+	FileSystemID string
+	Token        string
+	Replace      bool
+}
+
+type FileSystemSummary struct {
+	FileSystemID  string `json:"file_system_id"`
+	RegionCode    string `json:"region_code,omitempty"`
+	Status        string `json:"status,omitempty"`
+	Kind          string `json:"kind,omitempty"`
+	Quota         any    `json:"quota,omitempty"`
+	HasLocalToken bool   `json:"has_local_token"`
+}
+
+type ListFileSystemsResult struct {
+	RegionCode  string              `json:"region_code"`
+	FileSystems []FileSystemSummary `json:"file_systems"`
+}
+
 type DescribeFileSystemResult struct {
-	Profile string `json:"profile"`
-	fscred.Resource
-	Drive9Home string `json:"drive9_home"`
+	FileSystemSummary
 }
 
 type FileSystemResult struct {
-	FileSystemName    string `json:"file_system_name"`
-	TenantID          string `json:"tenant_id,omitempty"`
-	CloudProvider     string `json:"cloud_provider,omitempty"`
+	FileSystemID      string `json:"file_system_id"`
 	RegionCode        string `json:"region_code,omitempty"`
 	FSToken           string `json:"fs_token,omitempty"`
 	Status            string `json:"status"`
@@ -70,17 +86,23 @@ type FileSystemResult struct {
 }
 
 type DeleteResult struct {
-	FileSystemName      string `json:"file_system_name"`
-	TenantID            string `json:"tenant_id,omitempty"`
+	FileSystemID        string `json:"file_system_id"`
 	Status              string `json:"status"`
 	CredentialsRemoved  bool   `json:"credentials_removed"`
 	RemoteDeletionState string `json:"remote_deletion_state,omitempty"`
 }
 
+type ImportFileSystemTokenResult struct {
+	FileSystemID      string `json:"file_system_id"`
+	RegionCode        string `json:"region_code"`
+	CredentialsStored bool   `json:"credentials_stored"`
+	Status            string `json:"status"`
+}
+
 type CheckResult struct {
 	Status   string                `json:"status"`
 	Profile  string                `json:"profile"`
-	Resource fscred.Resource       `json:"resource"`
+	Resource fscred.Credential     `json:"resource"`
 	Endpoint *endpoints.Endpoint   `json:"endpoint,omitempty"`
 	Remote   *apifs.StatusResponse `json:"remote,omitempty"`
 	Checks   []Check               `json:"checks"`
@@ -104,43 +126,45 @@ func (s Service) CheckFileSystem(ctx context.Context, opts CheckFileSystemOption
 	return s.drive9CheckFileSystem(ctx, opts)
 }
 
-func (s Service) ListFileSystems(_ context.Context, profile *config.Profile) (fscred.ListResult, error) {
-	homeDir, err := s.homeDir()
-	if err != nil {
-		return fscred.ListResult{}, err
-	}
-	if err := fscred.MigrateLegacy(homeDir, profile); err != nil {
-		return fscred.ListResult{}, err
-	}
-	resources, err := fscred.List(homeDir, profileName(profile))
-	if err != nil {
-		return fscred.ListResult{}, err
-	}
-	return fscred.ListResult{Profile: profileName(profile), FileSystems: resources}, nil
+func (s Service) ListFileSystems(ctx context.Context, profile *config.Profile) (ListFileSystemsResult, error) {
+	return s.drive9ListFileSystems(ctx, profile)
 }
 
-func (s Service) DescribeFileSystem(_ context.Context, profile *config.Profile) (DescribeFileSystemResult, error) {
-	resource := fscred.FromProfile(profile)
-	homeDir, err := s.homeDir()
+func (s Service) DescribeFileSystem(ctx context.Context, profile *config.Profile, fileSystemID string) (DescribeFileSystemResult, error) {
+	return s.drive9DescribeFileSystem(ctx, profile, fileSystemID)
+}
+
+func (s Service) ImportFileSystemToken(ctx context.Context, opts ImportFileSystemTokenOptions) (ImportFileSystemTokenResult, error) {
+	return s.importFileSystemToken(ctx, opts, true)
+}
+
+func (s Service) DryRunImportFileSystemToken(ctx context.Context, commandPath string, opts ImportFileSystemTokenOptions) (dryrun.Result, error) {
+	result, err := s.importFileSystemToken(ctx, opts, false)
 	if err != nil {
-		return DescribeFileSystemResult{}, err
+		return dryrun.Result{}, err
 	}
-	drive9Home, err := fscred.CompanionHome(homeDir, profileName(profile), resource.Name)
-	if err != nil {
-		return DescribeFileSystemResult{}, err
-	}
-	return DescribeFileSystemResult{Profile: profileName(profile), Resource: resource, Drive9Home: drive9Home}, nil
+	return dryrun.New(
+		commandPath,
+		"import_file_system_token",
+		dryrun.RequestSummary{
+			Method:      "EXEC",
+			Path:        "tdc-drive9 fs stat --output json :/",
+			Description: "the companion verifies access to the remote root; normal execution then stores the token in the selected local profile namespace",
+		},
+		dryrun.Check{Name: "token_validation", Status: "passed", Message: result.FileSystemID},
+		dryrun.Check{Name: "credential_destination", Status: "passed", Message: profileName(opts.Profile)},
+	), nil
 }
 
 func (s Service) DryRunCreateFileSystem(ctx context.Context, commandPath string, opts CreateFileSystemOptions) (dryrun.Result, error) {
-	request, name, endpoint, endpointErr, err := s.createDryRunInputs(opts)
+	request, endpoint, endpointErr, err := s.createDryRunInputs(opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
 	checks := []dryrun.Check{
 		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		{Name: "permission_requirement", Status: "passed", Message: string(authz.FSVolumeCreate)},
-		{Name: "file_system_name", Status: "passed", Message: name},
+		{Name: "remote_identity", Status: "passed", Message: "Drive9 assigns file_system_id"},
 	}
 	checks = append(checks, endpointDryRunCheck(endpoint, endpointErr))
 	if opts.WaitUntilReady {
@@ -163,7 +187,7 @@ func (s Service) DryRunCreateFileSystem(ctx context.Context, commandPath string,
 }
 
 func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string, opts DeleteFileSystemOptions) (dryrun.Result, error) {
-	name, endpoint, endpointErr, err := s.deleteDryRunInputs(opts)
+	fileSystemID, endpoint, endpointErr, err := s.deleteDryRunInputs(opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -171,23 +195,19 @@ func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string,
 		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		{Name: "permission_requirement", Status: "passed", Message: string(authz.FSVolumeDelete)},
 	}
-	if resource := fscred.FromProfile(opts.Profile); resource.HasAPIKey {
-		checks = append(checks, dryrun.Check{Name: "fs_resource_credentials", Status: "passed", Message: name})
-	} else {
-		checks = append(checks, dryrun.Check{Name: "fs_resource_credentials", Status: "warning", Message: "fs_api_key is not configured; normal execution would fail before remote deletion"})
-	}
+	checks = append(checks, dryrun.Check{Name: "file_system_id", Status: "passed", Message: fileSystemID})
 	homeDir, err := s.homeDir()
 	if err != nil {
 		return dryrun.Result{}, err
 	}
-	registryPaths, err := fscred.Paths(homeDir, profileName(opts.Profile), name)
+	credentialPaths, err := fscred.CredentialPath(homeDir, profileName(opts.Profile), fileSystemID)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
 	checks = append(checks, dryrun.Check{
-		Name:    "local_resource_registry",
+		Name:    "local_credentials",
 		Status:  "passed",
-		Message: fmt.Sprintf("would remove %s and %s", registryPaths.Config, registryPaths.Credentials),
+		Message: fmt.Sprintf("would remove %s after Drive9 accepts deletion if it exists", credentialPaths.Credentials),
 	})
 	checks = append(checks, endpointDryRunCheck(endpoint, endpointErr))
 	body, bodyErr := deprovisionRequest(opts.Profile)
@@ -199,66 +219,59 @@ func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string,
 		"delete_file_system",
 		dryrun.RequestSummary{
 			Method:      http.MethodDelete,
-			Path:        "/v1/tenant",
+			Path:        "/v1/admin/tenants/" + fileSystemID,
 			Body:        redactedDeprovisionRequest(body),
-			Description: "normal execution uses the stored tdc fs API key before deleting",
+			Description: "normal execution uses TiDB Cloud credentials and removes matching local credentials only after Drive9 accepts deletion",
 		},
 		checks...,
 	), nil
 }
 
-func (s Service) createRequestAndEndpoint(opts CreateFileSystemOptions, requireEndpoint bool) (apifs.ProvisionRequest, string, endpoints.Endpoint, error) {
-	request, name, endpoint, endpointErr, err := s.createDryRunInputs(opts)
+func (s Service) createRequestAndEndpoint(opts CreateFileSystemOptions, requireEndpoint bool) (apifs.ProvisionRequest, endpoints.Endpoint, error) {
+	request, endpoint, endpointErr, err := s.createDryRunInputs(opts)
 	if err != nil {
-		return apifs.ProvisionRequest{}, "", endpoints.Endpoint{}, err
+		return apifs.ProvisionRequest{}, endpoints.Endpoint{}, err
 	}
 	if endpointErr != nil && requireEndpoint {
-		return apifs.ProvisionRequest{}, "", endpoints.Endpoint{}, endpointErr
+		return apifs.ProvisionRequest{}, endpoints.Endpoint{}, endpointErr
 	}
-	return request, name, endpoint, nil
+	return request, endpoint, nil
 }
 
-func (s Service) createDryRunInputs(opts CreateFileSystemOptions) (apifs.ProvisionRequest, string, endpoints.Endpoint, error, error) {
+func (s Service) createDryRunInputs(opts CreateFileSystemOptions) (apifs.ProvisionRequest, endpoints.Endpoint, error, error) {
 	creds, err := auth.ValidateProfile(opts.Profile)
 	if err != nil {
-		return apifs.ProvisionRequest{}, "", endpoints.Endpoint{}, nil, err
-	}
-	name, err := fileSystemName(opts.FileSystemName)
-	if err != nil {
-		return apifs.ProvisionRequest{}, "", endpoints.Endpoint{}, nil, err
+		return apifs.ProvisionRequest{}, endpoints.Endpoint{}, nil, err
 	}
 	endpoint, endpointErr := s.resolveFS(opts.Profile)
 	request := apifs.ProvisionRequest{
 		PublicKey:  creds.PublicKey,
 		PrivateKey: creds.PrivateKey,
 	}
-	return request, name, endpoint, endpointErr, nil
+	return request, endpoint, endpointErr, nil
 }
 
 func (s Service) deleteInputsAndEndpoint(opts DeleteFileSystemOptions, requireEndpoint bool) (string, endpoints.Endpoint, error) {
-	name, endpoint, endpointErr, err := s.deleteDryRunInputs(opts)
+	fileSystemID, endpoint, endpointErr, err := s.deleteDryRunInputs(opts)
 	if err != nil {
 		return "", endpoints.Endpoint{}, err
 	}
 	if endpointErr != nil && requireEndpoint {
 		return "", endpoints.Endpoint{}, endpointErr
 	}
-	return name, endpoint, nil
+	return fileSystemID, endpoint, nil
 }
 
 func (s Service) deleteDryRunInputs(opts DeleteFileSystemOptions) (string, endpoints.Endpoint, error, error) {
 	if err := validateProfile(opts.Profile); err != nil {
 		return "", endpoints.Endpoint{}, nil, err
 	}
-	name, err := fileSystemName(opts.FileSystemName)
+	fileSystemID, err := fscred.ValidateFileSystemID(opts.FileSystemID)
 	if err != nil {
 		return "", endpoints.Endpoint{}, nil, err
 	}
-	if opts.Profile.FSResourceName != name {
-		return "", endpoints.Endpoint{}, nil, resourceMismatch(opts.Profile.FSResourceName, name)
-	}
 	endpoint, endpointErr := s.resolveFS(opts.Profile)
-	return name, endpoint, endpointErr, nil
+	return fileSystemID, endpoint, endpointErr, nil
 }
 
 func (s Service) resolveFS(profile *config.Profile) (endpoints.Endpoint, error) {
@@ -374,31 +387,6 @@ func validateProfile(profile *config.Profile) error {
 	return nil
 }
 
-func fileSystemName(value string) (string, error) {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return "", apperr.New("fs.missing_file_system_name", "usage", 2, "--file-system-name is required")
-	}
-	if len(trimmed) > 64 || strings.Contains(trimmed, "/") {
-		return "", apperr.New("fs.invalid_file_system_name", "usage", 2, "--file-system-name must be 1-64 characters and must not contain /")
-	}
-	for _, r := range trimmed {
-		if r < 0x20 || r == 0x7f {
-			return "", apperr.New("fs.invalid_file_system_name", "usage", 2, "--file-system-name must not contain control characters")
-		}
-	}
-	return trimmed, nil
-}
-
-func resourceMismatch(existing, requested string) error {
-	return apperr.New(
-		"fs.resource_name_mismatch",
-		"usage",
-		2,
-		fmt.Sprintf("profile is already configured for tdc fs resource %q; use that name or delete it before creating %q", existing, requested),
-	)
-}
-
 func endpointDryRunCheck(endpoint endpoints.Endpoint, err error) dryrun.Check {
 	if err != nil {
 		return dryrun.Check{Name: "endpoint_selection", Status: "skipped", Message: apperr.MessageFor(err)}
@@ -406,7 +394,7 @@ func endpointDryRunCheck(endpoint endpoints.Endpoint, err error) dryrun.Check {
 	return dryrun.Check{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)}
 }
 
-func checkResult(profile *config.Profile, resource fscred.Resource, endpoint *endpoints.Endpoint, remote *apifs.StatusResponse, checks []Check) CheckResult {
+func checkResult(profile *config.Profile, resource fscred.Credential, endpoint *endpoints.Endpoint, remote *apifs.StatusResponse, checks []Check) CheckResult {
 	status := "passed"
 	for _, check := range checks {
 		if check.Status == "failed" {
@@ -436,36 +424,39 @@ func profileName(profile *config.Profile) string {
 
 func (r FileSystemResult) Human() string {
 	lines := []string{
-		"File system: " + r.FileSystemName,
+		"File system ID: " + r.FileSystemID,
 		"Status: " + r.Status,
 	}
-	if r.TenantID != "" {
-		lines = append(lines, "Tenant ID: "+r.TenantID)
-	}
-	if r.CloudProvider != "" || r.RegionCode != "" {
-		lines = append(lines, "Location: "+strings.TrimSpace(r.CloudProvider+" "+r.RegionCode))
+	if r.RegionCode != "" {
+		lines = append(lines, "Region: "+r.RegionCode)
 	}
 	if r.CredentialsStored {
-		lines = append(lines, "Credentials: stored in ~/.tdc/credentials")
+		lines = append(lines, "Credentials: stored locally")
 	}
 	return strings.Join(lines, "\n")
 }
 
 func (r DeleteResult) Human() string {
 	lines := []string{
-		"File system: " + r.FileSystemName,
+		"File system ID: " + r.FileSystemID,
 		"Status: " + r.Status,
-	}
-	if r.TenantID != "" {
-		lines = append(lines, "Tenant ID: "+r.TenantID)
 	}
 	if r.RemoteDeletionState != "" {
 		lines = append(lines, "Remote deletion state: "+r.RemoteDeletionState)
 	}
 	if r.CredentialsRemoved {
-		lines = append(lines, "Credentials: removed from ~/.tdc/credentials")
+		lines = append(lines, "Credentials: removed from ~/.tdc/fs_credentials")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (r ImportFileSystemTokenResult) Human() string {
+	return strings.Join([]string{
+		"File system ID: " + r.FileSystemID,
+		"Region: " + r.RegionCode,
+		"Status: " + r.Status,
+		"Credentials: stored locally",
+	}, "\n")
 }
 
 func (r CheckResult) Human() string {

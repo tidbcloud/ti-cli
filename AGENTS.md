@@ -82,6 +82,7 @@ Implemented:
 - `tdc db format-db-connection-string`
 - `tdc db execute-sql-statement`
 - `tdc fs create-file-system`
+- `tdc fs import-file-system-token`
 - `tdc fs delete-file-system`
 - `tdc fs list-file-systems`
 - `tdc fs describe-file-system`
@@ -131,7 +132,7 @@ Implemented:
 - structured JSON/text rendering and JMESPath `--query`
 - `--dry-run` on mutating control-plane commands
 - TiDB Cloud Digest-auth API client foundation and auth/authz error mapping
-- profile-scoped 1:N tdc fs resource registry with per-resource credentials
+- region-scoped remote tdc fs inventory with profile-scoped, ID-keyed local credentials
 - tdc fs/fs-git/fs-journal/fs-vault commands routed through the bundled
   `tdc-drive9` companion, with tdc-owned profile loading, credential storage,
   region resolution, and output/error handling
@@ -146,6 +147,12 @@ Implemented:
 There are no registered placeholder commands at the current stage. Implemented
 mutating commands support `--dry-run` where their command contract declares
 dry-run support.
+
+The client implementation for remote tdc fs inventory and ID-keyed credentials
+is tracked by `docs/spec/0026-remote-fs-resource-inventory.md`. Keep that spec
+pending until Drive9 enables admin tenant list/get/delete for ordinary TiDB
+Cloud organizations and the hosted manifest publishes every supported tdc fs
+region, then complete its live acceptance flow before moving it to `done/`.
 
 ## Reference Code
 
@@ -241,17 +248,12 @@ vault grant reads, vault mount read on macOS/Linux hosts when available,
 journal create/append/read/search/verify, public Git clone/hydrate/worktree
 flows, mount and drain through the companion runtime, and explicit WebDAV
 fallback when the platform supports it.
-If the live profile has no registry resource named by `TDC_LIVE_FS_NAME` or
-`workspace`, the suite creates that temporary tdc fs resource, stores its
-metadata and API key in the profile-scoped resource registry, and deletes only
-that auto-created resource before the DB lifecycle needs the Starter slot, or
-when the test process exits if execution stops earlier.
-The live suite also attempts a separate 1:N registry lifecycle with two unique
-`tdc-e2e-fs-*` resources, covering create, list, default selection, explicit
-selection, isolated deletion, and cleanup. If the second resource is rejected
-specifically because Starter quota is full, complete the single-resource live
-flow and rely on `make e2e` for fake-companion multi-resource routing coverage.
-Never delete a pre-existing resource to make room for this test.
+If remote inventory has no resource with a local token, the suite creates one
+temporary tdc fs resource, records the server-assigned ID, and deletes only
+that ID before the DB lifecycle needs the Starter slot or when the process
+exits. `TDC_LIVE_FS_ID` may select a remotely visible resource that already has
+local credentials. Never delete a pre-existing resource to make room for a
+test. Fake-companion e2e covers multiple remote resources and ID routing.
 When a service command is implemented, add its real live verification to
 `make live-e2e`; do not leave the target at profile, smoke-test-only, or
 mock-only coverage.
@@ -301,7 +303,7 @@ internal/db/sqlsingle/      one-statement validation
 internal/db/validate/       DB flag and request validation helpers
 internal/dryrun/            shared dry-run result envelope
 internal/fs/                tdc fs control-plane, data-plane, and mount use cases
-internal/fs/fscred/         profile-scoped tdc fs registry, selection, and migration
+internal/fs/fscred/         ID-keyed tdc fs credentials, selection, and legacy migration
 internal/fs/mountlocator/   non-secret Drive9 background mount routing state
 internal/oplog/             local JSONL operation log writer
 internal/output/            structured JSON/text/raw rendering
@@ -471,16 +473,16 @@ Implemented command behavior:
 - `tdc db execute-sql-statement --db-cluster-id <cluster-id> --admin --sql "select 1"`
 - `tdc db execute-sql-statement --db-cluster-id <cluster-id> --transport https --sql "select 1"`
 - `tdc db execute-sql-statement --db-cluster-id <cluster-id> --transport mysql --sql "select 1"`
-- `tdc fs create-file-system --file-system-name workspace`
-- `tdc fs create-file-system --file-system-name workspace --wait`
-- `tdc fs create-file-system --file-system-name workspace --dry-run`
-- `tdc fs create-file-system --file-system-name scratch`
-- `tdc fs delete-file-system --file-system-name workspace`
-- `tdc fs delete-file-system --file-system-name workspace --dry-run`
+- `tdc fs create-file-system`
+- `tdc fs create-file-system --wait`
+- `tdc fs create-file-system --dry-run`
+- `tdc fs import-file-system-token --from-file ./fs-token`
+- `tdc fs delete-file-system --file-system-id <file-system-id>`
+- `tdc fs delete-file-system --file-system-id <file-system-id> --dry-run`
 - `tdc fs list-file-systems`
-- `tdc fs describe-file-system --file-system-name workspace`
+- `tdc fs describe-file-system --file-system-id <file-system-id>`
 - `tdc fs check-file-system`
-- `tdc fs check-file-system --file-system-name workspace`
+- `tdc fs check-file-system --file-system-id <file-system-id>`
 - `tdc fs copy-file --from-local ./README.md --to-remote /workspace/README.md`
 - `tdc fs copy-file --from-remote /workspace/README.md --to-local ./README.copy.md --create-parents`
 - `tdc fs copy-file --from-remote /workspace/README.md --to-remote /workspace/README.copy.md`
@@ -520,13 +522,13 @@ Implemented command behavior:
 - `tdc fs pack-file-system --local-root ~/.tdc/local/fs/demo --remote-root /workspace --mount-profile portable`
 - `tdc fs pack-file-system --mount-path ./workspace`
 - `tdc fs unpack-file-system --local-root ~/.tdc/local/fs/demo --remote-root /workspace --mount-profile portable`
-- `tdc fs mount-file-system --file-system-name workspace --mount-path ./workspace`
-- `tdc fs mount-file-system --file-system-name workspace --mount-path ./workspace --driver fuse`
-- `tdc fs mount-file-system --file-system-name workspace --mount-path ./workspace --driver webdav`
-- `tdc fs mount-file-system --file-system-name workspace --mount-path ./workspace --mount-profile coding-agent`
-- `tdc fs mount-file-system --file-system-name workspace --mount-path ./workspace --mount-profile portable --pack-path /`
-- `tdc fs mount-file-system --file-system-name workspace --mount-path ./workspace --driver fuse --read-cache-size-mb 256 --read-cache-max-file-mb 16`
-- `tdc fs mount-file-system --file-system-name workspace --mount-path ./workspace --driver fuse --cache-dir ~/.tdc/cache/workspace --write-back-cache=false`
+- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace`
+- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse`
+- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver webdav`
+- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile coding-agent`
+- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile portable --pack-path /`
+- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --read-cache-size-mb 256 --read-cache-max-file-mb 16`
+- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --cache-dir ~/.tdc/cache/workspace --write-back-cache=false`
 - `tdc fs drain-file-system --mount-path ./workspace`
 - `tdc fs drain-file-system --mount-path ./workspace --timeout 30s`
 - `tdc fs unmount-file-system --mount-path ./workspace`
@@ -573,6 +575,7 @@ Registered command surface:
 - `tdc db format-db-connection-string`
 - `tdc db execute-sql-statement`
 - `tdc fs create-file-system`
+- `tdc fs import-file-system-token`
 - `tdc fs delete-file-system`
 - `tdc fs list-file-systems`
 - `tdc fs describe-file-system`
@@ -698,32 +701,30 @@ tdc_private_key = "..."
 Starter cluster. If it is absent and `--project-id` is not provided, the create
 request omits the project label and TiDB Cloud selects the account default.
 
-One profile can own multiple tdc fs resources. The main config stores neither a
-default resource name nor resource credentials.
+One profile can access multiple remotely inventoried tdc fs resources. The main
+config stores neither a default resource nor resource credentials.
 
-Each resource stores metadata and credentials separately:
+New local credentials are keyed by the server-assigned file system ID:
 
 ```text
-~/.tdc/fs_resources/<profile-key>/<resource-key>/config
-~/.tdc/fs_resources/<profile-key>/<resource-key>/credentials
+~/.tdc/fs_credentials/<profile-key>/<file-system-id-key>/credentials
 ```
 
-Resource config files contain `file_system_name`, `tenant_id`,
-`cloud_provider`, `region_code`, and `created_at`. Resource credentials files
-contain only `api_key`, use mode `0600`, and must never be written to the main
-`~/.tdc/credentials` file. Profile and resource path segments are safely
-encoded; always use the stored `file_system_name` for user-facing output.
+Credential files contain `file_system_id`, canonical `region_code`, and
+`api_key`, use mode `0600`, and must never be written to the main
+`~/.tdc/credentials` file. Profile and ID path segments are safely encoded.
+Remote Drive9 list/get is authoritative for inventory and status; local state
+only determines `has_local_token` and data-plane access.
 
 `tdc fs create-file-system` returns the stored owner credential as `fs_token`;
 this is the only ordinary command result that may reveal it. Treat `fs_token`
 as a secret and never include it in logs, telemetry, debug output, errors,
 mount locators, non-secret config, or test diagnostics.
 
-Legacy flat `fs_resource_name`, `fs_tenant_id`, `fs_cloud_provider`,
-`fs_region_code`, and `fs_api_key` fields are migration input only. The first fs
-command migrates a complete legacy resource into the registry and clears the
-flat fields. Incomplete legacy state fails with
-`fs.resource_credentials_incomplete`.
+Legacy flat fields and name-keyed `~/.tdc/fs_resources` entries are migration
+input only. The first FS command copies complete credentials into the ID-keyed
+store without deleting name-keyed source files or old companion homes.
+Incomplete or conflicting state fails closed.
 
 DB SQL user credentials live outside the main credentials file:
 
@@ -814,37 +815,37 @@ local profile namespace and must not cause tdc to write local `[env]` sections.
 Generated tdc fs state is always stored under the selected local profile:
 `--profile`, `TDC_PROFILE`, or `default`.
 
-tdc fs resource selection order is:
+tdc fs data-plane resource selection order is:
 
-1. Explicit `--file-system-name`.
-2. `TDC_FS_FILE_SYSTEM_NAME`.
-3. Otherwise fail with `fs.missing_file_system_name` before credential loading,
-   endpoint resolution, companion startup, or a remote request.
+1. Explicit `--file-system-id` or `TDC_FS_FILE_SYSTEM_ID`.
+2. If an explicit `--fs-token` or `TDC_FS_TOKEN` exists, derive the ID from its
+   structured token claim and require any separately supplied ID to match.
+3. Otherwise fail with `fs.missing_file_system_id` before endpoint resolution,
+   companion startup, or a remote request.
 
-Never infer a tdc fs resource from profile state, registry cardinality,
-creation order, or deletion side effects. `TDC_FS_FILE_SYSTEM_NAME` is an
-explicit process-scoped selector and must not be persisted.
+Never infer a tdc fs resource from profile state, credential-store cardinality,
+creation order, or deletion side effects. `TDC_FS_FILE_SYSTEM_ID` is an
+explicit process-scoped assertion and must not be persisted.
 
 Remote tdc fs, fs-git, fs-journal, and owner fs-vault commands use this FS
 credential lookup order:
 
 1. Explicit command-local `--fs-token`.
 2. `TDC_FS_TOKEN`.
-3. The selected resource's `api_key` in its resource-scoped credentials file.
+3. The selected ID's `api_key` in its ID-keyed credentials file.
 
 Those commands do not require TiDB Cloud public/private keys. A clean machine
-can use an existing resource with a file-system name, canonical region, and FS
-token supplied independently through flags or environment variables. Do not
+can use an existing resource with only a canonical region and FS token; the ID
+is derived in memory from the token. Do not
 persist ephemeral flag/environment credentials or create a synthetic `[env]`
-profile. `tdc fs create-file-system` and `tdc fs delete-file-system` remain
-TiDB Cloud-authenticated; deletion also requires the selected locally
-registered resource and its owner token.
+profile. `tdc fs create-file-system`, remote list/describe, and
+`tdc fs delete-file-system` remain TiDB Cloud-authenticated. Delete requires an
+ID but does not require a locally stored owner token.
 
-The selector is available on tdc fs data-plane/runtime commands and all
-`fs-git`, `fs-journal`, and `fs-vault` subcommands. Creation, deletion, and
-description require an explicit resource name where their command contract
-declares it. Drain and unmount resolve an existing mount through its mount path
-and locator instead of selecting a resource again.
+The ID selector is available on tdc fs data-plane/runtime commands and all
+`fs-git`, `fs-journal`, and `fs-vault` subcommands. Creation accepts no ID;
+description and deletion require an ID. Drain and unmount resolve an existing
+mount through its mount path and locator instead of selecting a resource again.
 
 When implementing command handlers, detect whether `--profile` was explicitly
 set before calling `config.Load`; the root flag has a default value, but that
@@ -906,8 +907,8 @@ create-db-sql-users` owns those credentials and must be idempotent: it
 creates or repairs the stable tdc-managed read-only, read-write, and admin
 users for a cluster instead of creating a new group every time.
 
-Generated `tdc fs` resource API keys live only in the per-resource credentials
-files under `~/.tdc/fs_resources/`. User-facing docs and commands must call
+Generated `tdc fs` resource API keys live only in the ID-keyed credentials
+files under `~/.tdc/fs_credentials/`. User-facing docs and commands must call
 these `tdc fs` API keys or resource credentials, never reference implementation
 API keys. Filesystem data-plane
 commands route through the installer-managed Drive9 companion binary named
@@ -953,11 +954,11 @@ mount consumption path.
 companion records a drain control socket. WebDAV mounts flush through normal
 file close semantics and should not be expected to support drain.
 
-When invoking the companion, resolve exactly one registry resource and build a
+When invoking a data-plane companion command, resolve exactly one file system ID and build a
 sanitized environment: `HOME` from that resource's scoped companion directory,
 `DRIVE9_SERVER` from its resolved endpoint, `DRIVE9_REGION_CODE` from its
 canonical resource region, `DRIVE9_API_KEY` from its per-resource credentials,
-and TiDB Cloud public/private keys only for provision/delete flows. Strip
+and TiDB Cloud public/private keys only for remote inventory/create/describe/delete flows. Strip
 inherited `DRIVE9_*` values so user shell state cannot override tdc selection.
 Debug and error output must redact TiDB Cloud keys, tdc fs API keys, vault tokens, SQL
 credentials, file contents, and secret values.
@@ -1058,8 +1059,8 @@ Current expectations:
   the focused `make live-e2e-<family>` targets or the aggregate
   `make live-e2e`. They must use the `live-e2e` profile and verify the real
   API/command surface for every implemented spec. Implemented mutating commands
-  must have real live mutation coverage with resource names scoped to the test
-  run and cleanup that only targets resources created by that run.
+  must have real live mutation coverage with resource IDs captured from create
+  responses and cleanup that only targets resources created by that run.
 
 Do not require live cloud credentials for ordinary `go test ./...`.
 

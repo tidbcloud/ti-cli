@@ -2,7 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -851,6 +853,7 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSDeleteFileSystemCommand(info),
 		newFSListFileSystemsCommand(info),
 		newFSDescribeFileSystemCommand(info),
+		newFSImportFileSystemTokenCommand(info),
 		newFSCheckFileSystemCommand(info),
 		newFSCopyFileCommand(info),
 		newFSReadFileCommand(info),
@@ -877,11 +880,13 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSDrainFileSystemCommand(info),
 		newFSUnmountFileSystemCommand(info),
 	}
-	addFSSelectorFlags(commands, "create-file-system", "list-file-systems", "drain-file-system", "unmount-file-system")
+	addFSSelectorFlags(commands, "create-file-system", "list-file-systems", "describe-file-system", "delete-file-system", "import-file-system-token", "drain-file-system", "unmount-file-system")
 	addFSAuthFlags(commands,
 		"create-file-system",
 		"list-file-systems",
 		"describe-file-system",
+		"delete-file-system",
+		"import-file-system-token",
 		"drain-file-system",
 		"unmount-file-system",
 	)
@@ -898,8 +903,8 @@ func addFSSelectorFlags(commands []*cobra.Command, excluded ...string) {
 		if _, ok := skip[command.Name()]; ok {
 			continue
 		}
-		if command.Flags().Lookup("file-system-name") == nil {
-			command.Flags().String("file-system-name", "", "The name of the file system. Can also be supplied through TDC_FS_FILE_SYSTEM_NAME.")
+		if command.Flags().Lookup("file-system-id") == nil {
+			command.Flags().String("file-system-id", "", "The file system ID. Can also be supplied through TDC_FS_FILE_SYSTEM_ID or derived from an explicitly supplied FS token.")
 		}
 	}
 }
@@ -930,11 +935,7 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			if err := fscred.MigrateLegacy(profile.HomeDir, profile); err != nil {
-				return nil, err
-			}
-			name, err := ctx.StringFlag("file-system-name")
-			if err != nil {
+			if err := fscred.MigrateNameRegistry(profile.HomeDir, profile); err != nil {
 				return nil, err
 			}
 			waitUntilReady, err := ctx.BoolFlag("wait")
@@ -943,16 +944,11 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			}
 			return service.CreateFileSystem(ctx.cmd.Context(), tdcfs.CreateFileSystemOptions{
 				Profile:        profile,
-				FileSystemName: name,
 				WaitUntilReady: waitUntilReady,
 			})
 		},
 		DryRun: func(ctx commandContext) (dryrun.Result, error) {
 			service, profile, err := fsTDCServiceAndProfile(ctx)
-			if err != nil {
-				return dryrun.Result{}, err
-			}
-			name, err := ctx.StringFlag("file-system-name")
 			if err != nil {
 				return dryrun.Result{}, err
 			}
@@ -962,25 +958,22 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			}
 			return service.DryRunCreateFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tdcfs.CreateFileSystemOptions{
 				Profile:        profile,
-				FileSystemName: name,
 				WaitUntilReady: waitUntilReady,
 			})
 		},
 	}, info)
-	cmd.Flags().String("file-system-name", "", "The name of the file system.")
 	cmd.Flags().Bool("wait", false, "Wait until the created file system is active.")
-	markUsageRequired(cmd, "file-system-name")
 	return cmd
 }
 
 func newFSListFileSystemsCommand(info version.Info) *cobra.Command {
 	return newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "list-file-systems",
-		Short:      "List locally registered file systems. (preview)",
+		Short:      "List remote file systems in the selected region. (preview)",
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSVolumeRead,
 		Run: func(ctx commandContext) (any, error) {
-			service, profile, err := fsLocalServiceAndProfile(ctx)
+			service, profile, err := fsTDCServiceAndProfile(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -996,15 +989,19 @@ func newFSDescribeFileSystemCommand(info version.Info) *cobra.Command {
 		Mutation:   readOnlyCommand,
 		Permission: authz.FSVolumeRead,
 		Run: func(ctx commandContext) (any, error) {
-			service, profile, err := fsRegistryServiceAndProfile(ctx)
+			service, profile, err := fsTDCServiceAndProfile(ctx)
 			if err != nil {
 				return nil, err
 			}
-			return service.DescribeFileSystem(ctx.cmd.Context(), profile)
+			fileSystemID, err := ctx.StringFlag("file-system-id")
+			if err != nil {
+				return nil, err
+			}
+			return service.DescribeFileSystem(ctx.cmd.Context(), profile, fileSystemID)
 		},
 	}, info)
-	cmd.Flags().String("file-system-name", "", "The name of the file system.")
-	markUsageRequired(cmd, "file-system-name")
+	cmd.Flags().String("file-system-id", "", "The file system ID.")
+	markUsageRequired(cmd, "file-system-id")
 	return cmd
 }
 
@@ -1015,36 +1012,72 @@ func newFSDeleteFileSystemCommand(info version.Info) *cobra.Command {
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVolumeDelete,
 		Run: func(ctx commandContext) (any, error) {
-			service, profile, err := fsTDCResourceServiceAndProfile(ctx)
+			service, profile, err := fsTDCServiceAndProfile(ctx)
 			if err != nil {
 				return nil, err
 			}
-			name, err := fsDeleteFileSystemName(ctx)
+			fileSystemID, err := ctx.StringFlag("file-system-id")
 			if err != nil {
 				return nil, err
 			}
 			return service.DeleteFileSystem(ctx.cmd.Context(), tdcfs.DeleteFileSystemOptions{
-				Profile:        profile,
-				FileSystemName: name,
+				Profile:      profile,
+				FileSystemID: fileSystemID,
 			})
 		},
 		DryRun: func(ctx commandContext) (dryrun.Result, error) {
-			service, profile, err := fsTDCResourceServiceAndProfile(ctx)
+			service, profile, err := fsTDCServiceAndProfile(ctx)
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			name, err := fsDeleteFileSystemName(ctx)
+			fileSystemID, err := ctx.StringFlag("file-system-id")
 			if err != nil {
 				return dryrun.Result{}, err
 			}
 			return service.DryRunDeleteFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tdcfs.DeleteFileSystemOptions{
-				Profile:        profile,
-				FileSystemName: name,
+				Profile:      profile,
+				FileSystemID: fileSystemID,
 			})
 		},
 	}, info)
-	cmd.Flags().String("file-system-name", "", "The name of the file system.")
-	markUsageRequired(cmd, "file-system-name")
+	cmd.Flags().String("file-system-id", "", "The file system ID.")
+	markUsageRequired(cmd, "file-system-id")
+	return cmd
+}
+
+func newFSImportFileSystemTokenCommand(info version.Info) *cobra.Command {
+	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
+		Use:        "import-file-system-token",
+		Short:      "Import an existing file system token into local credentials.",
+		Mutation:   mutatingCommand,
+		Permission: authz.FSVolumeRead,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := fsLocalServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			opts, err := fsImportTokenOptions(ctx, profile)
+			if err != nil {
+				return nil, err
+			}
+			return service.ImportFileSystemToken(ctx.cmd.Context(), opts)
+		},
+		DryRun: func(ctx commandContext) (dryrun.Result, error) {
+			service, profile, err := fsLocalServiceAndProfile(ctx)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			opts, err := fsImportTokenOptions(ctx, profile)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			return service.DryRunImportFileSystemToken(ctx.cmd.Context(), ctx.CommandPath(), opts)
+		},
+	}, info)
+	cmd.Flags().String("file-system-id", "", "Optional file system ID assertion; it must match the verified token.")
+	cmd.Flags().String("fs-token", "", "File system token. Prefer TDC_FS_TOKEN or --from-file to avoid exposing it in process arguments.")
+	cmd.Flags().String("from-file", "", "Read the file system token from an owner-only file, or use - for stdin.")
+	cmd.Flags().Bool("replace", false, "Replace an existing local token for the same file system after validation.")
 	return cmd
 }
 
@@ -1809,7 +1842,7 @@ func newFSMountFileSystemCommand(info version.Info) *cobra.Command {
 			return service.DryRunMountFileSystem(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("file-system-name", "", "The name of the file system. Can also be supplied through TDC_FS_FILE_SYSTEM_NAME.")
+	cmd.Flags().String("file-system-id", "", "The file system ID. Can also be supplied through TDC_FS_FILE_SYSTEM_ID or derived from an explicitly supplied FS token.")
 	cmd.Flags().String("mount-path", "", "Local mount path.")
 	cmd.Flags().String("remote-path", "/", "The TiDB Cloud file system root path to mount.")
 	cmd.Flags().String("driver", "auto", "Mount driver: auto, fuse, or webdav.")
@@ -1818,7 +1851,7 @@ func newFSMountFileSystemCommand(info version.Info) *cobra.Command {
 	cmd.Flags().Duration("ready-timeout", 30*time.Second, "Time to wait for a background mount to become ready.")
 	cmd.Flags().String("cache-dir", "", "Local FUSE cache directory. Default: ~/.tdc/cache/mounts/<mount-hash>.")
 	cmd.Flags().Int64("read-cache-size-mb", 128, "FUSE read cache size in MiB. 0 uses the default.")
-	cmd.Flags().Int64("read-cache-max-file-mb", 4, "Maximumfile size admitted to the FUSE read cache in MiB. 0 uses the default.")
+	cmd.Flags().Int64("read-cache-max-file-mb", 4, "Maximum file size admitted to the FUSE read cache in MiB. 0 uses the default.")
 	cmd.Flags().Duration("read-cache-ttl", 30*time.Second, "FUSE read cache Time-to-Live.")
 	cmd.Flags().Bool("write-back-cache", true, "Persist FUSE writes locally before writing them to the file system on flush.")
 	cmd.Flags().String("mount-profile", "", "Mount profile: coding-agent, portable, or none. Default: none.")
@@ -2240,7 +2273,7 @@ func fsCreateLayerCheckpointOptions(ctx commandContext, profile *config.Profile)
 }
 
 func fsMountOptions(ctx commandContext, profile *config.Profile) (tdcfs.MountFileSystemOptions, error) {
-	fileSystemName, err := ctx.StringFlag("file-system-name")
+	fileSystemID, err := ctx.StringFlag("file-system-id")
 	if err != nil {
 		return tdcfs.MountFileSystemOptions{}, err
 	}
@@ -2310,7 +2343,7 @@ func fsMountOptions(ctx commandContext, profile *config.Profile) (tdcfs.MountFil
 	}
 	return tdcfs.MountFileSystemOptions{
 		Profile:           profile,
-		FileSystemName:    fileSystemName,
+		FileSystemName:    fileSystemID,
 		MountPath:         mountPath,
 		RemotePath:        remotePath,
 		Driver:            driver,
@@ -2367,52 +2400,12 @@ func fsServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, er
 	return fsAuthenticatedServiceAndProfile(ctx, true)
 }
 
-func fsTDCResourceServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, error) {
-	service, profile, err := fsTDCServiceAndProfile(ctx)
-	if err != nil {
-		return tdcfs.Service{}, nil, err
-	}
-	selected, err := fsResolveAuthenticatedProfile(ctx, profile, true)
-	if err != nil {
-		return tdcfs.Service{}, nil, err
-	}
-	if _, err := fscred.Get(profile.HomeDir, profile.Name, selected.FSResourceName); err != nil {
-		return tdcfs.Service{}, nil, err
-	}
-	return service, selected, nil
-}
-
 func fsAuthenticatedServiceAndProfile(ctx commandContext, tokenRequired bool) (tdcfs.Service, *config.Profile, error) {
 	service, profile, err := fsLocalServiceAndProfile(ctx)
 	if err != nil {
 		return tdcfs.Service{}, nil, err
 	}
 	selected, err := fsResolveAuthenticatedProfile(ctx, profile, tokenRequired)
-	if err != nil {
-		return tdcfs.Service{}, nil, err
-	}
-	return service, selected, nil
-}
-
-func fsRegistryServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, error) {
-	service, profile, err := fsLocalServiceAndProfile(ctx)
-	if err != nil {
-		return tdcfs.Service{}, nil, err
-	}
-	selector := ""
-	selectorExplicit := false
-	if ctx.cmd.Flag("file-system-name") != nil {
-		selector, err = ctx.StringFlag("file-system-name")
-		if err != nil {
-			return tdcfs.Service{}, nil, err
-		}
-		selectorExplicit = ctx.FlagChanged("file-system-name")
-	}
-	resolve := fscred.Resolve
-	if dryRun, _ := ctx.BoolFlag("dry-run"); dryRun {
-		resolve = fscred.ResolveDryRun
-	}
-	selected, _, err := resolve(profile.HomeDir, profile, selector, selectorExplicit, nil)
 	if err != nil {
 		return tdcfs.Service{}, nil, err
 	}
@@ -2434,13 +2427,13 @@ func fsVaultServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profil
 func fsResolveAuthenticatedProfile(ctx commandContext, profile *config.Profile, tokenRequired bool) (*config.Profile, error) {
 	selector := ""
 	selectorExplicit := false
-	if ctx.cmd.Flag("file-system-name") != nil {
+	if ctx.cmd.Flag("file-system-id") != nil {
 		var err error
-		selector, err = ctx.StringFlag("file-system-name")
+		selector, err = ctx.StringFlag("file-system-id")
 		if err != nil {
 			return nil, err
 		}
-		selectorExplicit = ctx.FlagChanged("file-system-name")
+		selectorExplicit = ctx.FlagChanged("file-system-id")
 	}
 	token := ""
 	tokenExplicit := false
@@ -2459,14 +2452,19 @@ func fsResolveAuthenticatedProfile(ctx commandContext, profile *config.Profile, 
 		regionOverride = strings.TrimSpace(os.Getenv("TDC_REGION_CODE"))
 	}
 	dryRun, _ := ctx.BoolFlag("dry-run")
-	selected, _, err := fscred.ResolveAuthenticated(profile.HomeDir, profile, fscred.ResolveAuthOptions{
-		Selector:         selector,
-		SelectorExplicit: selectorExplicit,
-		Token:            token,
-		TokenExplicit:    tokenExplicit,
-		RegionOverride:   regionOverride,
-		TokenRequired:    tokenRequired,
-		DryRun:           dryRun,
+	if !dryRun {
+		if err := fscred.MigrateNameRegistry(profile.HomeDir, profile); err != nil {
+			return nil, err
+		}
+	}
+	selected, _, err := fscred.ResolveCredential(profile.HomeDir, profile, fscred.ResolveCredentialOptions{
+		FileSystemID:         selector,
+		FileSystemIDExplicit: selectorExplicit,
+		Token:                token,
+		TokenExplicit:        tokenExplicit,
+		RegionOverride:       regionOverride,
+		TokenRequired:        tokenRequired,
+		DryRun:               dryRun,
 	})
 	if err != nil {
 		return nil, err
@@ -2474,12 +2472,78 @@ func fsResolveAuthenticatedProfile(ctx commandContext, profile *config.Profile, 
 	return selected, nil
 }
 
-func fsDeleteFileSystemName(ctx commandContext) (string, error) {
-	name, err := ctx.StringFlag("file-system-name")
+func fsImportTokenOptions(ctx commandContext, profile *config.Profile) (tdcfs.ImportFileSystemTokenOptions, error) {
+	fileSystemID, err := ctx.StringFlag("file-system-id")
 	if err != nil {
-		return "", err
+		return tdcfs.ImportFileSystemTokenOptions{}, err
 	}
-	return name, nil
+	flagToken, err := ctx.StringFlag("fs-token")
+	if err != nil {
+		return tdcfs.ImportFileSystemTokenOptions{}, err
+	}
+	fromFile, err := ctx.StringFlag("from-file")
+	if err != nil {
+		return tdcfs.ImportFileSystemTokenOptions{}, err
+	}
+	envToken := strings.TrimSpace(os.Getenv("TDC_FS_TOKEN"))
+	sources := 0
+	if ctx.FlagChanged("fs-token") {
+		sources++
+	}
+	if strings.TrimSpace(fromFile) != "" {
+		sources++
+	}
+	if envToken != "" {
+		sources++
+	}
+	if sources == 0 {
+		return tdcfs.ImportFileSystemTokenOptions{}, apperr.New("fs.missing_token", "authentication", 3, "authentication required: pass --fs-token, set TDC_FS_TOKEN, or use --from-file")
+	}
+	if sources > 1 {
+		return tdcfs.ImportFileSystemTokenOptions{}, apperr.New("fs.multiple_token_sources", "usage", 2, "provide exactly one of --fs-token, TDC_FS_TOKEN, or --from-file")
+	}
+	token := strings.TrimSpace(flagToken)
+	if strings.TrimSpace(fromFile) != "" {
+		token, err = readFSImportToken(ctx, fromFile)
+		if err != nil {
+			return tdcfs.ImportFileSystemTokenOptions{}, err
+		}
+	} else if token == "" {
+		token = envToken
+	}
+	replace, err := ctx.BoolFlag("replace")
+	if err != nil {
+		return tdcfs.ImportFileSystemTokenOptions{}, err
+	}
+	return tdcfs.ImportFileSystemTokenOptions{Profile: profile, FileSystemID: fileSystemID, Token: token, Replace: replace}, nil
+}
+
+func readFSImportToken(ctx commandContext, path string) (string, error) {
+	var data []byte
+	var err error
+	if path == "-" {
+		data, err = io.ReadAll(io.LimitReader(ctx.cmd.InOrStdin(), 1<<20))
+	} else {
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return "", apperr.Wrap("fs.token_file", "usage", 2, "cannot inspect FS token file", statErr)
+		}
+		if !info.Mode().IsRegular() {
+			return "", apperr.New("fs.token_file", "usage", 2, "FS token file must be a regular file")
+		}
+		if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
+			return "", apperr.New("fs.token_file_permissions", "usage", 2, fmt.Sprintf("FS token file %s must have mode 0600 or stricter", path))
+		}
+		data, err = os.ReadFile(path)
+	}
+	if err != nil {
+		return "", apperr.Wrap("fs.token_file", "usage", 2, "cannot read FS token", err)
+	}
+	token := strings.TrimSpace(string(data))
+	if token == "" {
+		return "", apperr.New("fs.empty_token", "usage", 2, "FS token input is empty")
+	}
+	return token, nil
 }
 
 func newFSVaultCommand(info version.Info) *cobra.Command {

@@ -107,11 +107,11 @@ function Print-NextSteps {
     Write-Output "       tdc organization list-projects --output text"
     Write-Output ""
     Write-Output "    4. Create or check tdc fs"
-    Write-Output "       tdc fs create-file-system --file-system-name workspace"
+    Write-Output '       $env:TDC_FS_FILE_SYSTEM_ID = tdc fs create-file-system --query file_system_id --output text'
     Write-Output "       tdc fs check-file-system --output text"
     Write-Output ""
     Write-Output "    5. Mount tdc fs when FUSE is available"
-    Write-Output "       tdc fs mount-file-system --file-system-name workspace --mount-path ./workspace"
+    Write-Output '       tdc fs mount-file-system --file-system-id $env:TDC_FS_FILE_SYSTEM_ID --mount-path ./workspace'
     Write-Output ""
     Write-Output "  Docs: https://github.com/tidbcloud/tdc"
 }

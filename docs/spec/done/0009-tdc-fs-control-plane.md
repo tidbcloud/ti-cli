@@ -1,5 +1,7 @@
 # tdc fs Control Plane
 
+> **Latest identity update:** `0026-remote-fs-resource-inventory.md` supersedes the name-keyed local inventory. Current commands use server-assigned file system IDs and Drive9's region-scoped remote inventory.
+
 > **Current status:** The original 1:1 profile model, flat `fs_*` storage, and native control-plane integration in this document are historical. `0015-drive9-companion-wrapper-for-tdc-fs.md` makes `tdc-drive9` the unconditional Filesystem implementation; `0016-profile-fs-resource-registry.md` provides profile-scoped 1:N resource storage; `0018-fs-token-auth-and-config-free-access.md` adds token-only use of existing resources; and `0020-explicit-file-system-selection.md` removes persistent default selection. The command intent and dry-run requirements below remain useful context.
 
 ## Goal

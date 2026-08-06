@@ -3,6 +3,7 @@ package fs
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -35,13 +36,12 @@ func TestDrive9CreateFileSystemStoresRegistryCredentialsAndUsesCanonicalRegion(t
 	profile := testProfile()
 
 	result, err := testCompanionService(home, companion).CreateFileSystem(context.Background(), CreateFileSystemOptions{
-		Profile:        profile,
-		FileSystemName: "workspace",
+		Profile: profile,
 	})
 	if err != nil {
 		t.Fatalf("CreateFileSystem failed: %v", err)
 	}
-	if result.FileSystemName != "workspace" || result.TenantID != "tenant-1" || result.RegionCode != "aws-us-east-1" || result.FSToken != "fs-secret" || !result.CredentialsStored {
+	if result.FileSystemID != "tenant-1" || result.RegionCode != "aws-us-east-1" || result.FSToken != "fs-secret" || !result.CredentialsStored {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 
@@ -59,16 +59,16 @@ func TestDrive9CreateFileSystemStoresRegistryCredentialsAndUsesCanonicalRegion(t
 	if got := credentialsDoc["stage"]; got.FSAPIKey != "" {
 		t.Fatalf("fs api key must not be stored flat under profile: %#v", got)
 	}
-	resource, err := fscred.Get(home, "stage", "workspace")
+	resource, err := fscred.GetCredential(home, "stage", "tenant-1")
 	if err != nil {
-		t.Fatalf("Get registry resource failed: %v", err)
+		t.Fatalf("Get ID-keyed credential failed: %v", err)
 	}
-	if resource.TenantID != "tenant-1" || resource.RegionCode != "aws-us-east-1" || resource.APIKey != "fs-secret" {
-		t.Fatalf("unexpected registry resource: %#v", resource)
+	if resource.FileSystemID != "tenant-1" || resource.RegionCode != "aws-us-east-1" || resource.APIKey != "fs-secret" {
+		t.Fatalf("unexpected ID-keyed credential: %#v", resource)
 	}
 
 	createCall := requireFakeDrive9Call(t, recordPath, "create")
-	wantArgs := []string{"create", "--json", "--name", "workspace", "--region-code", "aws-us-east-1"}
+	wantArgs := []string{"create", "--json", "--region-code", "aws-us-east-1"}
 	if fmt.Sprint(createCall.Args) != fmt.Sprint(wantArgs) {
 		t.Fatalf("create args = %#v, want %#v", createCall.Args, wantArgs)
 	}
@@ -81,12 +81,12 @@ func TestDrive9CreateFileSystemStoresRegistryCredentialsAndUsesCanonicalRegion(t
 	if _, ok := createCall.Env["DRIVE9_API_KEY"]; ok {
 		t.Fatalf("create should not pass an fs api key, env=%#v", createCall.Env)
 	}
-	wantHome, err := fscred.CompanionHome(home, "stage", "workspace")
-	if err != nil {
-		t.Fatal(err)
+	createHome := createCall.Env["HOME"]
+	if createHome == "" || strings.HasPrefix(createHome, filepath.Join(home, ".tdc")) {
+		t.Fatalf("create HOME = %q, want isolated temporary state", createHome)
 	}
-	if createCall.Env["HOME"] != wantHome {
-		t.Fatalf("create HOME = %q, want %q", createCall.Env["HOME"], wantHome)
+	if _, err := os.Stat(createHome); !os.IsNotExist(err) {
+		t.Fatalf("temporary create HOME was not removed: %q, err=%v", createHome, err)
 	}
 }
 
@@ -101,7 +101,6 @@ func TestDrive9CreateFileSystemWaitsUntilReady(t *testing.T) {
 	service.FSReadyWaitPollInterval = time.Millisecond
 	result, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{
 		Profile:        testProfile(),
-		FileSystemName: "workspace",
 		WaitUntilReady: true,
 	})
 	if err != nil {
@@ -134,13 +133,12 @@ func TestDrive9CreateFileSystemReadyTimeoutPreservesCredentials(t *testing.T) {
 	service.FSReadyWaitPollInterval = time.Millisecond
 	_, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{
 		Profile:        testProfile(),
-		FileSystemName: "workspace",
 		WaitUntilReady: true,
 	})
 	if apperr.CodeFor(err) != "fs.ready_wait_timeout" {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	resource, getErr := fscred.Get(home, "stage", "workspace")
+	resource, getErr := fscred.GetCredential(home, "stage", "tenant-1")
 	if getErr != nil || resource.APIKey != "fs-secret" {
 		t.Fatalf("readiness timeout removed stored credentials: resource=%#v err=%v", resource, getErr)
 	}
@@ -161,8 +159,7 @@ func TestDrive9CreateFileSystemFromEnvironmentProfileStoresDefaultProfile(t *tes
 	}
 
 	if _, err := testCompanionService(home, companion).CreateFileSystem(context.Background(), CreateFileSystemOptions{
-		Profile:        profile,
-		FileSystemName: "workspace",
+		Profile: profile,
 	}); err != nil {
 		t.Fatalf("CreateFileSystem failed: %v", err)
 	}
@@ -189,47 +186,53 @@ func TestDrive9CreateFileSystemFromEnvironmentProfileStoresDefaultProfile(t *tes
 	}
 }
 
-func TestDrive9CreateSecondFileSystemUsesIndependentCompanionHome(t *testing.T) {
+func TestDrive9CreateAlwaysInvokesRemoteAndStoresByReturnedID(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
 	profile := testProfile()
 	service := testCompanionService(home, companion)
-	if _, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile, FileSystemName: "workspace"}); err != nil {
-		t.Fatalf("create workspace: %v", err)
+	if _, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile}); err != nil {
+		t.Fatalf("first create: %v", err)
 	}
-	if _, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile, FileSystemName: "scratch"}); err != nil {
-		t.Fatalf("create scratch: %v", err)
+	if _, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile}); err != nil {
+		t.Fatalf("second create: %v", err)
 	}
-	repeated, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile, FileSystemName: "scratch"})
+	repeated, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile})
 	if err != nil {
 		t.Fatalf("repeat create scratch: %v", err)
 	}
-	if repeated.Status != "exists" || repeated.FSToken != "fs-secret" || !repeated.CredentialsStored {
+	if repeated.Status != "active" || repeated.FSToken != "fs-secret" || !repeated.CredentialsStored {
 		t.Fatalf("unexpected repeated create result: %#v", repeated)
 	}
-	resources, err := fscred.List(home, profile.Name)
-	if err != nil || len(resources) != 2 {
-		t.Fatalf("resources=%#v err=%v", resources, err)
+	credentials, err := fscred.ListCredentials(home, profile.Name)
+	if err != nil || len(credentials) != 1 {
+		t.Fatalf("credentials=%#v err=%v", credentials, err)
 	}
 	calls := readFakeDrive9Calls(t, recordPath)
 	homes := map[string]bool{}
 	for _, call := range calls {
-		if len(call.Args) > 0 && call.Args[0] == "create" {
+		if hasArgPrefix(call.Args, []string{"create"}) {
 			homes[call.Env["HOME"]] = true
+			if strings.HasPrefix(call.Env["HOME"], filepath.Join(home, ".tdc")) {
+				t.Fatalf("create used persistent companion HOME: %q", call.Env["HOME"])
+			}
+			if _, err := os.Stat(call.Env["HOME"]); !os.IsNotExist(err) {
+				t.Fatalf("temporary create HOME was not removed: %q, err=%v", call.Env["HOME"], err)
+			}
 		}
 	}
-	if len(homes) != 2 {
-		t.Fatalf("expected two resource-scoped companion homes, got %#v", homes)
+	if len(homes) != 3 {
+		t.Fatalf("expected an isolated companion home for each create, got %#v", homes)
 	}
 	createCalls := 0
 	for _, call := range calls {
-		if len(call.Args) > 0 && call.Args[0] == "create" {
+		if hasArgPrefix(call.Args, []string{"create"}) {
 			createCalls++
 		}
 	}
-	if createCalls != 2 {
-		t.Fatalf("idempotent create invoked Drive9 %d times, want 2 total calls", createCalls)
+	if createCalls != 3 {
+		t.Fatalf("create invoked Drive9 %d times, want 3 total calls", createCalls)
 	}
 }
 
@@ -241,15 +244,15 @@ func TestDrive9DeleteFileSystemDeletesOnlySelectedRegistryResource(t *testing.T)
 	if err := store.WriteProfile(home, profile.Name, store.ConfigProfile{RegionCode: profile.PlacementRegionCode}, store.CredentialsProfile{TDCPublicKey: profile.TDCPublicKey, TDCPrivateKey: profile.TDCPrivateKey}); err != nil {
 		t.Fatal(err)
 	}
-	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "fs-secret"); err != nil {
+	if _, err := fscred.StoreCredential(home, profile, "tenant-1", "aws-us-east-1", "fs-secret", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := fscred.Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-east-1", "fs-secret-2"); err != nil {
+	if _, err := fscred.StoreCredential(home, profile, "tenant-2", "aws-us-east-1", "fs-secret-2", false); err != nil {
 		t.Fatal(err)
 	}
 	result, err := testCompanionService(home, companion).DeleteFileSystem(context.Background(), DeleteFileSystemOptions{
-		Profile:        profile,
-		FileSystemName: "workspace",
+		Profile:      profile,
+		FileSystemID: "tenant-1",
 	})
 	if err != nil {
 		t.Fatalf("DeleteFileSystem failed: %v", err)
@@ -257,11 +260,11 @@ func TestDrive9DeleteFileSystemDeletesOnlySelectedRegistryResource(t *testing.T)
 	if !result.CredentialsRemoved || result.Status != "deleting" || result.RemoteDeletionState != "deleting" {
 		t.Fatalf("unexpected delete result: %#v", result)
 	}
-	deleteCall := requireFakeDrive9Call(t, recordPath, "delete")
-	if fmt.Sprint(deleteCall.Args) != fmt.Sprint([]string{"delete", "--json", "--yes"}) {
+	deleteCall := requireFakeDrive9Call(t, recordPath, "admin", "tenant", "delete")
+	if fmt.Sprint(deleteCall.Args) != fmt.Sprint([]string{"admin", "tenant", "delete", "--json", "--region-code", "aws-us-east-1", "--tenant-id", "tenant-1"}) {
 		t.Fatalf("delete args = %#v", deleteCall.Args)
 	}
-	if deleteCall.Env["DRIVE9_API_KEY"] != "fs-secret" || deleteCall.Env["DRIVE9_PUBLIC_KEY"] != "public" || deleteCall.Env["DRIVE9_PRIVATE_KEY"] != "private" {
+	if deleteCall.Env["DRIVE9_API_KEY"] != "" || deleteCall.Env["DRIVE9_PUBLIC_KEY"] != "public" || deleteCall.Env["DRIVE9_PRIVATE_KEY"] != "private" {
 		t.Fatalf("missing delete env: %#v", deleteCall.Env)
 	}
 
@@ -279,10 +282,10 @@ func TestDrive9DeleteFileSystemDeletesOnlySelectedRegistryResource(t *testing.T)
 	if got := credentialsDoc["stage"]; got.FSAPIKey != "" || got.TDCPublicKey != "public" {
 		t.Fatalf("unexpected credentials after delete: %#v", got)
 	}
-	if _, err := fscred.Get(home, "stage", "workspace"); apperr.CodeFor(err) != "fs.resource_not_found" {
+	if _, err := fscred.GetCredential(home, "stage", "tenant-1"); apperr.CodeFor(err) != "fs.credential_not_found" {
 		t.Fatalf("deleted resource still exists: %v", err)
 	}
-	if resource, err := fscred.Get(home, "stage", "scratch"); err != nil || resource.APIKey != "fs-secret-2" {
+	if resource, err := fscred.GetCredential(home, "stage", "tenant-2"); err != nil || resource.APIKey != "fs-secret-2" {
 		t.Fatalf("unrelated resource was changed: resource=%#v err=%v", resource, err)
 	}
 }
@@ -316,6 +319,312 @@ func TestDrive9CheckFileSystemUsesSelectedResource(t *testing.T) {
 	if !found {
 		t.Fatal("expected remote stat call")
 	}
+}
+
+func TestDrive9RemoteInventoryAndDescribeJoinLocalToken(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	profile := testProfile()
+	if _, err := fscred.StoreCredential(home, profile, "tenant-1", "aws-us-east-1", fsTestToken(t, "tenant-1"), false); err != nil {
+		t.Fatal(err)
+	}
+	service := testCompanionService(home, companion)
+	list, err := service.ListFileSystems(context.Background(), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list.FileSystems) != 1 || list.FileSystems[0].FileSystemID != "tenant-1" || !list.FileSystems[0].HasLocalToken {
+		t.Fatalf("list = %#v", list)
+	}
+	described, err := service.DescribeFileSystem(context.Background(), profile, "tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if described.FileSystemID != "tenant-1" || described.Status != "active" || !described.HasLocalToken {
+		t.Fatalf("described = %#v", described)
+	}
+	listCall := requireFakeDrive9Call(t, recordPath, "admin", "tenant", "list")
+	if listCall.Env["DRIVE9_API_KEY"] != "" || listCall.Env["DRIVE9_PUBLIC_KEY"] != "public" {
+		t.Fatalf("inventory used wrong credentials: %#v", listCall.Env)
+	}
+}
+
+func TestDrive9DescribeMigratesLegacyCredentialBeforeJoiningLocalToken(t *testing.T) {
+	home := t.TempDir()
+	companion, _ := buildFakeDrive9(t)
+	profile := testProfile()
+	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", fsTestToken(t, "tenant-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	described, err := testCompanionService(home, companion).DescribeFileSystem(context.Background(), profile, "tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !described.HasLocalToken {
+		t.Fatalf("describe did not join the migrated legacy credential: %#v", described)
+	}
+	if _, err := fscred.GetCredential(home, profile.Name, "tenant-1"); err != nil {
+		t.Fatalf("describe did not migrate the legacy credential: %v", err)
+	}
+}
+
+func TestDrive9DeleteMigratesLegacyCredentialAndDoesNotRestoreIt(t *testing.T) {
+	home := t.TempDir()
+	companion, _ := buildFakeDrive9(t)
+	profile := testProfile()
+	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", fsTestToken(t, "tenant-1")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := testCompanionService(home, companion).DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.CredentialsRemoved {
+		t.Fatalf("delete did not remove the migrated credential: %#v", result)
+	}
+	if err := fscred.MigrateNameRegistry(home, profile); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fscred.GetCredential(home, profile.Name, "tenant-1"); apperr.CodeFor(err) != "fs.credential_not_found" {
+		t.Fatalf("legacy rollback source restored the deleted credential: %v", err)
+	}
+	if _, err := fscred.Get(home, profile.Name, "workspace"); err != nil {
+		t.Fatalf("delete removed the legacy rollback source: %v", err)
+	}
+}
+
+func TestDrive9RemoteInventoryPaginationSortingAndEmptyResults(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TDC_FAKE_DRIVE9_LIST_MODE", "paginate")
+	profile := testProfile()
+	service := testCompanionService(home, companion)
+
+	result, err := service.ListFileSystems(context.Background(), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.FileSystems) != 2 || result.FileSystems[0].FileSystemID != "tenant-1" || result.FileSystems[1].FileSystemID != "tenant-2" {
+		t.Fatalf("paginated inventory was not sorted: %#v", result.FileSystems)
+	}
+	listCalls := 0
+	for _, call := range readFakeDrive9Calls(t, recordPath) {
+		if hasArgPrefix(call.Args, []string{"admin", "tenant", "list"}) {
+			listCalls++
+			if !containsArg(call.Args, "--page-size") || call.Env["DRIVE9_REGION_CODE"] != "aws-us-east-1" {
+				t.Fatalf("inventory call did not preserve pagination or region routing: %#v", call)
+			}
+		}
+	}
+	if listCalls != 2 {
+		t.Fatalf("inventory list calls = %d, want 2", listCalls)
+	}
+
+	t.Setenv("TDC_FAKE_DRIVE9_LIST_MODE", "empty")
+	empty, err := service.ListFileSystems(context.Background(), profile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if empty.FileSystems == nil || len(empty.FileSystems) != 0 {
+		t.Fatalf("empty inventory = %#v, want an empty JSON array", empty.FileSystems)
+	}
+}
+
+func TestDrive9RemoteInventoryRejectsInvalidResponses(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		mode string
+	}{
+		{name: "malformed JSON", mode: "malformed"},
+		{name: "regressing next page", mode: "regress"},
+		{name: "mismatched response page", mode: "page-mismatch"},
+		{name: "duplicate file system ID", mode: "duplicate"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			companion, _ := buildFakeDrive9(t)
+			t.Setenv("TDC_FAKE_DRIVE9_LIST_MODE", tc.mode)
+			_, err := testCompanionService(t.TempDir(), companion).ListFileSystems(context.Background(), testProfile())
+			if apperr.CodeFor(err) != "fs.companion_decode" {
+				t.Fatalf("inventory error = %v, want fs.companion_decode", err)
+			}
+		})
+	}
+}
+
+func TestDrive9CreateReturnsOneTimeTokenWhenLocalPersistenceFails(t *testing.T) {
+	home := t.TempDir()
+	companion, _ := buildFakeDrive9(t)
+	paths, err := fscred.CredentialPath(home, "stage", "tenant-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	profileCredentialDir := filepath.Dir(filepath.Dir(paths.Credentials))
+	t.Setenv("TDC_FAKE_DRIVE9_BREAK_CREDENTIAL_ROOT", profileCredentialDir)
+	var stderr strings.Builder
+	service := testCompanionService(home, companion)
+	service.Stderr = &stderr
+	result, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: testProfile()})
+	if err != nil {
+		t.Fatalf("remote create should remain successful after local persistence failure: %v", err)
+	}
+	if result.FileSystemID != "tenant-1" || result.FSToken != "fs-secret" || result.CredentialsStored {
+		t.Fatalf("create result lost one-time recovery data: %#v", result)
+	}
+	if !strings.Contains(stderr.String(), "was created") || strings.Contains(stderr.String(), result.FSToken) {
+		t.Fatalf("create warning is missing or leaked the token: %q", stderr.String())
+	}
+}
+
+func TestDrive9CreatePreflightRejectsUnwritableCredentialStoreBeforeRemoteCall(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	credentialRoot := filepath.Join(home, ".tdc", "fs_credentials")
+	if err := os.MkdirAll(filepath.Dir(credentialRoot), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(credentialRoot, []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := testCompanionService(home, companion).CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: testProfile()})
+	if err == nil {
+		t.Fatal("create should reject an unusable local credential store")
+	}
+	if _, statErr := os.Stat(recordPath); !os.IsNotExist(statErr) {
+		t.Fatalf("credential preflight failure invoked Drive9 or created its record: %v", statErr)
+	}
+}
+
+func TestDrive9DeleteFailurePreservesLocalCredential(t *testing.T) {
+	home := t.TempDir()
+	companion, _ := buildFakeDrive9(t)
+	t.Setenv("TDC_FAKE_DRIVE9_DELETE_FAIL", "1")
+	profile := testProfile()
+	if _, err := fscred.StoreCredential(home, profile, "tenant-1", "aws-us-east-1", "fs-secret", false); err != nil {
+		t.Fatal(err)
+	}
+	_, err := testCompanionService(home, companion).DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1"})
+	if err == nil {
+		t.Fatal("delete should return the remote failure")
+	}
+	credential, getErr := fscred.GetCredential(home, profile.Name, "tenant-1")
+	if getErr != nil || credential.APIKey != "fs-secret" {
+		t.Fatalf("remote delete failure removed local credentials: credential=%#v err=%v", credential, getErr)
+	}
+}
+
+func TestDrive9DescribeAndDeleteMapRemoteNotFound(t *testing.T) {
+	companion, _ := buildFakeDrive9(t)
+	service := testCompanionService(t.TempDir(), companion)
+	t.Setenv("TDC_FAKE_DRIVE9_NOT_FOUND", "1")
+	if _, err := service.DescribeFileSystem(context.Background(), testProfile(), "tenant-missing"); apperr.CodeFor(err) != "fs.resource_not_found" {
+		t.Fatalf("describe error = %v, want fs.resource_not_found", err)
+	}
+	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: testProfile(), FileSystemID: "tenant-missing"}); apperr.CodeFor(err) != "fs.resource_not_found" {
+		t.Fatalf("delete error = %v, want fs.resource_not_found", err)
+	}
+}
+
+func TestImportFileSystemTokenValidatesStatusAndStoresCredential(t *testing.T) {
+	token := fsTestToken(t, "tenant-import")
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TDC_FAKE_DRIVE9_EXPECT_API_KEY", token)
+	profile := testProfile()
+	profile.HomeDir = home
+	service := testCompanionService(home, companion)
+	result, err := service.ImportFileSystemToken(context.Background(), ImportFileSystemTokenOptions{Profile: profile, Token: token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FileSystemID != "tenant-import" || !result.CredentialsStored || result.Status != "imported" {
+		t.Fatalf("result = %#v", result)
+	}
+	credential, err := fscred.GetCredential(home, profile.Name, "tenant-import")
+	if err != nil || credential.APIKey != token {
+		t.Fatalf("credential=%#v err=%v", credential, err)
+	}
+	validationCall := requireFakeDrive9Call(t, recordPath, "fs", "stat")
+	if validationCall.Env["DRIVE9_API_KEY"] != token {
+		t.Fatalf("token validation used wrong credential: %#v", validationCall.Env)
+	}
+	if strings.HasPrefix(validationCall.Env["HOME"], filepath.Join(home, store.TDCDirName)) {
+		t.Fatalf("token validation persisted companion state under the tdc home: %#v", validationCall.Env)
+	}
+	if _, err := os.Stat(validationCall.Env["HOME"]); !os.IsNotExist(err) {
+		t.Fatalf("temporary token validation HOME was not removed: %q, err=%v", validationCall.Env["HOME"], err)
+	}
+}
+
+func TestImportFileSystemTokenRejectsRemoteValidationFailureWithoutWriting(t *testing.T) {
+	home := t.TempDir()
+	companion, _ := buildFakeDrive9(t)
+	t.Setenv("TDC_FAKE_DRIVE9_EXPECT_API_KEY", fsTestToken(t, "tenant-other"))
+	profile := testProfile()
+	profile.HomeDir = home
+	_, err := testCompanionService(home, companion).ImportFileSystemToken(context.Background(), ImportFileSystemTokenOptions{
+		Profile: profile,
+		Token:   fsTestToken(t, "tenant-rejected"),
+	})
+	if err == nil {
+		t.Fatal("import should reject a token refused by Drive9")
+	}
+	if _, getErr := fscred.GetCredential(home, profile.Name, "tenant-rejected"); apperr.CodeFor(getErr) != "fs.credential_not_found" {
+		t.Fatalf("rejected import wrote credentials: %v", getErr)
+	}
+}
+
+func TestImportFileSystemTokenReplaceCanUpdateStoredRegionAfterValidation(t *testing.T) {
+	home := t.TempDir()
+	companion, _ := buildFakeDrive9(t)
+	oldToken := fsTestTokenVariant(t, "tenant-import", "old")
+	newToken := fsTestTokenVariant(t, "tenant-import", "new")
+	profile := testProfile()
+	profile.HomeDir = home
+	if _, err := fscred.StoreCredential(home, profile, "tenant-import", "aws-us-east-1", oldToken, false); err != nil {
+		t.Fatal(err)
+	}
+	profile.PlacementRegionCode = "aws-us-west-2"
+	profile.RegionCode = "us-west-2"
+	t.Setenv("TDC_FAKE_DRIVE9_EXPECT_API_KEY", newToken)
+	resolver := endpoints.Resolver{FSManifest: &endpoints.FSRegionManifest{Regions: []endpoints.FSRegionManifestEntry{
+		{RegionCode: "aws-us-west-2", Mode: endpoints.DefaultFSMode, ServerURL: "https://fs-west.test", CloudProvider: "aws", TiDBRegion: "us-west-2"},
+	}}}
+	service := Service{HomeDir: home, CompanionPath: companion, Resolver: resolver}
+	if _, err := service.ImportFileSystemToken(context.Background(), ImportFileSystemTokenOptions{Profile: profile, Token: newToken}); apperr.CodeFor(err) != "fs.credential_import_conflict" {
+		t.Fatalf("import conflict error = %v", err)
+	}
+	result, err := service.ImportFileSystemToken(context.Background(), ImportFileSystemTokenOptions{Profile: profile, Token: newToken, Replace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RegionCode != "aws-us-west-2" {
+		t.Fatalf("result = %#v", result)
+	}
+	credential, err := fscred.GetCredential(home, profile.Name, "tenant-import")
+	if err != nil || credential.APIKey != newToken || credential.RegionCode != "aws-us-west-2" {
+		t.Fatalf("credential=%#v err=%v", credential, err)
+	}
+}
+
+func fsTestToken(t *testing.T, tenantID string) string {
+	return fsTestTokenVariant(t, tenantID, "signature")
+}
+
+func fsTestTokenVariant(t *testing.T, tenantID, signature string) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256"}`))
+	payloadBytes, err := json.Marshal(map[string]any{"tenant_id": tenantID, "token_version": 1, "iat": 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	jwt := header + "." + base64.RawURLEncoding.EncodeToString(payloadBytes) + "." + signature
+	return "drive9_" + base64.RawURLEncoding.EncodeToString([]byte(jwt))
 }
 
 func TestDrive9DataPlaneCommandsTranslateToCompanion(t *testing.T) {
@@ -546,7 +855,6 @@ func TestDryRunCreateFileSystemUsesRedactedProvisionShape(t *testing.T) {
 	profile := testProfile()
 	result, err := Service{Resolver: supportedFSManifestResolver("https://fs.test")}.DryRunCreateFileSystem(context.Background(), "tdc fs create-file-system", CreateFileSystemOptions{
 		Profile:        profile,
-		FileSystemName: "workspace",
 		WaitUntilReady: true,
 	})
 	if err != nil {
@@ -577,34 +885,34 @@ func TestDryRunCreateFileSystemUsesRedactedProvisionShape(t *testing.T) {
 	}
 }
 
-func TestDryRunDeleteFileSystemReportsRegistryFiles(t *testing.T) {
+func TestDryRunDeleteFileSystemReportsCredentialFile(t *testing.T) {
 	home := t.TempDir()
 	profile := dataProfile()
-	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "fs-secret"); err != nil {
+	if _, err := fscred.StoreCredential(home, profile, "tenant-1", "aws-us-east-1", "fs-secret", false); err != nil {
 		t.Fatal(err)
 	}
 	result, err := (Service{HomeDir: home, Resolver: supportedFSManifestResolver("https://fs.test")}).DryRunDeleteFileSystem(context.Background(), "tdc fs delete-file-system", DeleteFileSystemOptions{
-		Profile:        profile,
-		FileSystemName: "workspace",
+		Profile:      profile,
+		FileSystemID: "tenant-1",
 	})
 	if err != nil {
 		t.Fatalf("DryRunDeleteFileSystem failed: %v", err)
 	}
-	paths, err := fscred.Paths(home, profile.Name, "workspace")
+	paths, err := fscred.CredentialPath(home, profile.Name, "tenant-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	found := false
 	for _, check := range result.Checks {
-		if check.Name == "local_resource_registry" {
-			found = strings.Contains(check.Message, paths.Config) && strings.Contains(check.Message, paths.Credentials)
+		if check.Name == "local_credentials" {
+			found = strings.Contains(check.Message, paths.Credentials)
 		}
 	}
 	if !found {
 		t.Fatalf("dry-run did not report registry files: %#v", result.Checks)
 	}
-	if _, err := fscred.Get(home, profile.Name, "workspace"); err != nil {
-		t.Fatalf("dry-run removed registry resource: %v", err)
+	if _, err := fscred.GetCredential(home, profile.Name, "tenant-1"); err != nil {
+		t.Fatalf("dry-run removed credential: %v", err)
 	}
 }
 
@@ -655,6 +963,10 @@ func main() {
 	}
 	switch {
 	case args[0] == "create":
+		if path := os.Getenv("TDC_FAKE_DRIVE9_BREAK_CREDENTIAL_ROOT"); path != "" {
+			_ = os.RemoveAll(path)
+			_ = os.WriteFile(path, []byte("not a directory"), 0600)
+		}
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{
 			"tenant_id":      "tenant-1",
 			"api_key":        "fs-secret",
@@ -663,8 +975,62 @@ func main() {
 			"region_code":    os.Getenv("DRIVE9_REGION_CODE"),
 			"server":         os.Getenv("DRIVE9_SERVER"),
 		})
-	case args[0] == "delete":
-		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "deleting"})
+	case len(args) >= 3 && args[0] == "admin" && args[1] == "tenant" && args[2] == "delete":
+		if os.Getenv("TDC_FAKE_DRIVE9_NOT_FOUND") == "1" {
+			fmt.Fprintln(os.Stderr, "delete admin tenant: HTTP 404: tenant not found")
+			os.Exit(1)
+		}
+		if os.Getenv("TDC_FAKE_DRIVE9_DELETE_FAIL") == "1" {
+			fmt.Fprintln(os.Stderr, "admin tenant delete: backend unavailable")
+			os.Exit(1)
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"tenant_id": "tenant-1", "status": "deleting"})
+	case len(args) >= 3 && args[0] == "admin" && args[1] == "tenant" && args[2] == "list":
+		switch os.Getenv("TDC_FAKE_DRIVE9_LIST_MODE") {
+		case "empty":
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"tenants": []any{}, "page": 1, "page_size": 100})
+		case "malformed":
+			fmt.Fprint(os.Stdout, "{")
+		case "paginate":
+			if flagValue(args, "--page") == "1" {
+				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"tenants": []map[string]any{{"tenant_id": "tenant-2", "status": "active", "kind": "live"}},
+					"page": 1, "page_size": 100, "next_page": 2,
+				})
+			} else {
+				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+					"tenants": []map[string]any{{"tenant_id": "tenant-1", "status": "active", "kind": "live"}},
+					"page": 2, "page_size": 100,
+				})
+			}
+		case "regress":
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"tenants": []any{}, "page": 1, "page_size": 100, "next_page": 1,
+			})
+		case "page-mismatch":
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"tenants": []any{}, "page": 2, "page_size": 100,
+			})
+		case "duplicate":
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"tenants": []map[string]any{
+					{"tenant_id": "tenant-1", "status": "active", "kind": "live"},
+					{"tenant_id": "tenant-1", "status": "active", "kind": "live"},
+				},
+				"page": 1, "page_size": 100,
+			})
+		default:
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"tenants": []map[string]any{{"tenant_id": "tenant-1", "status": "active", "kind": "live"}},
+				"page": 1, "page_size": 100,
+			})
+		}
+	case len(args) >= 3 && args[0] == "admin" && args[1] == "tenant" && args[2] == "get":
+		if os.Getenv("TDC_FAKE_DRIVE9_NOT_FOUND") == "1" {
+			fmt.Fprintln(os.Stderr, "get admin tenant: HTTP 404: tenant not found")
+			os.Exit(1)
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"tenant_id": "tenant-1", "status": "active", "kind": "live"})
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "cat":
 		fmt.Fprint(os.Stdout, "file bytes")
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "cp" && os.Getenv("TDC_FAKE_DRIVE9_CP_FAILURE_SEQUENCE") != "":
@@ -677,6 +1043,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "fs cp: remote resource not found")
 		os.Exit(1)
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "stat":
+		if expected := os.Getenv("TDC_FAKE_DRIVE9_EXPECT_API_KEY"); expected != "" && os.Getenv("DRIVE9_API_KEY") != expected {
+			fmt.Fprintln(os.Stderr, "fs stat: unauthorized")
+			os.Exit(1)
+		}
 		if os.Getenv("TDC_FAKE_DRIVE9_STAT_ALWAYS_FAIL") == "1" {
 			fmt.Fprintln(os.Stderr, "fs stat: storage backend unavailable; resource is still provisioning")
 			os.Exit(1)
@@ -711,6 +1081,15 @@ func record(args []string) {
 	}
 	defer f.Close()
 	_ = json.NewEncoder(f).Encode(callRecord{Args: args, Env: env})
+}
+
+func flagValue(args []string, name string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == name {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 `
 	if err := os.WriteFile(sourcePath, []byte(source), 0o600); err != nil {

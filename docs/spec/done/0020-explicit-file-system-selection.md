@@ -1,5 +1,7 @@
 # Explicit File System Selection
 
+> **Latest identity update:** `0026-remote-fs-resource-inventory.md` replaces explicit names with server-assigned IDs and permits token-derived ID selection. No default file system is inferred.
+
 ## Goal
 
 Remove the persistent default-file-system experience from tdc. Every command that operates on a File System must receive its target explicitly from the current invocation. Data-plane and runtime commands resolve `--file-system-name` or `TDC_FS_FILE_SYSTEM_NAME`; control-plane commands that already require a resource name continue to require their explicit flag. tdc must not infer a target from profile state, registry cardinality, creation order, or deletion side effects.

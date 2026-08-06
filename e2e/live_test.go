@@ -16,7 +16,6 @@ import (
 	"github.com/tidbcloud/tdc/internal/api"
 	"github.com/tidbcloud/tdc/internal/api/endpoints"
 	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
 	"github.com/tidbcloud/tdc/internal/auth"
 	"github.com/tidbcloud/tdc/internal/authz"
 	"github.com/tidbcloud/tdc/internal/config"
@@ -26,14 +25,15 @@ import (
 const defaultLiveProfile = "live-e2e"
 
 var (
-	liveFSResourceMu          sync.Mutex
-	liveFSResourceAutoCreated bool
-	liveProfileConfigureMu    sync.Mutex
+	liveFSResourceMu            sync.Mutex
+	liveFSResourceAutoCreatedID string
+	liveFSSelectedID            string
+	liveProfileConfigureMu      sync.Mutex
 )
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if liveFSResourceAutoCreated {
+	if liveFSResourceAutoCreatedID != "" {
 		cleanupAutoCreatedLiveFSResource()
 	}
 	os.Exit(code)
@@ -82,82 +82,50 @@ func TestLiveOrganizationAPIReadOnlyProbes(t *testing.T) {
 	liveGETJSON(t, iam, "/v1beta1/projects")
 }
 
-func TestLiveFSResourceRegistryLifecycle(t *testing.T) {
+func TestLiveFSRemoteInventoryLifecycle(t *testing.T) {
 	requireLive(t)
 
 	bin := tdcBinary(t)
 	profileName := liveProfileName(t)
-	suffix := fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102150405"), os.Getpid())
-	names := []string{"tdc-e2e-fs-" + suffix + "-a", "tdc-e2e-fs-" + suffix + "-b"}
-	created := make(map[string]bool, len(names))
+	preflightList := runTDC(t, bin, "--profile", profileName, "fs", "list-file-systems")
+	preflightList.wantExitCode(0)
+	create := runTDC(t, bin, "--profile", profileName, "fs", "create-file-system", "--wait")
+	if create.exitCode != 0 && isLiveFSQuotaError(create.stderr) {
+		t.Skipf("tdc fs live inventory lifecycle requires one free Starter slot: %s", strings.TrimSpace(create.stderr))
+	}
+	create.wantExitCode(0)
+	var created struct {
+		FileSystemID string `json:"file_system_id"`
+		FSToken      string `json:"fs_token"`
+	}
+	if err := json.Unmarshal([]byte(create.stdout), &created); err != nil || created.FileSystemID == "" || created.FSToken == "" {
+		t.Fatalf("decode live tdc fs create result: %v", err)
+	}
 	defer func() {
-		for i := len(names) - 1; i >= 0; i-- {
-			name := names[i]
-			if !created[name] {
-				continue
-			}
-			result := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", name)
-			if result.exitCode != 0 {
-				t.Logf("cleanup delete failed for tdc fs resource %q: exit=%d stdout=%s stderr=%s", name, result.exitCode, result.stdout, result.stderr)
-			}
+		result := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-id", created.FileSystemID)
+		if result.exitCode != 0 {
+			t.Logf("cleanup delete failed for tdc fs resource %q: exit=%d stdout=%s stderr=%s", created.FileSystemID, result.exitCode, result.stdout, result.stderr)
 		}
 	}()
 
-	for i, name := range names {
-		create := runTDC(t, bin, "--profile", profileName, "fs", "create-file-system", "--file-system-name", name, "--wait")
-		if create.exitCode != 0 {
-			if isLiveFSQuotaError(create.stderr) {
-				if i == 0 {
-					t.Skipf("tdc fs live registry lifecycle requires one free Starter slot: %s", strings.TrimSpace(create.stderr))
-				}
-				t.Logf("second tdc fs resource could not be created because Starter quota is full; single-resource live flow completed and multi-resource selection remains covered by the fake-companion e2e: %s", strings.TrimSpace(create.stderr))
-				check := runTDC(t, bin, "--profile", profileName, "fs", "check-file-system", "--file-system-name", names[0])
-				check.wantExitCode(0)
-				check.wantStdoutContains(`"status": "passed"`)
-				return
-			}
-			create.fail("create live tdc fs registry resource")
-		}
-		if strings.Contains(create.stdout, `"status": "exists"`) {
-			create.fail("generated live tdc fs resource name already existed; refusing to delete a resource not created by this test")
-		}
-		created[name] = true
-		create.wantStdoutContains(`"credentials_stored": true`)
-		create.wantStdoutContains(`"status": "ready"`)
-	}
-
 	list := runTDC(t, bin, "--profile", profileName, "fs", "list-file-systems")
 	list.wantExitCode(0)
-	for _, name := range names {
-		list.wantStdoutContains(`"file_system_name": "` + name + `"`)
-	}
-	list.wantStdoutNotContains("default_file_system_name")
-	list.wantStdoutNotContains("is_default")
+	list.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
+	list.wantStdoutContains(`"has_local_token": true`)
+	list.wantStdoutNotContains(created.FSToken)
 
-	missingSelector := runTDCWithInput(t, bin, "", []string{"TDC_FS_FILE_SYSTEM_NAME="}, "--profile", profileName, "fs", "check-file-system")
+	missingSelector := runTDCWithInput(t, bin, "", []string{"TDC_FS_FILE_SYSTEM_ID="}, "--profile", profileName, "fs", "check-file-system")
 	missingSelector.wantExitCode(2)
-	missingSelector.wantStderrContains("file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
-	environmentCheck := runTDCWithInput(t, bin, "", []string{"TDC_FS_FILE_SYSTEM_NAME=" + names[0]}, "--profile", profileName, "fs", "check-file-system")
+	missingSelector.wantStderrContains("file system ID is required")
+	environmentCheck := runTDCWithInput(t, bin, "", []string{"TDC_FS_FILE_SYSTEM_ID=" + created.FileSystemID}, "--profile", profileName, "fs", "check-file-system")
 	environmentCheck.wantExitCode(0)
-	environmentCheck.wantStdoutContains(`"file_system_name": "` + names[0] + `"`)
-	explicitCheck := runTDC(t, bin, "--profile", profileName, "fs", "check-file-system", "--file-system-name", names[1])
+	environmentCheck.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
+	explicitCheck := runTDC(t, bin, "--profile", profileName, "fs", "check-file-system", "--file-system-id", created.FileSystemID)
 	explicitCheck.wantExitCode(0)
-	explicitCheck.wantStdoutContains(`"file_system_name": "` + names[1] + `"`)
-
-	deleteFirst := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", names[0])
-	deleteFirst.wantExitCode(0)
-	deleteFirst.wantStdoutContains(`"status": "deleting"`)
-	deleteFirst.wantStdoutContains(`"remote_deletion_state": "deleting"`)
-	created[names[0]] = false
-	remaining := runTDC(t, bin, "--profile", profileName, "fs", "describe-file-system", "--file-system-name", names[1])
-	remaining.wantExitCode(0)
-	remaining.wantStdoutContains(`"file_system_name": "` + names[1] + `"`)
-
-	deleteSecond := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", names[1])
-	deleteSecond.wantExitCode(0)
-	deleteSecond.wantStdoutContains(`"status": "deleting"`)
-	deleteSecond.wantStdoutContains(`"remote_deletion_state": "deleting"`)
-	created[names[1]] = false
+	explicitCheck.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
+	describe := runTDC(t, bin, "--profile", profileName, "fs", "describe-file-system", "--file-system-id", created.FileSystemID)
+	describe.wantExitCode(0)
+	describe.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
 }
 
 func TestLiveCLICommandSurface(t *testing.T) {
@@ -275,11 +243,10 @@ func TestLiveFSCommandSurface(t *testing.T) {
 	requireLive(t)
 	bin := tdcBinary(t)
 	profileName := liveProfileName(t)
-	fileSystemName := liveFileSystemName(t)
-	ensureLiveFSResource(t, bin, profileName)
+	selected := ensureLiveFSResource(t, bin, profileName)
 	testLiveHelpCommands(t, bin, [][]string{
 		{"fs", "help"},
-		{"fs", "create-file-system", "help"}, {"fs", "list-file-systems", "help"},
+		{"fs", "create-file-system", "help"}, {"fs", "import-file-system-token", "help"}, {"fs", "list-file-systems", "help"},
 		{"fs", "describe-file-system", "help"}, {"fs", "copy-file", "help"},
 		{"fs", "read-file", "help"}, {"fs", "chmod-file", "help"},
 		{"fs", "create-symlink", "help"}, {"fs", "create-hardlink", "help"},
@@ -295,8 +262,8 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "mount", "help"}, {"fs", "drain", "help"}, {"fs", "umount", "help"},
 	})
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
-		{"fs", "create-file-system", "--file-system-name", fileSystemName, "--wait"},
-		{"fs", "delete-file-system", "--file-system-name", fileSystemName},
+		{"fs", "create-file-system", "--wait"},
+		{"fs", "delete-file-system", "--file-system-id", selected.FSTenantID},
 		{"fs", "create-layer", "--layer-id", "layer-1", "--base-root-path", "/workspace", "--layer-name", "dev"},
 		{"fs", "create-layer-checkpoint", "--layer-id", "layer-1", "--checkpoint-id", "cp-1"},
 		{"fs", "rollback-layer", "--layer-id", "layer-1"}, {"fs", "commit-layer", "--layer-id", "layer-1"},
@@ -321,7 +288,7 @@ func TestLiveFSCommandSurface(t *testing.T) {
 	for _, args := range [][]string{
 		{"fs", "set-default-file-system"},
 		{"fs", "unset-default-file-system"},
-		{"fs", "create-file-system", "--file-system-name", "removed-flag", "--set-default"},
+		{"fs", "create-file-system", "--set-default"},
 	} {
 		result := runTDC(t, bin, append([]string{"--profile", profileName}, args...)...)
 		result.wantExitCode(2)
@@ -502,15 +469,15 @@ func testLiveReadOnlyDryRunRejections(t *testing.T, bin, profileName string, com
 	}
 }
 
-func resolveLiveFSResource(t *testing.T, profile *config.Profile, name string) *config.Profile {
+func resolveLiveFSResourceByID(t *testing.T, profile *config.Profile, fileSystemID string) *config.Profile {
 	t.Helper()
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("determine home directory: %v", err)
 	}
-	selected, _, err := fscred.Resolve(home, profile, name, true, nil)
+	selected, _, err := fscred.ResolveCredential(home, profile, fscred.ResolveCredentialOptions{FileSystemID: fileSystemID, FileSystemIDExplicit: true, TokenRequired: true})
 	if err != nil {
-		t.Fatalf("resolve live tdc fs resource %q: %v", name, err)
+		t.Fatalf("resolve live tdc fs resource %q: %v", fileSystemID, err)
 	}
 	return selected
 }
@@ -1224,24 +1191,22 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 	bin := tdcBinary(t)
 	profileName := liveProfileName(t)
 	suffix := fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102150405"), os.Getpid())
-	fileSystemName := "tdc-e2e-token-" + suffix
-	create := runTDC(t, bin, "--profile", profileName, "fs", "create-file-system", "--file-system-name", fileSystemName, "--wait")
+	preflightList := runTDC(t, bin, "--profile", profileName, "fs", "list-file-systems")
+	preflightList.wantExitCode(0)
+	create := runTDC(t, bin, "--profile", profileName, "fs", "create-file-system", "--wait")
 	create.wantExitCode(0)
 	var created struct {
-		FileSystemName string `json:"file_system_name"`
-		RegionCode     string `json:"region_code"`
-		FSToken        string `json:"fs_token"`
-		Status         string `json:"status"`
+		FileSystemID string `json:"file_system_id"`
+		RegionCode   string `json:"region_code"`
+		FSToken      string `json:"fs_token"`
+		Status       string `json:"status"`
 	}
 	if err := json.Unmarshal([]byte(create.stdout), &created); err != nil {
 		t.Fatalf("decode configuration-free FS create result: %v", err)
 	}
 	create.stdout = ""
-	if created.FileSystemName != fileSystemName || created.RegionCode == "" || created.FSToken == "" {
+	if created.FileSystemID == "" || created.RegionCode == "" || created.FSToken == "" {
 		t.Fatalf("configuration-free FS create result is incomplete")
-	}
-	if created.Status == "exists" {
-		t.Fatalf("generated configuration-free FS resource name unexpectedly existed")
 	}
 	if created.Status != "ready" {
 		t.Fatalf("--wait returned tdc fs resource in status %q", created.Status)
@@ -1252,14 +1217,14 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 		if deletedResource {
 			return
 		}
-		cleanup := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", fileSystemName)
+		cleanup := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-id", created.FileSystemID)
 		if cleanup.exitCode != 0 {
-			t.Logf("cleanup configuration-free FS resource failed for %q: exit=%d stderr=%s", fileSystemName, cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
+			t.Logf("cleanup configuration-free FS resource failed for %q: exit=%d stderr=%s", created.FileSystemID, cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
 		}
 	}()
 
 	profile := liveProfile(t)
-	selected := resolveLiveFSResource(t, profile, fileSystemName)
+	selected := resolveLiveFSResourceByID(t, profile, created.FileSystemID)
 	if selected.FSAPIKey != created.FSToken || selected.FSPlacementRegionCode != created.RegionCode {
 		t.Fatal("stored FS resource credentials or placement differ from create output")
 	}
@@ -1271,7 +1236,7 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 		if remoteDeleted {
 			return
 		}
-		cleanup := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", fileSystemName, "--path", remoteRoot, "--recursive")
+		cleanup := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-id", created.FileSystemID, "--path", remoteRoot, "--recursive")
 		if cleanup.exitCode != 0 && cleanup.exitCode != 5 {
 			t.Logf("cleanup configuration-free remote path failed for %s: exit=%d stderr=%s", remoteRoot, cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
 		}
@@ -1339,6 +1304,7 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 		filepath.Join(cleanHome, ".tdc", "config"),
 		filepath.Join(cleanHome, ".tdc", "credentials"),
 		filepath.Join(cleanHome, ".tdc", "fs_resources"),
+		filepath.Join(cleanHome, ".tdc", "fs_credentials"),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("configuration-free live command persisted tdc configuration at %s: %v", path, err)
@@ -1352,14 +1318,69 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 		t.Fatalf("successful configuration-free unmount left %d mount locator(s)", len(locators))
 	}
 
-	deleteRemote := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", fileSystemName, "--path", remoteRoot, "--recursive")
+	controlHome := t.TempDir()
+	controlEnv := []string{
+		"HOME=" + controlHome,
+		"TDC_PROFILE=",
+		"TDC_PUBLIC_KEY=" + profile.TDCPublicKey,
+		"TDC_PRIVATE_KEY=" + profile.TDCPrivateKey,
+		"TDC_REGION_CODE=" + created.RegionCode,
+		"TDC_FS_FILE_SYSTEM_ID=",
+		"TDC_FS_TOKEN=",
+	}
+	cleanList := runTDCWithInput(t, bin, "", controlEnv, "fs", "list-file-systems")
+	cleanList.wantExitCode(0)
+	cleanList.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
+	cleanDescribe := runTDCWithInput(t, bin, "", controlEnv, "fs", "describe-file-system", "--file-system-id", created.FileSystemID)
+	cleanDescribe.wantExitCode(0)
+	cleanDescribe.wantStdoutContains(`"has_local_token": false`)
+
+	tokenPath := filepath.Join(t.TempDir(), "fs-token")
+	if err := os.WriteFile(tokenPath, []byte(created.FSToken+"\n"), 0o600); err != nil {
+		t.Fatalf("write configuration-free import token: %v", err)
+	}
+	importEnv := []string{
+		"HOME=" + cleanHome,
+		"TDC_PROFILE=",
+		"TDC_PUBLIC_KEY=",
+		"TDC_PRIVATE_KEY=",
+		"TDC_REGION_CODE=" + created.RegionCode,
+		"TDC_FS_FILE_SYSTEM_ID=",
+		"TDC_FS_TOKEN=",
+	}
+	imported := runTDCWithInput(t, bin, "", importEnv, "fs", "import-file-system-token", "--from-file", tokenPath)
+	imported.wantExitCode(0)
+	imported.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
+	storedCredentialEnv := []string{
+		"HOME=" + cleanHome,
+		"TDC_PROFILE=",
+		"TDC_PUBLIC_KEY=",
+		"TDC_PRIVATE_KEY=",
+		"TDC_REGION_CODE=",
+		"TDC_FS_FILE_SYSTEM_ID=" + created.FileSystemID,
+		"TDC_FS_TOKEN=",
+	}
+	readWithImportedToken := runTDCWithInput(t, bin, "", storedCredentialEnv, "fs", "read-file", "--path", remoteRoot+"/seed.txt")
+	readWithImportedToken.wantExitCode(0)
+	if readWithImportedToken.stdout != seedContent {
+		readWithImportedToken.fail("imported local credential should authorize data-plane access")
+	}
+	if removed, err := fscred.DeleteCredential(cleanHome, config.DefaultProfile, created.FileSystemID); err != nil || !removed {
+		t.Fatalf("remove imported credential before control-plane delete: removed=%t err=%v", removed, err)
+	}
+
+	deleteRemote := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-id", created.FileSystemID, "--path", remoteRoot, "--recursive")
 	deleteRemote.wantExitCode(0)
 	remoteDeleted = true
-	deleteResource := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", fileSystemName)
+	deleteResource := runTDCWithInput(t, bin, "", controlEnv, "fs", "delete-file-system", "--file-system-id", created.FileSystemID)
 	deleteResource.wantExitCode(0)
 	deleteResource.wantStdoutContains(`"status": "deleting"`)
 	deleteResource.wantStdoutContains(`"remote_deletion_state": "deleting"`)
 	deletedResource = true
+	if _, err := fscred.DeleteCredential(profile.HomeDir, profileName, created.FileSystemID); err != nil {
+		t.Fatalf("remove original local credential after remote deletion acceptance: %v", err)
+	}
+	waitLiveFSInventoryAbsent(t, bin, controlEnv, created.FileSystemID, 2*time.Minute)
 }
 
 func TestLiveFSWebDAVMountRuntime(t *testing.T) {
@@ -1824,9 +1845,40 @@ func liveFSTokenEnv(profile *config.Profile, home string) []string {
 		"TDC_PROFILE=",
 		"TDC_PUBLIC_KEY=",
 		"TDC_PRIVATE_KEY=",
-		"TDC_FS_FILE_SYSTEM_NAME=" + profile.FSResourceName,
+		"TDC_FS_FILE_SYSTEM_ID=",
 		"TDC_FS_TOKEN=" + profile.FSAPIKey,
 		"TDC_REGION_CODE=" + profile.FSPlacementRegionCode,
+	}
+}
+
+func waitLiveFSInventoryAbsent(t *testing.T, bin string, env []string, fileSystemID string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		result := runTDCWithInput(t, bin, "", env, "fs", "list-file-systems")
+		result.wantExitCode(0)
+		var inventory struct {
+			FileSystems []struct {
+				FileSystemID string `json:"file_system_id"`
+			} `json:"file_systems"`
+		}
+		if err := json.Unmarshal([]byte(result.stdout), &inventory); err != nil {
+			t.Fatalf("decode post-delete live FS inventory: %v", err)
+		}
+		found := false
+		for _, resource := range inventory.FileSystems {
+			if resource.FileSystemID == fileSystemID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("file system %q remained in remote inventory after deletion timeout", fileSystemID)
+		}
+		time.Sleep(2 * time.Second)
 	}
 }
 
@@ -1837,7 +1889,7 @@ func liveFSLocatorEnv(home string) []string {
 		"TDC_PROFILE=",
 		"TDC_PUBLIC_KEY=",
 		"TDC_PRIVATE_KEY=",
-		"TDC_FS_FILE_SYSTEM_NAME=",
+		"TDC_FS_FILE_SYSTEM_ID=",
 		"TDC_FS_TOKEN=",
 		"TDC_REGION_CODE=",
 	}
@@ -1897,28 +1949,47 @@ func ensureLiveFSResource(t *testing.T, bin, profileName string) *config.Profile
 	if err != nil {
 		t.Fatalf("determine home directory: %v", err)
 	}
-	if err := fscred.MigrateLegacy(home, profile); err != nil {
+	if err := fscred.MigrateNameRegistry(home, profile); err != nil {
 		t.Fatalf("migrate live fs resource: %v", err)
 	}
-	name := liveFileSystemName(t)
-	if selected, _, err := fscred.Resolve(home, profile, name, true, nil); err == nil {
+	requestedID := strings.TrimSpace(os.Getenv("TDC_LIVE_FS_ID"))
+	list := runTDC(t, bin, "--profile", profileName, "fs", "list-file-systems")
+	list.wantExitCode(0)
+	var inventory struct {
+		FileSystems []struct {
+			FileSystemID  string `json:"file_system_id"`
+			HasLocalToken bool   `json:"has_local_token"`
+		} `json:"file_systems"`
+	}
+	if err := json.Unmarshal([]byte(list.stdout), &inventory); err != nil {
+		t.Fatalf("decode live fs inventory: %v", err)
+	}
+	for _, resource := range inventory.FileSystems {
+		if !resource.HasLocalToken || (requestedID != "" && requestedID != resource.FileSystemID) {
+			continue
+		}
+		selected := resolveLiveFSResourceByID(t, profile, resource.FileSystemID)
+		liveFSSelectedID = resource.FileSystemID
 		waitLiveFSReady(t, bin, profileName, selected, 10*time.Minute)
 		return selected
-	} else if apperr.CodeFor(err) != "fs.resource_not_found" {
-		t.Fatalf("resolve live fs resource %q: %v", name, err)
 	}
 
-	create := runTDC(t, bin, "--profile", profileName, "fs", "create-file-system", "--file-system-name", name, "--wait")
+	if requestedID != "" {
+		t.Fatalf("TDC_LIVE_FS_ID %q is not remotely visible with a local token", requestedID)
+	}
+	create := runTDC(t, bin, "--profile", profileName, "fs", "create-file-system", "--wait")
 	create.wantExitCode(0)
 	create.wantStdoutContains(`"credentials_stored": true`)
 	create.wantStdoutContains(`"status": "ready"`)
-	liveFSResourceAutoCreated = true
-
-	profile = liveProfile(t)
-	selected, _, err := fscred.Resolve(home, profile, name, true, nil)
-	if err != nil {
-		t.Fatalf("tdc fs resource %q was created but is not in profile %q registry: %v", name, profileName, err)
+	var created struct {
+		FileSystemID string `json:"file_system_id"`
 	}
+	if err := json.Unmarshal([]byte(create.stdout), &created); err != nil || created.FileSystemID == "" {
+		t.Fatalf("decode created live fs resource: %v", err)
+	}
+	liveFSResourceAutoCreatedID = created.FileSystemID
+	liveFSSelectedID = created.FileSystemID
+	selected := resolveLiveFSResourceByID(t, profile, created.FileSystemID)
 	return selected
 }
 
@@ -1931,7 +2002,7 @@ func waitLiveFSReady(t *testing.T, bin, profileName string, profile *config.Prof
 	}
 	probeRemotePath := fmt.Sprintf("/tdc-e2e-readiness-%d-%d.txt", os.Getpid(), time.Now().UnixNano())
 	defer func() {
-		cleanup := runLiveFSSetupCommand(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", profile.FSResourceName, "--path", probeRemotePath)
+		cleanup := runLiveFSSetupCommand(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-id", profile.FSTenantID, "--path", probeRemotePath)
 		if cleanup.exitCode != 0 && !isLiveFSNotFound(cleanup.stderr) {
 			t.Logf("cleanup tdc fs readiness probe failed: exit=%d stderr=%s", cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
 		}
@@ -1947,9 +2018,9 @@ func waitLiveFSReady(t *testing.T, bin, profileName string, profile *config.Prof
 			lastStatus = status
 			state := strings.ToLower(strings.TrimSpace(status.Status))
 			if state == "" || (!strings.Contains(state, "provision") && !strings.Contains(state, "delet")) {
-				lastProbe = runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--file-system-name", profile.FSResourceName, "--from-local", probeLocalPath, "--to-remote", probeRemotePath, "--overwrite")
+				lastProbe = runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--file-system-id", profile.FSTenantID, "--from-local", probeLocalPath, "--to-remote", probeRemotePath, "--overwrite")
 				if lastProbe.exitCode == 0 {
-					cleanup := runLiveFSSetupCommand(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", profile.FSResourceName, "--path", probeRemotePath)
+					cleanup := runLiveFSSetupCommand(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-id", profile.FSTenantID, "--path", probeRemotePath)
 					if cleanup.exitCode != 0 && !isLiveFSNotFound(cleanup.stderr) {
 						cleanup.fail("delete tdc fs readiness probe")
 					}
@@ -1971,7 +2042,7 @@ func waitLiveFSReady(t *testing.T, bin, profileName string, profile *config.Prof
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for tdc fs resource %q in profile %q to become data-plane ready; last_status=%#v last_error=%v last_probe_stderr=%q", profile.FSResourceName, profile.Name, lastStatus, lastErr, strings.TrimSpace(lastProbe.stderr))
+			t.Fatalf("timed out waiting for tdc fs resource %q in profile %q to become data-plane ready; last_status=%#v last_error=%v last_probe_stderr=%q", profile.FSTenantID, profile.Name, lastStatus, lastErr, strings.TrimSpace(lastProbe.stderr))
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -2040,16 +2111,16 @@ func cleanupAutoCreatedLiveFSResource() {
 		return
 	}
 	profileName := liveProfileNameFromEnv()
-	name := liveFileSystemNameFromEnv()
+	fileSystemID := liveFSResourceAutoCreatedID
 	cmd := exec.Command(
 		bin,
 		"--profile", profileName,
 		"fs", "delete-file-system",
-		"--file-system-name", name,
+		"--file-system-id", fileSystemID,
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "tdc live e2e cleanup warning: delete tdc fs resource %q failed: %v\n%s", name, err, string(output))
+		_, _ = fmt.Fprintf(os.Stderr, "tdc live e2e cleanup warning: delete tdc fs resource %q failed: %v\n%s", fileSystemID, err, string(output))
 	}
 }
 
@@ -2057,19 +2128,20 @@ func releaseAutoCreatedLiveFSResource(t *testing.T, bin, profileName string) {
 	t.Helper()
 	liveFSResourceMu.Lock()
 	defer liveFSResourceMu.Unlock()
-	if !liveFSResourceAutoCreated {
+	if liveFSResourceAutoCreatedID == "" {
 		return
 	}
-	name := liveFileSystemName(t)
+	fileSystemID := liveFSResourceAutoCreatedID
 	result := runTDC(
 		t,
 		bin,
 		"--profile", profileName,
 		"fs", "delete-file-system",
-		"--file-system-name", name,
+		"--file-system-id", fileSystemID,
 	)
 	result.wantExitCode(0)
-	liveFSResourceAutoCreated = false
+	liveFSResourceAutoCreatedID = ""
+	liveFSSelectedID = ""
 }
 
 func liveProfileName(t *testing.T) string {
@@ -2087,19 +2159,6 @@ func liveProfileNameFromEnv() string {
 		profileName = defaultLiveProfile
 	}
 	return profileName
-}
-
-func liveFileSystemName(t *testing.T) string {
-	t.Helper()
-	return liveFileSystemNameFromEnv()
-}
-
-func liveFileSystemNameFromEnv() string {
-	name := strings.TrimSpace(os.Getenv("TDC_LIVE_FS_NAME"))
-	if name == "" {
-		name = "workspace"
-	}
-	return name
 }
 
 func liveProfile(t *testing.T) *config.Profile {
