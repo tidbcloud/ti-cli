@@ -56,7 +56,7 @@ jobs:
             docker compose \
               --env-file deploy/telemetry/.env \
               -f deploy/telemetry/docker-compose.yml \
-              build api
+              build migrate api
             docker compose \
               --env-file deploy/telemetry/.env \
               -f deploy/telemetry/docker-compose.yml \

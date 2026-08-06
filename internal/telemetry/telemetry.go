@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/tidbcloud/tdc/internal/config/store"
 	"github.com/tidbcloud/tdc/internal/settings"
@@ -24,11 +25,16 @@ import (
 )
 
 const (
-	EnvironmentVariable = "TDC_TELEMETRY"
-	installationIDFile  = ".telemetry-installation-id"
-	eventName           = "tdc.command.finished"
-	schemaVersion       = 1
-	deliveryTimeout     = 3 * time.Second
+	EnvironmentVariable      = "TDC_TELEMETRY"
+	TagEnvironmentVariable   = "TDC_TELEMETRY_TAG"
+	ExtraEnvironmentVariable = "TDC_TELEMETRY_EXTRA"
+	installationIDFile       = ".telemetry-installation-id"
+	eventName                = "tdc.command.finished"
+	schemaVersion            = 2
+	deliveryTimeout          = 3 * time.Second
+	maxTagBytes              = 128
+	maxExtraBytes            = 2048
+	maxExtraDepth            = 8
 )
 
 var installationIDPattern = regexp.MustCompile(`^tdc_[A-Za-z0-9_-]{22}$`)
@@ -64,6 +70,8 @@ type Session struct {
 	debug          bool
 	debugWriter    io.Writer
 	now            func() time.Time
+	tag            string
+	extra          json.RawMessage
 }
 
 type batchRequest struct {
@@ -73,22 +81,24 @@ type batchRequest struct {
 }
 
 type wireEvent struct {
-	EventID                 string   `json:"event_id"`
-	EventName               string   `json:"event_name"`
-	OccurredAt              string   `json:"occurred_at"`
-	AnonymousInstallationID string   `json:"anonymous_installation_id"`
-	CommandPath             string   `json:"command_path"`
-	FlagNames               []string `json:"flag_names"`
-	ExitCode                int      `json:"exit_code"`
-	ErrorCode               string   `json:"error_code"`
-	DurationMS              int64    `json:"duration_ms"`
-	CloudProvider           string   `json:"cloud_provider"`
-	RegionCode              string   `json:"region_code"`
-	CLIVersion              string   `json:"cli_version"`
-	OS                      string   `json:"os"`
-	Arch                    string   `json:"arch"`
-	InstallSource           string   `json:"install_source"`
-	ProfileSource           string   `json:"profile_source"`
+	EventID                 string          `json:"event_id"`
+	EventName               string          `json:"event_name"`
+	OccurredAt              string          `json:"occurred_at"`
+	AnonymousInstallationID string          `json:"anonymous_installation_id"`
+	CommandPath             string          `json:"command_path"`
+	FlagNames               []string        `json:"flag_names"`
+	ExitCode                int             `json:"exit_code"`
+	ErrorCode               string          `json:"error_code"`
+	DurationMS              int64           `json:"duration_ms"`
+	CloudProvider           string          `json:"cloud_provider"`
+	RegionCode              string          `json:"region_code"`
+	CLIVersion              string          `json:"cli_version"`
+	OS                      string          `json:"os"`
+	Arch                    string          `json:"arch"`
+	InstallSource           string          `json:"install_source"`
+	ProfileSource           string          `json:"profile_source"`
+	Tag                     string          `json:"tag,omitempty"`
+	Extra                   json.RawMessage `json:"extra,omitempty"`
 }
 
 func InstallationIDPath(homeDir string) string {
@@ -106,6 +116,14 @@ func Start(cfg Config) *Session {
 	}
 	if !enabled {
 		return nil
+	}
+	tag, tagOK := normalizeTag(envValue(cfg.Environment, TagEnvironmentVariable))
+	if !tagOK {
+		debug(cfg.Debug, cfg.DebugWriter, "telemetry tag was omitted because it is invalid")
+	}
+	extra, extraOK := normalizeExtra(envValue(cfg.Environment, ExtraEnvironmentVariable))
+	if !extraOK {
+		debug(cfg.Debug, cfg.DebugWriter, "telemetry extra metadata was omitted because it is invalid")
 	}
 	homeDir := strings.TrimSpace(cfg.HomeDir)
 	if homeDir == "" {
@@ -141,6 +159,8 @@ func Start(cfg Config) *Session {
 		debug:          cfg.Debug,
 		debugWriter:    cfg.DebugWriter,
 		now:            now,
+		tag:            tag,
+		extra:          extra,
 	}
 }
 
@@ -180,6 +200,8 @@ func (s *Session) Finish(input EventInput) {
 		Arch:                    runtimeValue(s.info.Arch, runtime.GOARCH),
 		InstallSource:           normalizedInstallSource(s.info.InstallSource),
 		ProfileSource:           normalizedProfileSource(input.ProfileSource),
+		Tag:                     s.tag,
+		Extra:                   s.extra,
 	}
 	payload, err := json.Marshal(batchRequest{
 		SchemaVersion: schemaVersion,
@@ -208,6 +230,77 @@ func (s *Session) Finish(input EventInput) {
 	if response.StatusCode != http.StatusAccepted {
 		debug(s.debug, s.debugWriter, "telemetry delivery was rejected; the command result was not affected")
 	}
+}
+
+func normalizeTag(value string, exists bool) (string, bool) {
+	if !exists || value == "" {
+		return "", true
+	}
+	if !utf8.ValidString(value) {
+		return "", false
+	}
+	if len(value) <= maxTagBytes {
+		return value, true
+	}
+	for len(value) > maxTagBytes {
+		_, size := utf8.DecodeLastRuneInString(value)
+		value = value[:len(value)-size]
+	}
+	return value, true
+}
+
+func normalizeExtra(value string, exists bool) (json.RawMessage, bool) {
+	if !exists || value == "" || !utf8.ValidString(value) {
+		return nil, !exists || value == ""
+	}
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return nil, false
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	if extraMetadataProhibited(decoded, 0) {
+		return nil, false
+	}
+	encoded, err := json.Marshal(decoded)
+	if err != nil || len(encoded) > maxExtraBytes {
+		return nil, false
+	}
+	return json.RawMessage(encoded), true
+}
+
+func extraMetadataProhibited(value any, depth int) bool {
+	if depth > maxExtraDepth {
+		return true
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if _, prohibited := prohibitedMetadataKeys[strings.ToLower(key)]; prohibited || extraMetadataProhibited(child, depth+1) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if extraMetadataProhibited(child, depth+1) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var prohibitedMetadataKeys = map[string]struct{}{
+	"api_payload": {}, "branch_id": {}, "cluster_id": {}, "command_output": {},
+	"credential": {}, "credentials": {}, "file_content": {}, "file_path": {},
+	"flag_value": {}, "flag_values": {}, "hostname": {}, "ip_address": {},
+	"journal_id": {}, "layer_id": {}, "machine_id": {}, "mac_address": {},
+	"password": {}, "path": {}, "profile_name": {}, "project_id": {},
+	"raw_error": {}, "request_body": {}, "resource_id": {}, "response_body": {},
+	"secret": {}, "sql": {}, "sql_text": {}, "tenant_id": {}, "token": {}, "username": {},
 }
 
 func resolveEnabled(cfg Config) (bool, error) {

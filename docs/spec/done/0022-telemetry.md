@@ -142,6 +142,8 @@ Telemetry must not read or send:
 
 The CLI constructs events from an explicit allowlisted model. It must not serialize Cobra command objects, arbitrary error objects, config structs, API requests, API responses, or command results.
 
+Schema version 2 additionally permits opt-in caller metadata defined by `done/0025-telemetry-environment-metadata.md`. `TDC_TELEMETRY_TAG` and `TDC_TELEMETRY_EXTRA` are not automatically collected data: they are read only after eligibility and enablement are resolved, never persist under `~/.tdc/`, and remain subject to byte, JSON-depth, and prohibited-key limits. Schema version 1 remains accepted by the backend without either field during rollout.
+
 ## User Notice
 
 Installer scripts must explain telemetry after installation without prompting for a telemetry choice:

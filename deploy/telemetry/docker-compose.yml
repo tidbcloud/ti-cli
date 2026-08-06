@@ -1,12 +1,32 @@
 name: tdc-telemetry
 
 services:
+  migrate:
+    build:
+      context: ../..
+      dockerfile: deploy/telemetry/Dockerfile
+    entrypoint: ["/usr/local/bin/tdc-telemetry-migrate"]
+    env_file:
+      - ${TELEMETRY_ENV_FILE:-.env}
+    restart: "no"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    networks:
+      - telemetry
+
   api:
     build:
       context: ../..
       dockerfile: deploy/telemetry/Dockerfile
     env_file:
       - ${TELEMETRY_ENV_FILE:-.env}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     expose:
       - "8080"
     restart: unless-stopped

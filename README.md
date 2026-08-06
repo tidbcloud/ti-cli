@@ -144,6 +144,8 @@ enabled = false
 
 Use `TDC_TELEMETRY=off` to disable telemetry for one process, or `TDC_TELEMETRY=on` to explicitly enable it for an eligible release or development invocation whose build contains the product endpoint. Accepted values are `on`, `true`, `1`, `off`, `false`, `0`. Help, version, commandless usage, and every `tdc update` mode never send telemetry. The pseudonymous ID is stored with owner-only permissions at `~/.tdc/.telemetry-installation-id`; deleting that file resets the identity without changing the preference.
 
+An integration can add optional process-scoped attribution without changing a profile or command: `TDC_TELEMETRY_TAG` is a UTF-8 string limited to 128 bytes, and `TDC_TELEMETRY_EXTRA` is one complete JSON value limited to 2 KiB after compaction. Invalid, prohibited, or oversized extra metadata is omitted; the command still runs normally. Never include credentials, tokens, SQL, paths, personal data, profile names, or cloud resource IDs in either value.
+
 ### TiDB Cloud Filesystem
 
 ```shell

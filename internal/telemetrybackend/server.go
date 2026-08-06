@@ -164,7 +164,7 @@ func (s *Server) handleBatch(writer http.ResponseWriter, request *http.Request) 
 	writeJSON(writer, http.StatusAccepted, map[string]any{
 		"accepted":        true,
 		"accepted_events": len(events),
-		"schema_version":  eventSchemaVersion,
+		"schema_version":  events[0].SchemaVersion,
 	})
 }
 

@@ -28,11 +28,15 @@ func TestCLIEventMatchesBackendContract(t *testing.T) {
 	defer server.Close()
 
 	session := clienttelemetry.Start(clienttelemetry.Config{
-		Eligible:    true,
-		HomeDir:     t.TempDir(),
-		Endpoint:    server.URL,
-		Info:        version.Info{Version: "0.2.0", OS: "linux", Arch: "amd64", InstallSource: "archive"},
-		Environment: map[string]string{clienttelemetry.EnvironmentVariable: "on"},
+		Eligible: true,
+		HomeDir:  t.TempDir(),
+		Endpoint: server.URL,
+		Info:     version.Info{Version: "0.2.0", OS: "linux", Arch: "amd64", InstallSource: "archive"},
+		Environment: map[string]string{
+			clienttelemetry.EnvironmentVariable:      "on",
+			clienttelemetry.TagEnvironmentVariable:   "e2b-preview",
+			clienttelemetry.ExtraEnvironmentVariable: `{"campaign":"launch"}`,
+		},
 	})
 	if session == nil {
 		t.Fatal("telemetry session was not created")
