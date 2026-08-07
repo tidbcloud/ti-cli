@@ -1,4 +1,4 @@
-package db
+package starter
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/tidbcloud/tdc/internal/apperr"
 	"github.com/tidbcloud/tdc/internal/authz"
 	"github.com/tidbcloud/tdc/internal/config"
+	rootdb "github.com/tidbcloud/tdc/internal/db"
 	"github.com/tidbcloud/tdc/internal/db/connectionstring"
 	"github.com/tidbcloud/tdc/internal/db/sqlaccess"
 	"github.com/tidbcloud/tdc/internal/db/sqlcred"
@@ -29,39 +30,6 @@ const (
 	transportMySQL = "mysql"
 )
 
-type PrepareQueryAccessOptions struct {
-	Profile   *config.Profile
-	ClusterID string
-}
-
-type CreateConnectionStringOptions struct {
-	Profile                *config.Profile
-	ClusterID              string
-	Database               string
-	ReadOnly               bool
-	ReadWrite              bool
-	Admin                  bool
-	Format                 string
-	EnvPrefix              string
-	EnvIncludeDatabaseURL  bool
-	EnvDatabaseURLVariable string
-}
-
-type ExecuteSQLOptions struct {
-	Profile   *config.Profile
-	ClusterID string
-	Database  string
-	SQL       string
-	ReadOnly  bool
-	ReadWrite bool
-	Admin     bool
-	Transport string
-}
-
-type PrepareQueryAccessResult struct {
-	sqlaccess.Result
-}
-
 func (s Service) PrepareQueryAccess(ctx context.Context, opts PrepareQueryAccessOptions) (PrepareQueryAccessResult, error) {
 	clusterID, err := validate.ClusterID(opts.ClusterID)
 	if err != nil {
@@ -70,18 +38,11 @@ func (s Service) PrepareQueryAccess(ctx context.Context, opts PrepareQueryAccess
 	if _, err := sqlcred.SafeClusterID(clusterID); err != nil {
 		return PrepareQueryAccessResult{}, err
 	}
-	starterClient, err := s.starterClient(opts.Profile, authz.StarterSQLUserCreate, "create Starter DB SQL users")
-	if err != nil {
+	permission := operationPermission(opts.Dispatch, authz.StarterSQLUserCreate)
+	if _, err := s.clusterFromDispatchOrRead(ctx, opts.Profile, opts.Dispatch, clusterID, "FULL", permission, "create Starter DB SQL users"); err != nil {
 		return PrepareQueryAccessResult{}, err
 	}
-	cluster, err := starterClient.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{View: "FULL"})
-	if err != nil {
-		return PrepareQueryAccessResult{}, err
-	}
-	if err := ensureStarterCluster(cluster); err != nil {
-		return PrepareQueryAccessResult{}, err
-	}
-	iamClient, err := s.iamClient(opts.Profile, authz.StarterSQLUserCreate, "create Starter DB SQL users")
+	iamClient, err := s.iamClient(opts.Profile, permission, "create Starter DB SQL users")
 	if err != nil {
 		return PrepareQueryAccessResult{}, err
 	}
@@ -139,14 +100,15 @@ func (s Service) DryRunPrepareQueryAccess(ctx context.Context, commandPath strin
 		},
 		dryrun.Check{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		dryrun.Check{Name: "endpoint_selection", Status: "passed", Message: string(endpoint.Service)},
-		dryrun.Check{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterSQLUserCreate)},
+		dryrun.Check{Name: "cluster_discovery_permission", Status: "passed", Message: string(opts.Dispatch.DiscoveryPermission)},
+		dryrun.Check{Name: "operation_permission", Status: "passed", Message: string(opts.Dispatch.OperationPermission)},
 		dryrun.Check{Name: "cluster_id", Status: "passed", Message: clusterID},
 		dryrun.Check{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the cluster is Starter before IAM requests or local credential writes"},
 	), nil
 }
 
 func (s Service) CreateConnectionString(ctx context.Context, opts CreateConnectionStringOptions) (connectionstring.Result, error) {
-	clusterID, mode, credential, cluster, err := s.sqlConnectionInputs(ctx, opts.Profile, opts.ClusterID, opts.ReadOnly, opts.ReadWrite, opts.Admin, authz.StarterSQLUserRead, "create Starter DB connection string")
+	clusterID, mode, credential, cluster, err := s.sqlConnectionInputs(ctx, opts.Profile, opts.ClusterID, opts.ReadOnly, opts.ReadWrite, opts.Admin, opts.Dispatch, authz.StarterSQLUserRead, "create Starter DB connection string")
 	if err != nil {
 		return connectionstring.Result{}, err
 	}
@@ -177,7 +139,7 @@ func (s Service) ExecuteSQL(ctx context.Context, opts ExecuteSQLOptions) (sqlres
 	if err != nil {
 		return sqlresult.Result{}, err
 	}
-	clusterID, mode, credential, cluster, err := s.sqlConnectionInputs(ctx, opts.Profile, opts.ClusterID, opts.ReadOnly, opts.ReadWrite, opts.Admin, authz.StarterSQLExecute, "execute Starter DB SQL statement")
+	clusterID, mode, credential, cluster, err := s.sqlConnectionInputs(ctx, opts.Profile, opts.ClusterID, opts.ReadOnly, opts.ReadWrite, opts.Admin, opts.Dispatch, authz.StarterSQLExecute, "execute Starter DB SQL statement")
 	if err != nil {
 		return sqlresult.Result{}, err
 	}
@@ -221,7 +183,7 @@ func (s Service) ExecuteSQL(ctx context.Context, opts ExecuteSQLOptions) (sqlres
 	}
 }
 
-func (s Service) sqlConnectionInputs(ctx context.Context, profile *config.Profile, clusterIDValue string, readOnly, readWrite, admin bool, permission authz.Permission, action string) (string, sqlcred.AccessMode, sqlcred.Credential, apistarter.Cluster, error) {
+func (s Service) sqlConnectionInputs(ctx context.Context, profile *config.Profile, clusterIDValue string, readOnly, readWrite, admin bool, dispatch rootdb.DispatchContext, fallbackPermission authz.Permission, action string) (string, sqlcred.AccessMode, sqlcred.Credential, apistarter.Cluster, error) {
 	clusterID, err := validate.ClusterID(clusterIDValue)
 	if err != nil {
 		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
@@ -233,15 +195,8 @@ func (s Service) sqlConnectionInputs(ctx context.Context, profile *config.Profil
 	if err != nil {
 		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
 	}
-	starterClient, err := s.starterClient(profile, permission, action)
+	cluster, err := s.clusterFromDispatchOrRead(ctx, profile, dispatch, clusterID, "FULL", fallbackPermission, action)
 	if err != nil {
-		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
-	}
-	cluster, err := starterClient.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{View: "FULL"})
-	if err != nil {
-		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
-	}
-	if err := ensureStarterCluster(cluster); err != nil {
 		return "", "", sqlcred.Credential{}, apistarter.Cluster{}, err
 	}
 	homeDir, err := s.homeDir()

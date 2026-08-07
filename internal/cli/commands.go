@@ -13,6 +13,7 @@ import (
 	cfgconfigure "github.com/tidbcloud/tdc/internal/config/configure"
 	"github.com/tidbcloud/tdc/internal/db"
 	"github.com/tidbcloud/tdc/internal/db/connectionstring"
+	dbstarter "github.com/tidbcloud/tdc/internal/db/product/starter"
 	"github.com/tidbcloud/tdc/internal/dryrun"
 	tdcfs "github.com/tidbcloud/tdc/internal/fs"
 	"github.com/tidbcloud/tdc/internal/fs/fscred"
@@ -161,7 +162,7 @@ func rejectCheckUpdateFlagCombinations(cmd *cobra.Command) error {
 }
 
 func newDBCommand(info version.Info) *cobra.Command {
-	cmd := newParentCommand("db", "Manage TiDB Cloud Starter — serverless, distributed MySQL-compatible clusters.", info)
+	cmd := newParentCommand("db", "Manage TiDB Cloud database clusters.", info)
 	cmd.AddCommand(
 		newDBCreateClusterCommand(info),
 		newDBListClustersCommand(info),
@@ -181,10 +182,10 @@ func newDBCommand(info version.Info) *cobra.Command {
 
 func newDBCreateClusterCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "create-db-cluster",
-		Short:      "Create a Starter database cluster (MySQL-compatible serverless database).",
-		Mutation:   mutatingCommand,
-		Permission: authz.StarterClusterCreate,
+		Use:         "create-db-cluster",
+		Short:       "Create a Starter database cluster (MySQL-compatible serverless database).",
+		Mutation:    mutatingCommand,
+		DBOperation: db.OperationClusterCreate,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -209,22 +210,26 @@ func newDBCreateClusterCommand(info version.Info) *cobra.Command {
 		},
 	}, info)
 	cmd.Flags().String("db-cluster-name", "", "Starter database cluster display name.")
-	cmd.Flags().String("db-cluster-type", "starter", "Starter database cluster type; must be starter.")
+	cmd.Flags().String("db-cluster-type", "", "Database cluster type; must be starter.")
 	cmd.Flags().String("project-id", "", "TiDB Cloud project ID. Omit this value to use the default project for the profile.")
 	cmd.Flags().Int32("monthly-spending-limit-usd-cents", -1, "The monthly spending limit in USD cents; omit to use the default.")
 	cmd.Flags().Bool("wait", false, "Wait until the created cluster becomes ACTIVE before returning")
-	markUsageRequired(cmd, "db-cluster-name")
+	markUsageRequired(cmd, "db-cluster-type", "db-cluster-name")
 	return cmd
 }
 
 func newDBListClustersCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "list-db-clusters",
-		Short:      "List Starter DB clusters.",
-		Mutation:   readOnlyCommand,
-		Permission: authz.StarterClusterRead,
+		Use:         "list-db-clusters",
+		Short:       "List Starter DB clusters.",
+		Mutation:    readOnlyCommand,
+		DBOperation: db.OperationClusterList,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			clusterType, err := ctx.StringFlag("db-cluster-type")
 			if err != nil {
 				return nil, err
 			}
@@ -244,34 +249,31 @@ func newDBListClustersCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			skip, err := ctx.Int32Flag("skip")
-			if err != nil {
-				return nil, err
-			}
 			return service.ListClusters(ctx.cmd.Context(), db.ListClustersOptions{
-				Profile:   profile,
-				PageSize:  pageSize,
-				PageToken: pageToken,
-				Filter:    filter,
-				OrderBy:   orderBy,
-				Skip:      skip,
+				Profile:     profile,
+				ClusterType: clusterType,
+				PageSize:    pageSize,
+				PageToken:   pageToken,
+				Filter:      filter,
+				OrderBy:     orderBy,
 			})
 		},
 	}, info)
-	cmd.Flags().Int32("page-size", 0, "The number of database clusters to request; 0 uses the default.")
+	cmd.Flags().String("db-cluster-type", "", "Database cluster type; must be starter.")
+	cmd.Flags().Int32("page-size", 0, "The number of verified database clusters to return; 0 returns 10 and the maximum is 1000.")
 	cmd.Flags().String("page-token", "", "For pagination, the page token returned by a previous list-db-clusters call.")
 	cmd.Flags().String("filter", "", "The filter expression for the database clusters.")
-	cmd.Flags().String("order-by", "", "The orderBy expression for the databaseclusters.")
-	cmd.Flags().Int32("skip", 0, "The number of database clusters to skip.")
+	cmd.Flags().String("order-by", "", "The orderBy expression for the database clusters.")
+	markUsageRequired(cmd, "db-cluster-type")
 	return cmd
 }
 
 func newDBDescribeClusterCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "describe-db-cluster",
-		Short:      "Describe a specified Starter database cluster.",
-		Mutation:   readOnlyCommand,
-		Permission: authz.StarterClusterRead,
+		Use:         "describe-db-cluster",
+		Short:       "Describe a specified Starter database cluster.",
+		Mutation:    readOnlyCommand,
+		DBOperation: db.OperationClusterDescribe,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -300,10 +302,10 @@ func newDBDescribeClusterCommand(info version.Info) *cobra.Command {
 
 func newDBUpdateClusterCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "update-db-cluster",
-		Short:      "Update a Starter DB cluster.",
-		Mutation:   mutatingCommand,
-		Permission: authz.StarterClusterUpdate,
+		Use:         "update-db-cluster",
+		Short:       "Update a Starter DB cluster.",
+		Mutation:    mutatingCommand,
+		DBOperation: db.OperationClusterUpdate,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -336,10 +338,10 @@ func newDBUpdateClusterCommand(info version.Info) *cobra.Command {
 
 func newDBDeleteClusterCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "delete-db-cluster",
-		Short:      "Delete a Starter DB cluster.",
-		Mutation:   mutatingCommand,
-		Permission: authz.StarterClusterDelete,
+		Use:         "delete-db-cluster",
+		Short:       "Delete a Starter DB cluster.",
+		Mutation:    mutatingCommand,
+		DBOperation: db.OperationClusterDelete,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -371,10 +373,10 @@ func newDBDeleteClusterCommand(info version.Info) *cobra.Command {
 
 func newDBCreateBranchCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "create-db-cluster-branch",
-		Short:      "Create a Starter database cluster branch.",
-		Mutation:   mutatingCommand,
-		Permission: authz.StarterBranchCreate,
+		Use:         "create-db-cluster-branch",
+		Short:       "Create a Starter database cluster branch.",
+		Mutation:    mutatingCommand,
+		DBOperation: db.OperationBranchCreate,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -407,10 +409,10 @@ func newDBCreateBranchCommand(info version.Info) *cobra.Command {
 
 func newDBListBranchesCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "list-db-cluster-branches",
-		Short:      "List Starter DB cluster branches.",
-		Mutation:   readOnlyCommand,
-		Permission: authz.StarterBranchRead,
+		Use:         "list-db-cluster-branches",
+		Short:       "List Starter DB cluster branches.",
+		Mutation:    readOnlyCommand,
+		DBOperation: db.OperationBranchList,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -445,10 +447,10 @@ func newDBListBranchesCommand(info version.Info) *cobra.Command {
 
 func newDBDescribeBranchCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "describe-db-cluster-branch",
-		Short:      "Describe a specified Starter database cluster branch.",
-		Mutation:   readOnlyCommand,
-		Permission: authz.StarterBranchRead,
+		Use:         "describe-db-cluster-branch",
+		Short:       "Describe a specified Starter database cluster branch.",
+		Mutation:    readOnlyCommand,
+		DBOperation: db.OperationBranchDescribe,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -483,10 +485,10 @@ func newDBDescribeBranchCommand(info version.Info) *cobra.Command {
 
 func newDBDeleteBranchCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "delete-db-cluster-branch",
-		Short:      "Delete a Starter DB cluster branch.",
-		Mutation:   mutatingCommand,
-		Permission: authz.StarterBranchDelete,
+		Use:         "delete-db-cluster-branch",
+		Short:       "Delete a Starter DB cluster branch.",
+		Mutation:    mutatingCommand,
+		DBOperation: db.OperationBranchDelete,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -518,10 +520,10 @@ func newDBDeleteBranchCommand(info version.Info) *cobra.Command {
 
 func newDBPrepareQueryAccessCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "create-db-sql-users",
-		Short:      "Provision a group of database users managed by tdc locally, with roles (admin, read-only, and read-write) for developer and agent access. And then, you can call format-db-connection-string to get the connection string for the users selectively.",
-		Mutation:   mutatingCommand,
-		Permission: authz.StarterSQLUserCreate,
+		Use:         "create-db-sql-users",
+		Short:       "Provision a group of database users managed by tdc locally, with roles (admin, read-only, and read-write) for developer and agent access. And then, you can call format-db-connection-string to get the connection string for the users selectively.",
+		Mutation:    mutatingCommand,
+		DBOperation: db.OperationSQLUserCreate,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -558,10 +560,10 @@ func newDBPrepareQueryAccessCommand(info version.Info) *cobra.Command {
 
 func newDBCreateConnectionStringCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "format-db-connection-string",
-		Short:      "Generate a database connection string for tdc-managed database user.",
-		Mutation:   readOnlyCommand,
-		Permission: authz.StarterSQLUserRead,
+		Use:         "format-db-connection-string",
+		Short:       "Generate a database connection string for tdc-managed database user.",
+		Mutation:    readOnlyCommand,
+		DBOperation: db.OperationConnectionStringFormat,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -593,10 +595,10 @@ func newDBCreateConnectionStringCommand(info version.Info) *cobra.Command {
 
 func newDBExecuteSQLCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "execute-sql-statement",
-		Short:      "Execute single SQL statement. You need to call create-db-sql-users at least once to prepare the credentials.",
-		Mutation:   readOnlyCommand,
-		Permission: authz.StarterSQLExecute,
+		Use:         "execute-sql-statement",
+		Short:       "Execute single SQL statement. You need to call create-db-sql-users at least once to prepare the credentials.",
+		Mutation:    readOnlyCommand,
+		DBOperation: db.OperationSQLExecute,
 		Run: func(ctx commandContext) (any, error) {
 			service, profile, err := dbServiceAndProfile(ctx)
 			if err != nil {
@@ -624,20 +626,25 @@ func addSQLCredentialFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool("admin", false, "Use the prepared admin role for credentials.")
 }
 
-func dbServiceAndProfile(ctx commandContext) (db.Service, *config.Profile, error) {
+func dbServiceAndProfile(ctx commandContext) (*db.Dispatcher, *config.Profile, error) {
 	profile, err := ctx.LoadProfile()
 	if err != nil {
-		return db.Service{}, nil, err
+		return nil, nil, err
 	}
 	debug, err := ctx.BoolFlag("debug")
 	if err != nil {
-		return db.Service{}, nil, err
+		return nil, nil, err
 	}
-	return db.Service{
+	starterService := dbstarter.Service{
 		Timeout:     30 * time.Second,
 		Debug:       debug,
 		DebugWriter: ctx.cmd.ErrOrStderr(),
-	}, profile, nil
+	}
+	dispatcher, err := db.NewDispatcher([]db.ClusterResolver{starterService}, starterService)
+	if err != nil {
+		return nil, nil, err
+	}
+	return dispatcher, profile, nil
 }
 
 func createClusterOptions(ctx commandContext, profile *config.Profile) (db.CreateClusterOptions, error) {
@@ -662,13 +669,15 @@ func createClusterOptions(ctx commandContext, profile *config.Profile) (db.Creat
 		return db.CreateClusterOptions{}, err
 	}
 	return db.CreateClusterOptions{
-		Profile:                      profile,
-		DisplayName:                  name,
-		ClusterType:                  clusterType,
-		ProjectID:                    projectID,
-		ProjectIDExplicit:            ctx.FlagChanged("project-id"),
-		MonthlySpendingLimitUSDCents: spendingLimit,
-		WaitUntilActive:              waitUntilActive,
+		Profile:           profile,
+		DisplayName:       name,
+		ClusterType:       clusterType,
+		ProjectID:         projectID,
+		ProjectIDExplicit: ctx.FlagChanged("project-id"),
+		WaitUntilActive:   waitUntilActive,
+		Product: dbstarter.CreateOptions{
+			MonthlySpendingLimitUSDCents: spendingLimit,
+		},
 	}, nil
 }
 
@@ -686,10 +695,12 @@ func updateClusterOptions(ctx commandContext, profile *config.Profile) (db.Updat
 		return db.UpdateClusterOptions{}, err
 	}
 	return db.UpdateClusterOptions{
-		Profile:                      profile,
-		ClusterID:                    clusterID,
-		DisplayName:                  name,
-		MonthlySpendingLimitUSDCents: spendingLimit,
+		Profile:     profile,
+		ClusterID:   clusterID,
+		DisplayName: name,
+		Product: dbstarter.UpdateOptions{
+			MonthlySpendingLimitUSDCents: spendingLimit,
+		},
 	}, nil
 }
 

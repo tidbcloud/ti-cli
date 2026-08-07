@@ -78,8 +78,8 @@ func TestHelpAndVersion(t *testing.T) {
 	createDBCluster := runTDC(t, bin, "db", "create-db-cluster", "help")
 	createDBCluster.wantExitCode(0)
 	createDBCluster.wantStdoutContains("--db-cluster-name <string> (required)")
-	createDBCluster.wantStdoutContains("[--db-cluster-type <string>]")
-	createDBCluster.wantStdoutNotContains("--db-cluster-type <string> (required)")
+	createDBCluster.wantStdoutContains("--db-cluster-type <string> (required)")
+	createDBCluster.wantStdoutNotContains("[--db-cluster-type <string>]")
 	createDBCluster.wantStdoutContains("--project-id <string>")
 	createDBCluster.wantStdoutNotContains("--project-id <string> (required)")
 
@@ -219,7 +219,7 @@ func TestTelemetryUsesFakeIngestionServer(t *testing.T) {
 		"TDC_REGION_CODE=aws-us-east-1",
 		"TDC_PUBLIC_KEY=must-not-appear-public-key",
 		"TDC_PRIVATE_KEY=must-not-appear-private-key",
-	}, "db", "create-db-cluster", "--db-cluster-name", secretName, "--project-id", "must-not-appear-project", "--dry-run")
+	}, "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", secretName, "--project-id", "must-not-appear-project", "--dry-run")
 	result.wantExitCode(0)
 	result.wantStdoutContains(`"dry_run": true`)
 
@@ -330,17 +330,17 @@ func TestStarterOnlyDBGuardrailsThroughBinary(t *testing.T) {
 		"TDC_LOGGING=on",
 	}
 
-	list := runTDCWithInput(t, bin, "", env, "db", "list-db-clusters")
+	list := runTDCWithInput(t, bin, "", env, "db", "list-db-clusters", "--db-cluster-type", "starter", "--page-size", "1")
 	list.wantExitCode(0)
 	list.wantStdoutContains(`"id": "starter-east"`)
-	list.wantStdoutContains(`"next_page_token": "token-2"`)
+	list.wantStdoutContains(`"next_page_token"`)
 	list.wantStdoutNotContains("starter-west")
 	list.wantStdoutNotContains("starter-ali")
 	list.wantStdoutNotContains("starter-unknown")
 	list.wantStdoutNotContains("essential-1")
 	list.wantStdoutNotContains("total_size")
 
-	westList := runTDCWithInput(t, bin, "", env, "--region", "aws-us-west-2", "db", "list-db-clusters")
+	westList := runTDCWithInput(t, bin, "", env, "--region", "aws-us-west-2", "db", "list-db-clusters", "--db-cluster-type", "starter", "--page-size", "1")
 	westList.wantExitCode(0)
 	westList.wantStdoutContains(`"id": "starter-west"`)
 	westList.wantStdoutNotContains("starter-east")
@@ -357,11 +357,11 @@ func TestStarterOnlyDBGuardrailsThroughBinary(t *testing.T) {
 
 	describe := runTDCWithInput(t, bin, "", env, "db", "describe-db-cluster", "--db-cluster-id", "essential-1")
 	describe.wantExitCode(2)
-	describe.wantStderrContains(`cluster "essential-1" uses service plan "Essential"`)
+	describe.wantStderrContains(`cluster "essential-1" uses database cluster type "essential"`)
 
 	update := runTDCWithInput(t, bin, "", env, "db", "update-db-cluster", "--db-cluster-id", "essential-1", "--db-cluster-name", "renamed")
 	update.wantExitCode(2)
-	update.wantStderrContains(`tdc db only manages Starter clusters`)
+	update.wantStderrContains(`database cluster type "essential", which is not supported`)
 	if mutations != 0 {
 		t.Fatalf("non-Starter commands sent %d mutation requests", mutations)
 	}
@@ -370,7 +370,7 @@ func TestStarterOnlyDBGuardrailsThroughBinary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read operation log: %v", err)
 	}
-	if !strings.Contains(string(logData), `"error_code":"db.not_starter_cluster"`) {
+	if !strings.Contains(string(logData), `"error_code":"db.cluster_type_not_supported"`) {
 		t.Fatalf("operation log does not contain stable guard error code:\n%s", logData)
 	}
 }
@@ -409,7 +409,7 @@ func TestCreateDBClusterUsesServerDefaultProjectThroughBinary(t *testing.T) {
 		"TDC_TEST_STARTER_BASE_URL=" + server.URL,
 	}
 
-	result := runTDCWithInput(t, bin, "", env, "db", "create-db-cluster", "--db-cluster-name", "server-default-project")
+	result := runTDCWithInput(t, bin, "", env, "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "server-default-project")
 	result.wantExitCode(0)
 	result.wantStdoutContains(`"id": "starter-1"`)
 	if !created {
@@ -428,6 +428,7 @@ func tdcConfigEnv() []string {
 func createClusterDryRunArgs() []string {
 	return []string{
 		"db", "create-db-cluster",
+		"--db-cluster-type", "starter",
 		"--db-cluster-name", "demo-cluster",
 		"--project-id", "project-1",
 		"--wait",

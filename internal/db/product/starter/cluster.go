@@ -1,4 +1,4 @@
-package db
+package starter
 
 import (
 	"context"
@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/tidbcloud/tdc/internal/api"
@@ -16,6 +15,7 @@ import (
 	"github.com/tidbcloud/tdc/internal/apperr"
 	"github.com/tidbcloud/tdc/internal/authz"
 	"github.com/tidbcloud/tdc/internal/config"
+	rootdb "github.com/tidbcloud/tdc/internal/db"
 	"github.com/tidbcloud/tdc/internal/db/validate"
 	"github.com/tidbcloud/tdc/internal/dryrun"
 )
@@ -44,74 +44,42 @@ type Service struct {
 	MySQLDriverName         string
 }
 
-type ListClustersOptions struct {
-	Profile   *config.Profile
-	PageSize  int32
-	PageToken string
-	Filter    string
-	OrderBy   string
-	Skip      int32
-}
-
-type CreateClusterOptions struct {
-	Profile                      *config.Profile
-	DisplayName                  string
-	ClusterType                  string
-	ProjectID                    string
-	ProjectIDExplicit            bool
-	MonthlySpendingLimitUSDCents int32
-	WaitUntilActive              bool
-}
-
-type DescribeClusterOptions struct {
-	Profile   *config.Profile
-	ClusterID string
-	View      string
-}
-
-type UpdateClusterOptions struct {
-	Profile                      *config.Profile
-	ClusterID                    string
-	DisplayName                  string
-	MonthlySpendingLimitUSDCents int32
-}
-
-type DeleteClusterOptions struct {
-	Profile          *config.Profile
-	ClusterID        string
-	WaitUntilDeleted bool
-}
-
-type ListClustersResult struct {
-	Clusters      []apistarter.Cluster `json:"clusters"`
-	NextPageToken string               `json:"next_page_token,omitempty"`
-	TotalSize     int64                `json:"total_size,omitempty"`
-}
-
-type ClusterResult struct {
-	apistarter.Cluster
-}
-
+// ListClusters is retained as a package-level compatibility helper for focused
+// Starter tests. Product-aware callers use db.Dispatcher.ListClusters.
 func (s Service) ListClusters(ctx context.Context, opts ListClustersOptions) (ListClustersResult, error) {
-	if err := validateListOptions(opts); err != nil {
-		return ListClustersResult{}, err
-	}
-	regionScope := newClusterRegionScope(opts.Profile)
-	client, err := s.starterClient(opts.Profile, authz.StarterClusterRead, "list Starter DB clusters")
-	if err != nil {
-		return ListClustersResult{}, err
-	}
-	response, err := client.ListClusters(ctx, apistarter.ListClustersOptions{
-		PageSize:  opts.PageSize,
-		PageToken: opts.PageToken,
-		Filter:    regionScope.apiFilter(opts.Filter),
-		OrderBy:   opts.OrderBy,
-		Skip:      opts.Skip,
+	page, err := s.ListClusterPage(ctx, rootdb.ListClusterPageOptions{
+		Profile:             opts.Profile,
+		UpstreamPageSize:    opts.PageSize,
+		UpstreamPageToken:   opts.PageToken,
+		Filter:              opts.Filter,
+		OrderBy:             opts.OrderBy,
+		OperationPermission: authz.StarterClusterRead,
 	})
 	if err != nil {
 		return ListClustersResult{}, err
 	}
-	return ListClustersResult{
+	return ListClustersResult{Clusters: page.Clusters, NextPageToken: page.NextPageToken}, nil
+}
+
+func (s Service) ListClusterPage(ctx context.Context, opts rootdb.ListClusterPageOptions) (rootdb.ListClusterPageResult, error) {
+	if err := validateProfile(opts.Profile); err != nil {
+		return rootdb.ListClusterPageResult{}, err
+	}
+	regionScope := newClusterRegionScope(opts.Profile)
+	client, err := s.starterClient(opts.Profile, opts.OperationPermission, "list Starter DB clusters")
+	if err != nil {
+		return rootdb.ListClusterPageResult{}, err
+	}
+	response, err := client.ListClusters(ctx, apistarter.ListClustersOptions{
+		PageSize:  opts.UpstreamPageSize,
+		PageToken: opts.UpstreamPageToken,
+		Filter:    regionScope.apiFilter(opts.Filter),
+		OrderBy:   opts.OrderBy,
+	})
+	if err != nil {
+		return rootdb.ListClusterPageResult{}, err
+	}
+	return rootdb.ListClusterPageResult{
 		Clusters:      filterClustersByRegion(filterStarterClusters(response.Clusters), regionScope),
 		NextPageToken: response.NextPageToken,
 	}, nil
@@ -122,7 +90,7 @@ func (s Service) CreateCluster(ctx context.Context, opts CreateClusterOptions) (
 	if err != nil {
 		return ClusterResult{}, err
 	}
-	client, err := s.starterClient(opts.Profile, authz.StarterClusterCreate, "create Starter DB cluster")
+	client, err := s.starterClient(opts.Profile, operationPermission(opts.Dispatch, authz.StarterClusterCreate), "create Starter DB cluster")
 	if err != nil {
 		return ClusterResult{}, err
 	}
@@ -150,15 +118,8 @@ func (s Service) DescribeCluster(ctx context.Context, opts DescribeClusterOption
 	if err := validate.View(opts.View); err != nil {
 		return ClusterResult{}, err
 	}
-	client, err := s.starterClient(opts.Profile, authz.StarterClusterRead, "describe Starter DB cluster")
+	cluster, err := s.clusterFromDispatchOrRead(ctx, opts.Profile, opts.Dispatch, clusterID, opts.View, authz.StarterClusterRead, "describe Starter DB cluster")
 	if err != nil {
-		return ClusterResult{}, err
-	}
-	cluster, err := client.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{View: opts.View})
-	if err != nil {
-		return ClusterResult{}, err
-	}
-	if err := ensureStarterCluster(cluster); err != nil {
 		return ClusterResult{}, err
 	}
 	return ClusterResult{Cluster: cluster}, nil
@@ -169,15 +130,12 @@ func (s Service) UpdateCluster(ctx context.Context, opts UpdateClusterOptions) (
 	if err != nil {
 		return ClusterResult{}, err
 	}
-	client, err := s.starterClient(opts.Profile, authz.StarterClusterUpdate, "update Starter DB cluster")
+	client, err := s.starterClient(opts.Profile, operationPermission(opts.Dispatch, authz.StarterClusterUpdate), "update Starter DB cluster")
 	if err != nil {
 		return ClusterResult{}, err
 	}
-	cluster, err := client.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{})
+	cluster, err := s.clusterFromDispatchOrRead(ctx, opts.Profile, opts.Dispatch, clusterID, "BASIC", authz.StarterClusterUpdate, "update Starter DB cluster")
 	if err != nil {
-		return ClusterResult{}, err
-	}
-	if err := ensureStarterCluster(cluster); err != nil {
 		return ClusterResult{}, err
 	}
 	cluster, err = client.UpdateCluster(ctx, clusterID, request)
@@ -195,15 +153,12 @@ func (s Service) DeleteCluster(ctx context.Context, opts DeleteClusterOptions) (
 	if err != nil {
 		return ClusterResult{}, err
 	}
-	client, err := s.starterClient(opts.Profile, authz.StarterClusterDelete, "delete Starter DB cluster")
+	client, err := s.starterClient(opts.Profile, operationPermission(opts.Dispatch, authz.StarterClusterDelete), "delete Starter DB cluster")
 	if err != nil {
 		return ClusterResult{}, err
 	}
-	cluster, err := client.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{})
+	cluster, err := s.clusterFromDispatchOrRead(ctx, opts.Profile, opts.Dispatch, clusterID, "BASIC", authz.StarterClusterDelete, "delete Starter DB cluster")
 	if err != nil {
-		return ClusterResult{}, err
-	}
-	if err := ensureStarterCluster(cluster); err != nil {
 		return ClusterResult{}, err
 	}
 	cluster, err = client.DeleteCluster(ctx, clusterID)
@@ -227,7 +182,7 @@ func (s Service) DryRunCreateCluster(ctx context.Context, commandPath string, op
 	checks := []dryrun.Check{
 		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)},
-		{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterClusterCreate)},
+		{Name: "operation_permission", Status: "passed", Message: string(operationPermission(opts.Dispatch, authz.StarterClusterCreate))},
 		{Name: "cluster_type", Status: "passed", Message: validate.ClusterTypeStarter},
 	}
 	if opts.WaitUntilActive {
@@ -379,7 +334,8 @@ func (s Service) DryRunUpdateCluster(ctx context.Context, commandPath string, op
 		},
 		dryrun.Check{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		dryrun.Check{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)},
-		dryrun.Check{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterClusterUpdate)},
+		dryrun.Check{Name: "cluster_discovery_permission", Status: "passed", Message: string(opts.Dispatch.DiscoveryPermission)},
+		dryrun.Check{Name: "operation_permission", Status: "passed", Message: string(opts.Dispatch.OperationPermission)},
 		dryrun.Check{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the cluster is Starter before updating"},
 	), nil
 }
@@ -392,7 +348,8 @@ func (s Service) DryRunDeleteCluster(ctx context.Context, commandPath string, op
 	checks := []dryrun.Check{
 		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)},
-		{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterClusterDelete)},
+		{Name: "cluster_discovery_permission", Status: "passed", Message: string(opts.Dispatch.DiscoveryPermission)},
+		{Name: "operation_permission", Status: "passed", Message: string(opts.Dispatch.OperationPermission)},
 		{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the cluster is Starter before deleting"},
 	}
 	if opts.WaitUntilDeleted {
@@ -516,7 +473,11 @@ func (s Service) createRequestAndEndpoint(opts CreateClusterOptions) (apistarter
 	if err != nil {
 		return apistarter.CreateClusterRequest{}, endpoints.Endpoint{}, err
 	}
-	if err := validate.OptionalNonNegative("--monthly-spending-limit-usd-cents", opts.MonthlySpendingLimitUSDCents); err != nil {
+	product, err := createOptions(opts.Product)
+	if err != nil {
+		return apistarter.CreateClusterRequest{}, endpoints.Endpoint{}, err
+	}
+	if err := validate.OptionalNonNegative("--monthly-spending-limit-usd-cents", product.MonthlySpendingLimitUSDCents); err != nil {
 		return apistarter.CreateClusterRequest{}, endpoints.Endpoint{}, err
 	}
 	endpoint, err := s.resolveStarter(opts.Profile)
@@ -527,7 +488,7 @@ func (s Service) createRequestAndEndpoint(opts CreateClusterOptions) (apistarter
 		DisplayName:   opts.DisplayName,
 		RegionName:    endpoint.RegionName,
 		ProjectID:     projectID,
-		SpendingLimit: spendingLimit(opts.MonthlySpendingLimitUSDCents),
+		SpendingLimit: spendingLimit(product.MonthlySpendingLimitUSDCents),
 	}, endpoint, nil
 }
 
@@ -564,7 +525,11 @@ func (s Service) updateRequestAndEndpoint(opts UpdateClusterOptions) (string, ap
 	if err := validate.OptionalClusterName(opts.DisplayName); err != nil {
 		return "", apistarter.UpdateClusterRequest{}, endpoints.Endpoint{}, err
 	}
-	if err := validate.OptionalNonNegative("--monthly-spending-limit-usd-cents", opts.MonthlySpendingLimitUSDCents); err != nil {
+	product, err := updateOptions(opts.Product)
+	if err != nil {
+		return "", apistarter.UpdateClusterRequest{}, endpoints.Endpoint{}, err
+	}
+	if err := validate.OptionalNonNegative("--monthly-spending-limit-usd-cents", product.MonthlySpendingLimitUSDCents); err != nil {
 		return "", apistarter.UpdateClusterRequest{}, endpoints.Endpoint{}, err
 	}
 
@@ -573,8 +538,8 @@ func (s Service) updateRequestAndEndpoint(opts UpdateClusterOptions) (string, ap
 		request.DisplayName = &opts.DisplayName
 		request.UpdateMask = append(request.UpdateMask, "displayName")
 	}
-	if opts.MonthlySpendingLimitUSDCents != monthlySpendingLimitUnset {
-		request.SpendingLimit = spendingLimit(opts.MonthlySpendingLimitUSDCents)
+	if product.MonthlySpendingLimitUSDCents != monthlySpendingLimitUnset {
+		request.SpendingLimit = spendingLimit(product.MonthlySpendingLimitUSDCents)
 		request.UpdateMask = append(request.UpdateMask, "spendingLimit")
 	}
 	if len(request.UpdateMask) == 0 {
@@ -641,16 +606,6 @@ func (s Service) resolver() endpoints.Resolver {
 	return s.Resolver
 }
 
-func validateListOptions(opts ListClustersOptions) error {
-	if err := validateProfile(opts.Profile); err != nil {
-		return err
-	}
-	if err := validate.NonNegative("--page-size", opts.PageSize); err != nil {
-		return err
-	}
-	return validate.NonNegative("--skip", opts.Skip)
-}
-
 func validateProfile(profile *config.Profile) error {
 	if profile == nil {
 		return apperr.New("db.missing_profile", "config", 2, "active profile is required")
@@ -670,43 +625,4 @@ func profileName(profile *config.Profile) string {
 		return config.DefaultProfile
 	}
 	return profile.Name
-}
-
-func (r ListClustersResult) Human() string {
-	var out strings.Builder
-	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(writer, "ID\tDISPLAY_NAME\tREGION\tSTATE\tPLAN\tCREATED")
-	for _, cluster := range r.Clusters {
-		_, _ = fmt.Fprintf(
-			writer,
-			"%s\t%s\t%s\t%s\t%s\t%s\n",
-			cluster.ID,
-			cluster.DisplayName,
-			cluster.Region.Name,
-			cluster.State,
-			clusterPlanDisplay(cluster),
-			cluster.CreateTime,
-		)
-	}
-	if r.NextPageToken != "" {
-		_, _ = fmt.Fprintf(writer, "next_page_token\t%s\t\t\t\t\n", r.NextPageToken)
-	}
-	_ = writer.Flush()
-	return strings.TrimRight(out.String(), "\n")
-}
-
-func (r ClusterResult) Human() string {
-	lines := []string{
-		"ID: " + r.ID,
-		"Display name: " + r.DisplayName,
-		"Region: " + r.Region.Name,
-		"State: " + r.State,
-	}
-	if plan := clusterPlanDisplay(r.Cluster); plan != "" {
-		lines = append(lines, "Plan: "+plan)
-	}
-	if r.CreateTime != "" {
-		lines = append(lines, "Created: "+r.CreateTime)
-	}
-	return strings.Join(lines, "\n")
 }

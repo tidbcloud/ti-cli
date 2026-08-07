@@ -40,7 +40,7 @@ With `tdc`, an agent can go from zero to live HTAP SQL (Hybrid Transaction / Ana
 1. Provision a serverless MySQL-compatible cluster, wait until it is active, and capture its ID
 
 ```shell
-export CLUSTER_ID="$(tdc db create-db-cluster --db-cluster-name my-app-db --wait --query id --output text)"
+export CLUSTER_ID="$(tdc db create-db-cluster --db-cluster-type starter --db-cluster-name my-app-db --wait --query id --output text)"
 ```
 
 2. Create the SQL users it needs to connect
@@ -181,12 +181,14 @@ tdc fs mount-file-system --file-system-name agent-workspace --mount-path /path_t
 
 ### TiDB Cloud Starter
 
-`tdc db` manages TiDB Cloud Starter clusters only. Cluster lists include only verified Starter clusters in the effective region and omit Essential, other service plans, cross-region resources, and resources whose region cannot be verified. Use global `--region`, for example `tdc --region aws-us-west-2 db list-db-clusters`, to inspect another region without changing the stored profile. Every cluster, branch, SQL-user, connection-string, and SQL command verifies the cluster service plan before continuing. If TiDB Cloud does not return enough plan metadata to prove that a cluster is Starter, `tdc` fails without issuing the requested mutation.
+`tdc db` currently implements TiDB Cloud Starter only. Commands that do not identify an existing cluster require `--db-cluster-type starter`; there is no implicit default. Commands with `--db-cluster-id` discover the authoritative service plan and route internally without accepting a type flag. Essential, Premium, Dedicated, unknown, and conflicting plan metadata are rejected before the requested product operation.
+
+Cluster lists include only verified Starter clusters in the effective region and omit other service plans, cross-region resources, and resources whose region cannot be verified. Use global `--region`, for example `tdc --region aws-us-west-2 db list-db-clusters --db-cluster-type starter`, to inspect another region without changing the stored profile. Listing incrementally fills the requested result page from TiDB Cloud API pages. Its opaque `next_page_token` belongs to tdc and can be passed only to a later call with the same profile, type, region, filter, and ordering.
 
 `tdc configure` discovers the account's virtual project and saves its ID in the selected profile. Cluster creation uses an explicit `--project-id` first, then that saved project ID. If neither is available, `tdc` omits the project label and lets TiDB Cloud select the account's default project.
 
 ```shell
-tdc db create-db-cluster --db-cluster-name my-distributed-mysql --wait
+tdc db create-db-cluster --db-cluster-type starter --db-cluster-name my-distributed-mysql --wait
 ```
 
 ## Get Help
@@ -204,8 +206,8 @@ tdc configure
 tdc update
 tdc organization list-projects
 
-tdc db create-db-cluster
-tdc db list-db-clusters
+tdc db create-db-cluster --db-cluster-type starter
+tdc db list-db-clusters --db-cluster-type starter
 tdc db describe-db-cluster
 tdc db update-db-cluster
 tdc db delete-db-cluster
