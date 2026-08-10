@@ -1,6 +1,6 @@
 # tdc fs Unix Command Aliases
 
-> **Latest identity update:** aliases use the ID/token selection contract in `0026-remote-fs-resource-inventory.md`; `--file-system-name` is no longer available.
+> **Latest identity update:** aliases use the ID/token selection contract in `0027-remote-fs-resource-inventory.md`; `--file-system-name` is no longer available.
 
 ## Goal
 

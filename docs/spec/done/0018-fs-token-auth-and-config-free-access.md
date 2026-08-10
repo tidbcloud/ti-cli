@@ -1,10 +1,10 @@
 # FS Token Authentication And Configuration-Free Access
 
-> **Latest identity update:** after `0026-remote-fs-resource-inventory.md`, a token-only sandbox needs only `TDC_FS_TOKEN` and `TDC_REGION_CODE`. The ID is derived from the token; `TDC_FS_FILE_SYSTEM_ID` is optional.
+> **Latest identity update:** after `0027-remote-fs-resource-inventory.md`, a token-only sandbox needs only `TDC_FS_TOKEN` and `TDC_REGION_CODE`. The ID is derived from the token; `TDC_FS_FILE_SYSTEM_ID` is optional.
 
 This spec refines `docs/requirements/mount-file-system-config-free-mount.md`. It keeps the configuration-free workflow but uses tdc's existing global `--region` contract, the profile-scoped FS resource registry introduced by `docs/spec/done/0016-profile-fs-resource-registry.md`, and the Drive9 companion ownership boundary from `docs/spec/done/0015-drive9-companion-wrapper-for-tdc-fs.md`.
 
-The persistent default-resource and unique-resource fallback rules in this completed spec are superseded by `docs/spec/done/0020-explicit-file-system-selection.md`. Token precedence and configuration-free access remain valid; the old name selectors are superseded by the ID/token selection contract in `0026-remote-fs-resource-inventory.md`.
+The persistent default-resource and unique-resource fallback rules in this completed spec are superseded by `docs/spec/done/0020-explicit-file-system-selection.md`. Token precedence and configuration-free access remain valid; the old name selectors are superseded by the ID/token selection contract in `0027-remote-fs-resource-inventory.md`.
 
 ## Goal
 

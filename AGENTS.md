@@ -152,7 +152,7 @@ mutating commands support `--dry-run` where their command contract declares
 dry-run support.
 
 The client implementation for remote tdc fs inventory and ID-keyed credentials
-is tracked by `docs/spec/0026-remote-fs-resource-inventory.md`. Keep that spec
+is tracked by `docs/spec/0027-remote-fs-resource-inventory.md`. Keep that spec
 pending until Drive9 enables admin tenant list/get/delete for ordinary TiDB
 Cloud organizations and the hosted manifest publishes every supported tdc fs
 region, then complete its live acceptance flow before moving it to `done/`.
