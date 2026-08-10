@@ -165,6 +165,10 @@ region, then complete its live acceptance flow before moving it to `done/`.
 - `ref/drive9/` is the filesystem reference implementation. Use it as context
   for filesystem commands, mount behavior, and data-plane semantics. In tdc
   user-facing output, this domain is always called `tdc fs`.
+- `ref/fs/` is the TiDB Filesystem server deployed for the Drive9-backed TiDB
+  Cloud Filesystem service. Use it to verify server routes, TiDB Cloud IAM and
+  billing authorization, tenant inventory and lifecycle behavior, quotas, and
+  data-plane contracts. It is server reference code, not a tdc dependency.
 - `ref/serverless-js/` is a reference for the HTTPS SQL API call shape.
 
 Reference directories are not product source for tdc. They exist only to give
@@ -327,7 +331,7 @@ docs/priciples.md           product principles and MVP scope source of truth
 docs/spec/                  pending requirement specs
 docs/spec/done/             completed requirement specs
 docs/pingcap-docs/docs/     pingcap/docs English documentation submodule
-ref/                        read-only reference implementations
+ref/                        read-only client and server reference implementations
 ```
 
 Keep one package per directory. Package names should be short, lowercase, and

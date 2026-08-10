@@ -322,6 +322,8 @@ Keep one package per directory. Do not add a second filesystem inventory cache p
 
 Before this spec can pass live acceptance, the deployed Drive9 service must enable `admin tenant list/get/delete` for ordinary TiDB Cloud organizations whose API keys have the accepted owner role, including organizations using free Starter capacity. The hosted region manifest must also publish every tdc FS region. A companion command that exists locally but returns `403 admin API is not available for free TiDB Cloud organizations` does not satisfy this prerequisite.
 
+The server reference in `ref/fs/` confirms that tdc is using the intended contract: `GET /v1/admin/tenants` with `X-TiDBCloud-Public-Key` and `X-TiDBCloud-Private-Key` headers, followed by organization-scoped tenant lookup. It also confirms the current blocker: `authorizeTiDBCloudAdminAccess` deliberately rejects an organization whose billing profile is Free before list, get, or delete reaches the tenant store. No alternate Free-organization inventory route exists in that server revision. Therefore the observed 403 is a Drive9 server product-policy limitation, not an incorrect tdc endpoint or credential shape; backend authorization must change before this spec can complete live acceptance.
+
 ## Tests
 
 Unit tests must cover:

@@ -11,3 +11,6 @@
 	path = docs/pingcap-docs/docs
 	url = git@github.com:pingcap/docs.git
 	branch = release-8.5
+[submodule "ref/fs"]
+	path = ref/fs
+	url = git@github.com:tidbcloud/fs.git
