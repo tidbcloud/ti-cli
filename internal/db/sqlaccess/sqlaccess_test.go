@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	apiiam "github.com/tidbcloud/tdc/internal/api/iam"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/db/sqlcred"
+	apiiam "github.com/tidbcloud/ti-cli/internal/api/iam"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
 )
 
 func TestPrepareCreatesMissingUsers(t *testing.T) {
@@ -33,15 +33,15 @@ func TestPrepareCreatesMissingUsers(t *testing.T) {
 func TestPrepareExistingUsersDoesNotCreateDuplicates(t *testing.T) {
 	client := &fakeUserClient{
 		users: []apiiam.SQLUser{
-			{UserName: "prefix.tdc_ro", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "prefix.role_readonly"},
-			{UserName: "prefix.tdc_rw", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "prefix.role_readwrite"},
-			{UserName: "prefix.tdc_admin", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "prefix.role_admin"},
+			{UserName: "prefix.ti_ro", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "prefix.role_readonly"},
+			{UserName: "prefix.ti_rw", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "prefix.role_readwrite"},
+			{UserName: "prefix.ti_admin", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "prefix.role_admin"},
 		},
 	}
 	local := sqlcred.Document{
-		ReadOnly:  sqlcred.Credential{Username: "prefix.tdc_ro", Password: "ro"},
-		ReadWrite: sqlcred.Credential{Username: "prefix.tdc_rw", Password: "rw"},
-		Admin:     sqlcred.Credential{Username: "prefix.tdc_admin", Password: "admin"},
+		ReadOnly:  sqlcred.Credential{Username: "prefix.ti_ro", Password: "ro"},
+		ReadWrite: sqlcred.Credential{Username: "prefix.ti_rw", Password: "rw"},
+		Admin:     sqlcred.Credential{Username: "prefix.ti_admin", Password: "admin"},
 	}
 	result, _, err := Prepare(context.Background(), client, Options{ClusterID: "cluster-1", Local: local})
 	if err != nil {
@@ -58,9 +58,9 @@ func TestPrepareExistingUsersDoesNotCreateDuplicates(t *testing.T) {
 func TestPrepareRotatesPasswordWhenLocalCredentialMissing(t *testing.T) {
 	client := &fakeUserClient{
 		users: []apiiam.SQLUser{
-			{UserName: "prefix.tdc_ro", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "role_readonly"},
-			{UserName: "prefix.tdc_rw", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "role_readwrite"},
-			{UserName: "prefix.tdc_admin", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "role_admin"},
+			{UserName: "prefix.ti_ro", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "role_readonly"},
+			{UserName: "prefix.ti_rw", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "role_readwrite"},
+			{UserName: "prefix.ti_admin", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "role_admin"},
 		},
 	}
 	result, doc, err := Prepare(context.Background(), client, Options{ClusterID: "cluster-1"})
@@ -81,7 +81,7 @@ func TestPrepareRotatesPasswordWhenLocalCredentialMissing(t *testing.T) {
 func TestPrepareConflictingRemoteUserFails(t *testing.T) {
 	client := &fakeUserClient{
 		users: []apiiam.SQLUser{
-			{UserName: "prefix.tdc_rw", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "role_admin"},
+			{UserName: "prefix.ti_rw", AuthMethod: AuthMethodMySQLNativePassword, BuiltinRole: "role_admin"},
 		},
 	}
 	_, _, err := Prepare(context.Background(), client, Options{ClusterID: "cluster-1"})

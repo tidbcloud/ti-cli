@@ -13,10 +13,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/db/sqlcred"
-	"github.com/tidbcloud/tdc/internal/db/sqlresult"
-	"github.com/tidbcloud/tdc/internal/oplog"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlresult"
+	"github.com/tidbcloud/ti-cli/internal/oplog"
 )
 
 type Options struct {
@@ -59,12 +59,12 @@ func Execute(ctx context.Context, opts Options) (sqlresult.Result, error) {
 	if opts.UserAgent != "" {
 		req.Header.Set("User-Agent", opts.UserAgent)
 	} else {
-		req.Header.Set("User-Agent", "tdc")
+		req.Header.Set("User-Agent", "ti")
 	}
 	traceID := traceID()
 	req.Header.Set("X-Debug-Trace-Id", traceID)
 	if opts.Debug && opts.DebugWriter != nil {
-		_, _ = fmt.Fprintf(opts.DebugWriter, "tdc [DEBUG]: sql https api request id: %s\n", traceID)
+		_, _ = fmt.Fprintf(opts.DebugWriter, "ti [DEBUG]: sql https api request id: %s\n", traceID)
 	}
 
 	start := time.Now()

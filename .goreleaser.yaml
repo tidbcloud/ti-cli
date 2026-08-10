@@ -1,15 +1,15 @@
 version: 2
 
-project_name: tdc
+project_name: ti
 
 before:
   hooks:
     - go mod download
 
 builds:
-  - id: tdc
-    main: ./cmd/tdc
-    binary: tdc
+  - id: ti
+    main: ./cmd/ti
+    binary: ti
     env:
       - CGO_ENABLED=0
     goos:
@@ -24,17 +24,17 @@ builds:
         goarch: arm64
     ldflags:
       - -s -w
-      - -X github.com/tidbcloud/tdc/internal/version.version={{ .Version }}
-      - -X github.com/tidbcloud/tdc/internal/version.commit={{ .Commit }}
-      - -X github.com/tidbcloud/tdc/internal/version.date={{ .Date }}
-      - -X github.com/tidbcloud/tdc/internal/version.installSource=archive
-      - -X github.com/tidbcloud/tdc/internal/version.releaseChannel=stable
-      - -X github.com/tidbcloud/tdc/internal/version.telemetryEndpoint=https://tdc-telemetry.tidbcloud.com/v1/telemetry/batch
+      - -X github.com/tidbcloud/ti-cli/internal/version.version={{ .Version }}
+      - -X github.com/tidbcloud/ti-cli/internal/version.commit={{ .Commit }}
+      - -X github.com/tidbcloud/ti-cli/internal/version.date={{ .Date }}
+      - -X github.com/tidbcloud/ti-cli/internal/version.installSource=archive
+      - -X github.com/tidbcloud/ti-cli/internal/version.releaseChannel=stable
+      - -X github.com/tidbcloud/ti-cli/internal/version.telemetryEndpoint=https://tdc-telemetry.tidbcloud.com/v1/telemetry/batch
 
 archives:
-  - id: tdc
+  - id: ti
     ids:
-      - tdc
+      - ti
     name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - tar.gz
@@ -54,7 +54,7 @@ snapshot:
 release:
   github:
     owner: tidbcloud
-    name: tdc
+    name: ti-cli
   prerelease: auto
   make_latest: true
   mode: replace

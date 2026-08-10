@@ -48,7 +48,7 @@ func ResolveWithDeps(name, goos string, lookPath func(string) (string, error), s
 	case "webdav":
 		return webdav, nil
 	default:
-		return nil, fmt.Errorf("unsupported tdc fs mount driver %q; supported values: auto, fuse, webdav", name)
+		return nil, fmt.Errorf("unsupported ti fs mount driver %q; supported values: auto, fuse, webdav", name)
 	}
 }
 
@@ -93,18 +93,18 @@ func (d FUSE) CheckPrerequisites() error {
 		}
 		return fmt.Errorf("missing fusermount3 or fusermount: install FUSE userspace tools, or explicitly use --driver webdav where supported")
 	case "windows":
-		return fmt.Errorf("tdc fs FUSE mount is not supported on Windows; explicitly use --driver webdav if a WebDAV mount is available")
+		return fmt.Errorf("ti fs FUSE mount is not supported on Windows; explicitly use --driver webdav if a WebDAV mount is available")
 	default:
-		return fmt.Errorf("tdc fs FUSE mount is not supported on %s", goos)
+		return fmt.Errorf("ti fs FUSE mount is not supported on %s", goos)
 	}
 }
 
 func (d FUSE) Mount(ctx context.Context, serverURL, mountPath string) error {
-	return fmt.Errorf("tdc fs FUSE mounts are handled by the in-process FUSE runtime")
+	return fmt.Errorf("ti fs FUSE mounts are handled by the in-process FUSE runtime")
 }
 
 func (d FUSE) Unmount(ctx context.Context, mountPath string) error {
-	return fmt.Errorf("tdc fs FUSE unmount is handled by the running FUSE server")
+	return fmt.Errorf("ti fs FUSE unmount is handled by the running FUSE server")
 }
 
 func (d FUSE) goos() string {
@@ -147,15 +147,15 @@ func (d WebDAV) CheckPrerequisites() error {
 			return fmt.Errorf("missing mount_webdav: install or enable the macOS WebDAV filesystem helper")
 		}
 		if _, err := lookPath("umount"); err != nil {
-			return fmt.Errorf("missing umount: tdc fs cannot detach WebDAV mounts on this system")
+			return fmt.Errorf("missing umount: ti fs cannot detach WebDAV mounts on this system")
 		}
 		return nil
 	case "linux":
-		return fmt.Errorf("tdc fs WebDAV mount is not supported on Linux yet; use tdc fs data-plane commands or run mount on macOS")
+		return fmt.Errorf("ti fs WebDAV mount is not supported on Linux yet; use ti fs data-plane commands or run mount on macOS")
 	case "windows":
-		return fmt.Errorf("tdc fs WebDAV mount is not supported on Windows yet; use tdc fs data-plane commands or run mount on macOS")
+		return fmt.Errorf("ti fs WebDAV mount is not supported on Windows yet; use ti fs data-plane commands or run mount on macOS")
 	default:
-		return fmt.Errorf("tdc fs mount is not supported on %s", goos)
+		return fmt.Errorf("ti fs mount is not supported on %s", goos)
 	}
 }
 
@@ -175,7 +175,7 @@ func (d WebDAV) Unmount(ctx context.Context, mountPath string) error {
 	switch goos {
 	case "darwin":
 		if _, err := d.lookPath()("umount"); err != nil {
-			return fmt.Errorf("missing umount: tdc fs cannot detach WebDAV mounts on this system")
+			return fmt.Errorf("missing umount: ti fs cannot detach WebDAV mounts on this system")
 		}
 		cmd := d.command(ctx, "umount", mountPath)
 		if output, err := cmd.CombinedOutput(); err != nil {

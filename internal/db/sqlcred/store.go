@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 const (
@@ -48,7 +48,7 @@ func CredentialsPath(homeDir, clusterID string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(homeDir, store.TDCDirName, "db_users", safeClusterID, store.CredsFileName), nil
+	return filepath.Join(homeDir, store.TIDirName, "db_users", safeClusterID, store.CredsFileName), nil
 }
 
 func SafeClusterID(clusterID string) (string, error) {

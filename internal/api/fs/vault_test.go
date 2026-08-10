@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api"
 )
 
 func TestReadVaultSecretFieldUsesDelegatedBearerToken(t *testing.T) {
@@ -123,14 +123,14 @@ func TestRevokeVaultGrantSendsDeleteWithPayload(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatalf("decode request: %v", err)
 		}
-		if req.RevokedBy != "tdc" || req.Reason != "rotated" {
+		if req.RevokedBy != "ti" || req.Reason != "rotated" {
 			t.Fatalf("unexpected request: %#v", req)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
 
-	if err := testBearerClient(t, server.URL).RevokeVaultGrant(context.Background(), "grant-123", "tdc", "rotated"); err != nil {
+	if err := testBearerClient(t, server.URL).RevokeVaultGrant(context.Background(), "grant-123", "ti", "rotated"); err != nil {
 		t.Fatalf("RevokeVaultGrant failed: %v", err)
 	}
 }

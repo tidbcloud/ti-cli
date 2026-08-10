@@ -7,9 +7,9 @@ import (
 	"math/big"
 	"strings"
 
-	apiiam "github.com/tidbcloud/tdc/internal/api/iam"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/db/sqlcred"
+	apiiam "github.com/tidbcloud/ti-cli/internal/api/iam"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
 )
 
 const AuthMethodMySQLNativePassword = "mysql_native_password"
@@ -48,9 +48,9 @@ type Plan struct {
 
 func Plans() []Plan {
 	return []Plan{
-		{Mode: sqlcred.ReadOnly, Suffix: "tdc_ro", BuiltinRole: "role_readonly"},
-		{Mode: sqlcred.ReadWrite, Suffix: "tdc_rw", BuiltinRole: "role_readwrite"},
-		{Mode: sqlcred.Admin, Suffix: "tdc_admin", BuiltinRole: "role_admin"},
+		{Mode: sqlcred.ReadOnly, Suffix: "ti_ro", BuiltinRole: "role_readonly"},
+		{Mode: sqlcred.ReadWrite, Suffix: "ti_rw", BuiltinRole: "role_readwrite"},
+		{Mode: sqlcred.Admin, Suffix: "ti_admin", BuiltinRole: "role_admin"},
 	}
 }
 
@@ -175,7 +175,7 @@ func findManagedUser(users []apiiam.SQLUser, plan Plan) (apiiam.SQLUser, bool, e
 				"db.sql_user_conflict",
 				"usage",
 				2,
-				fmt.Sprintf("remote SQL user %q matches tdc suffix %q but has builtinRole=%q authMethod=%q; refusing to modify it", user.UserName, plan.Suffix, user.BuiltinRole, user.AuthMethod),
+				fmt.Sprintf("remote SQL user %q matches ti suffix %q but has builtinRole=%q authMethod=%q; refusing to modify it", user.UserName, plan.Suffix, user.BuiltinRole, user.AuthMethod),
 			)
 		}
 		return user, true, nil

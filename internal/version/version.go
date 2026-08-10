@@ -39,5 +39,5 @@ func Current() Info {
 }
 
 func (i Info) String() string {
-	return fmt.Sprintf("tdc %s (%s, %s, %s/%s)", i.Version, i.Commit, i.Date, i.OS, i.Arch)
+	return fmt.Sprintf("ti %s (%s, %s, %s/%s)", i.Version, i.Commit, i.Date, i.OS, i.Arch)
 }

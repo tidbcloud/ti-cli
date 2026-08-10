@@ -6,8 +6,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/query"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/query"
 )
 
 const (

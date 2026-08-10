@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
 func TestListProjects(t *testing.T) {
@@ -109,10 +109,10 @@ func TestListProjectsAuthAndPermissionErrors(t *testing.T) {
 
 func testProfile() *config.Profile {
 	return &config.Profile{
-		Name:          "test",
-		CloudProvider: "aws",
-		RegionCode:    "us-east-1",
-		TDCPublicKey:  "public",
-		TDCPrivateKey: "private",
+		Name:                "test",
+		CloudProvider:       "aws",
+		RegionCode:          "us-east-1",
+		TiDBCloudPublicKey:  "public",
+		TiDBCloudPrivateKey: "private",
 	}
 }

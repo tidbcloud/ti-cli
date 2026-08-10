@@ -16,8 +16,8 @@ import (
 	"time"
 
 	gofs "github.com/hanwen/go-fuse/v2/fs"
-	"github.com/tidbcloud/tdc/internal/fs/mountcontrol"
-	"github.com/tidbcloud/tdc/internal/fs/mountstate"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountcontrol"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 )
 
 const drainPendingWorkKind = "pending_work_remaining"

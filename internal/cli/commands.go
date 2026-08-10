@@ -2,30 +2,30 @@ package cli
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	cfgconfigure "github.com/tidbcloud/tdc/internal/config/configure"
-	"github.com/tidbcloud/tdc/internal/db"
-	"github.com/tidbcloud/tdc/internal/db/connectionstring"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	tdcfs "github.com/tidbcloud/tdc/internal/fs"
-	"github.com/tidbcloud/tdc/internal/fs/fscred"
-	"github.com/tidbcloud/tdc/internal/organization"
-	outputpkg "github.com/tidbcloud/tdc/internal/output"
-	"github.com/tidbcloud/tdc/internal/update"
-	"github.com/tidbcloud/tdc/internal/version"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	cfgconfigure "github.com/tidbcloud/ti-cli/internal/config/configure"
+	"github.com/tidbcloud/ti-cli/internal/config/envcompat"
+	"github.com/tidbcloud/ti-cli/internal/db"
+	"github.com/tidbcloud/ti-cli/internal/db/connectionstring"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	tifs "github.com/tidbcloud/ti-cli/internal/fs"
+	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/organization"
+	outputpkg "github.com/tidbcloud/ti-cli/internal/output"
+	"github.com/tidbcloud/ti-cli/internal/update"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
 func newConfigureCommand(info version.Info) *cobra.Command {
 	cmd := newCommand(commandSpec{
 		Use:   "configure",
-		Short: "Configure TiDB Cloud CLI (tdc) options. If this command runs with no arguments, you will be prompted for configuration values.",
+		Short: "Configure TiDB Cloud CLI (ti) options. If this command runs with no arguments, you will be prompted for configuration values.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			profile, err := cmd.Flags().GetString("profile")
 			if err != nil {
@@ -36,18 +36,24 @@ func newConfigureCommand(info version.Info) *cobra.Command {
 				if strings.TrimSpace(profile) == "" {
 					return apperr.New("config.empty_profile", "usage", 2, "--profile cannot be empty")
 				}
-			} else if envProfile := strings.TrimSpace(os.Getenv("TDC_PROFILE")); envProfile != "" {
-				profile = envProfile
+			} else {
+				envProfile, _, _, err := envcompat.ResolveNames(nil, "TI_PROFILE", "TDC_PROFILE")
+				if err != nil {
+					return err
+				}
+				if strings.TrimSpace(envProfile) != "" {
+					profile = strings.TrimSpace(envProfile)
+				}
 			}
 			regionCode, err := cmd.Flags().GetString("region-code")
 			if err != nil {
 				return err
 			}
-			publicKey, err := cmd.Flags().GetString("tdc-public-key")
+			publicKey, err := cmd.Flags().GetString("tidb-cloud-public-key")
 			if err != nil {
 				return err
 			}
-			privateKey, err := cmd.Flags().GetString("tdc-private-key")
+			privateKey, err := cmd.Flags().GetString("tidb-cloud-private-key")
 			if err != nil {
 				return err
 			}
@@ -60,15 +66,15 @@ func newConfigureCommand(info version.Info) *cobra.Command {
 				return err
 			}
 			result, err := cfgconfigure.Run(cmd.Context(), cfgconfigure.Options{
-				Profile:        profile,
-				RegionCode:     regionCode,
-				TDCPublicKey:   publicKey,
-				TDCPrivateKey:  privateKey,
-				NonInteractive: nonInteractive,
-				In:             cmd.InOrStdin(),
-				Out:            cmd.OutOrStdout(),
-				Debug:          debug,
-				DebugWriter:    cmd.ErrOrStderr(),
+				Profile:             profile,
+				RegionCode:          regionCode,
+				TiDBCloudPublicKey:  publicKey,
+				TiDBCloudPrivateKey: privateKey,
+				NonInteractive:      nonInteractive,
+				In:                  cmd.InOrStdin(),
+				Out:                 cmd.OutOrStdout(),
+				Debug:               debug,
+				DebugWriter:         cmd.ErrOrStderr(),
 			})
 			if err != nil {
 				return err
@@ -77,9 +83,9 @@ func newConfigureCommand(info version.Info) *cobra.Command {
 		},
 	}, info)
 	cmd.Flags().String("region-code", "", "Default TiDB Cloud region code for the profile, for example aws-us-east-1 or aws-ap-southeast-1.")
-	cmd.Flags().String("tdc-public-key", "", "TiDB Cloud API public key.")
-	cmd.Flags().String("tdc-private-key", "", "TiDB Cloud API private key.")
-	cmd.Flags().Bool("non-interactive", false, "Use this option to avoid being prompted for configuration values. You must provide at least three configuration values (--tdc-public-key, --tdc-private-key, and --region-code) when using this option. This is useful when running tdc in a script or automated environment.")
+	cmd.Flags().String("tidb-cloud-public-key", "", "TiDB Cloud API public key.")
+	cmd.Flags().String("tidb-cloud-private-key", "", "TiDB Cloud API private key.")
+	cmd.Flags().Bool("non-interactive", false, "Use this option to avoid being prompted for configuration values. You must provide at least three configuration values (--tidb-cloud-public-key, --tidb-cloud-private-key, and --region-code) when using this option. This is useful when running ti in a script or automated environment.")
 	return cmd
 }
 
@@ -108,7 +114,7 @@ func newUpdateCommand(info version.Info) *cobra.Command {
 					return err
 				}
 				if failIfAvailable && result.UpdateAvailable {
-					return apperr.New("update.available", "runtime", 1, "a newer tdc release is available")
+					return apperr.New("update.available", "runtime", 1, "a newer ti release is available")
 				}
 				return nil
 			}
@@ -139,9 +145,9 @@ func newUpdateCommand(info version.Info) *cobra.Command {
 			return renderStructured(cmd, result)
 		},
 	}, info)
-	cmd.Flags().Bool("check", false, "Check whether a newer TiDB Cloud CLI (tdc) release is available without updating.")
+	cmd.Flags().Bool("check", false, "Check whether a newer TiDB Cloud CLI (ti) release is available without updating.")
 	cmd.Flags().Bool("fail-if-update-available", false, "With --check, exit with code 1 when an update is available.")
-	cmd.Flags().String("target-version", "latest", "Target TiDB Cloud CLI (tdc) version, such as latest or v0.1.0.")
+	cmd.Flags().String("target-version", "latest", "Target TiDB Cloud CLI (ti) version, such as latest or v0.1.0.")
 	cmd.Flags().Bool("dry-run", false, "Show the update plan without changing the local binary.")
 	return cmd
 }
@@ -519,7 +525,7 @@ func newDBDeleteBranchCommand(info version.Info) *cobra.Command {
 func newDBPrepareQueryAccessCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "create-db-sql-users",
-		Short:      "Provision a group of database users managed by tdc locally, with roles (admin, read-only, and read-write) for developer and agent access. And then, you can call format-db-connection-string to get the connection string for the users selectively.",
+		Short:      "Provision a group of database users managed by ti locally, with roles (admin, read-only, and read-write) for developer and agent access. And then, you can call format-db-connection-string to get the connection string for the users selectively.",
 		Mutation:   mutatingCommand,
 		Permission: authz.StarterSQLUserCreate,
 		Run: func(ctx commandContext) (any, error) {
@@ -559,7 +565,7 @@ func newDBPrepareQueryAccessCommand(info version.Info) *cobra.Command {
 func newDBCreateConnectionStringCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "format-db-connection-string",
-		Short:      "Generate a database connection string for tdc-managed database user.",
+		Short:      "Generate a database connection string for ti-managed database user.",
 		Mutation:   readOnlyCommand,
 		Permission: authz.StarterSQLUserRead,
 		Run: func(ctx commandContext) (any, error) {
@@ -899,7 +905,7 @@ func addFSSelectorFlags(commands []*cobra.Command, excluded ...string) {
 			continue
 		}
 		if command.Flags().Lookup("file-system-name") == nil {
-			command.Flags().String("file-system-name", "", "The name of the file system. Can also be supplied through TDC_FS_FILE_SYSTEM_NAME.")
+			command.Flags().String("file-system-name", "", "The name of the file system. Can also be supplied through TI_FS_FILE_SYSTEM_NAME.")
 		}
 	}
 }
@@ -914,7 +920,7 @@ func addFSAuthFlags(commands []*cobra.Command, excluded ...string) {
 			continue
 		}
 		if command.Flags().Lookup("fs-token") == nil {
-			command.Flags().String("fs-token", "", "File system user token. Default: value taken from the TDC_FS_TOKEN environment variable if not provided.")
+			command.Flags().String("fs-token", "", "File system user token. Default: value taken from the TI_FS_TOKEN environment variable if not provided.")
 		}
 	}
 }
@@ -926,7 +932,7 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVolumeCreate,
 		Run: func(ctx commandContext) (any, error) {
-			service, profile, err := fsTDCServiceAndProfile(ctx)
+			service, profile, err := fsTIServiceAndProfile(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -941,14 +947,14 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.CreateFileSystem(ctx.cmd.Context(), tdcfs.CreateFileSystemOptions{
+			return service.CreateFileSystem(ctx.cmd.Context(), tifs.CreateFileSystemOptions{
 				Profile:        profile,
 				FileSystemName: name,
 				WaitUntilReady: waitUntilReady,
 			})
 		},
 		DryRun: func(ctx commandContext) (dryrun.Result, error) {
-			service, profile, err := fsTDCServiceAndProfile(ctx)
+			service, profile, err := fsTIServiceAndProfile(ctx)
 			if err != nil {
 				return dryrun.Result{}, err
 			}
@@ -960,7 +966,7 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunCreateFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tdcfs.CreateFileSystemOptions{
+			return service.DryRunCreateFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tifs.CreateFileSystemOptions{
 				Profile:        profile,
 				FileSystemName: name,
 				WaitUntilReady: waitUntilReady,
@@ -1015,7 +1021,7 @@ func newFSDeleteFileSystemCommand(info version.Info) *cobra.Command {
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVolumeDelete,
 		Run: func(ctx commandContext) (any, error) {
-			service, profile, err := fsTDCResourceServiceAndProfile(ctx)
+			service, profile, err := fsTIResourceServiceAndProfile(ctx)
 			if err != nil {
 				return nil, err
 			}
@@ -1023,13 +1029,13 @@ func newFSDeleteFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.DeleteFileSystem(ctx.cmd.Context(), tdcfs.DeleteFileSystemOptions{
+			return service.DeleteFileSystem(ctx.cmd.Context(), tifs.DeleteFileSystemOptions{
 				Profile:        profile,
 				FileSystemName: name,
 			})
 		},
 		DryRun: func(ctx commandContext) (dryrun.Result, error) {
-			service, profile, err := fsTDCResourceServiceAndProfile(ctx)
+			service, profile, err := fsTIResourceServiceAndProfile(ctx)
 			if err != nil {
 				return dryrun.Result{}, err
 			}
@@ -1037,7 +1043,7 @@ func newFSDeleteFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunDeleteFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tdcfs.DeleteFileSystemOptions{
+			return service.DryRunDeleteFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tifs.DeleteFileSystemOptions{
 				Profile:        profile,
 				FileSystemName: name,
 			})
@@ -1059,7 +1065,7 @@ func newFSCheckFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.CheckFileSystem(ctx.cmd.Context(), tdcfs.CheckFileSystemOptions{
+			return service.CheckFileSystem(ctx.cmd.Context(), tifs.CheckFileSystemOptions{
 				Profile: profile,
 			})
 		},
@@ -1086,7 +1092,7 @@ func newFSCopyFileCommand(info version.Info) *cobra.Command {
 				if opts.FromRemote == "" {
 					return nil, apperr.New("fs.invalid_copy_flags", "usage", 2, "--to-stdout requires --from-remote")
 				}
-				data, err := service.ReadFile(ctx.cmd.Context(), tdcfs.ReadFileOptions{Profile: profile, Path: opts.FromRemote})
+				data, err := service.ReadFile(ctx.cmd.Context(), tifs.ReadFileOptions{Profile: profile, Path: opts.FromRemote})
 				if err != nil {
 					return nil, err
 				}
@@ -1140,7 +1146,7 @@ func newFSReadFileCommand(info version.Info) *cobra.Command {
 			if ctx.FlagChanged("offset") != ctx.FlagChanged("length") {
 				return nil, apperr.New("fs.invalid_range", "usage", 2, "--offset and --length must be provided together")
 			}
-			data, err := service.ReadFile(ctx.cmd.Context(), tdcfs.ReadFileOptions{
+			data, err := service.ReadFile(ctx.cmd.Context(), tifs.ReadFileOptions{
 				Profile: profile,
 				Path:    path,
 				Range:   rangeSet,
@@ -1153,7 +1159,7 @@ func newFSReadFileCommand(info version.Info) *cobra.Command {
 			return outputpkg.Raw{Bytes: data}, nil
 		},
 	}, info)
-	cmd.Flags().String("path", "", "tdc fs file path")
+	cmd.Flags().String("path", "", "ti fs file path")
 	cmd.Flags().Int64("offset", 0, "zero-based byte offset for a ranged read")
 	cmd.Flags().Int64("length", 0, "byte length for a ranged read")
 	markUsageRequired(cmd, "path")
@@ -1176,7 +1182,7 @@ func newFSListFilesCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.ListFiles(ctx.cmd.Context(), tdcfs.ListFilesOptions{
+			return service.ListFiles(ctx.cmd.Context(), tifs.ListFilesOptions{
 				Profile: profile,
 				Path:    path,
 			})
@@ -1202,7 +1208,7 @@ func newFSDescribeFileCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.DescribeFile(ctx.cmd.Context(), tdcfs.DescribeFileOptions{
+			return service.DescribeFile(ctx.cmd.Context(), tifs.DescribeFileOptions{
 				Profile: profile,
 				Path:    path,
 			})
@@ -1237,7 +1243,7 @@ func newFSMoveFileCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.MoveFile(ctx.cmd.Context(), tdcfs.MoveFileOptions{
+			return service.MoveFile(ctx.cmd.Context(), tifs.MoveFileOptions{
 				Profile:    profile,
 				FromRemote: fromRemote,
 				ToRemote:   toRemote,
@@ -1272,7 +1278,7 @@ func newFSDeleteFileCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.DeleteFile(ctx.cmd.Context(), tdcfs.DeleteFileOptions{
+			return service.DeleteFile(ctx.cmd.Context(), tifs.DeleteFileOptions{
 				Profile:   profile,
 				Path:      path,
 				Recursive: recursive,
@@ -1305,7 +1311,7 @@ func newFSCreateDirectoryCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.CreateDirectory(ctx.cmd.Context(), tdcfs.CreateDirectoryOptions{
+			return service.CreateDirectory(ctx.cmd.Context(), tifs.CreateDirectoryOptions{
 				Profile: profile,
 				Path:    path,
 				Mode:    mode,
@@ -1338,7 +1344,7 @@ func newFSChmodFileCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.ChmodFile(ctx.cmd.Context(), tdcfs.ChmodFileOptions{Profile: profile, Path: path, Mode: mode})
+			return service.ChmodFile(ctx.cmd.Context(), tifs.ChmodFileOptions{Profile: profile, Path: path, Mode: mode})
 		},
 	}, info)
 	cmd.Flags().String("path", "", "File or directory path.")
@@ -1367,7 +1373,7 @@ func newFSSymlinkFileCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.SymlinkFile(ctx.cmd.Context(), tdcfs.SymlinkFileOptions{Profile: profile, Target: target, Link: link})
+			return service.SymlinkFile(ctx.cmd.Context(), tifs.SymlinkFileOptions{Profile: profile, Target: target, Link: link})
 		},
 	}, info)
 	cmd.Flags().String("target", "", "The actual file path being linked to.")
@@ -1396,7 +1402,7 @@ func newFSHardlinkFileCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.HardlinkFile(ctx.cmd.Context(), tdcfs.HardlinkFileOptions{Profile: profile, Source: source, Link: link})
+			return service.HardlinkFile(ctx.cmd.Context(), tifs.HardlinkFileOptions{Profile: profile, Source: source, Link: link})
 		},
 	}, info)
 	cmd.Flags().String("source-path", "", "The existing file path in the TiDB Cloud file system.")
@@ -1433,7 +1439,7 @@ func newFSSearchFileContentCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.SearchFileContent(ctx.cmd.Context(), tdcfs.SearchFileContentOptions{
+			return service.SearchFileContent(ctx.cmd.Context(), tifs.SearchFileContentOptions{
 				Profile: profile,
 				Path:    path,
 				Pattern: pattern,
@@ -1508,7 +1514,7 @@ func newFSCreateLayerCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			tags, err := tdcfs.ParseLayerTagsForDryRun(opts.Tags)
+			tags, err := tifs.ParseLayerTagsForDryRun(opts.Tags)
 			if err != nil {
 				return dryrun.Result{}, err
 			}
@@ -1544,7 +1550,7 @@ func newFSListLayersCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.ListLayers(ctx.cmd.Context(), tdcfs.ListLayersOptions{Profile: profile})
+			return service.ListLayers(ctx.cmd.Context(), tifs.ListLayersOptions{Profile: profile})
 		},
 	}, info)
 }
@@ -1564,7 +1570,7 @@ func newFSDescribeLayerCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.DescribeLayer(ctx.cmd.Context(), tdcfs.DescribeLayerOptions{Profile: profile, LayerID: layerID})
+			return service.DescribeLayer(ctx.cmd.Context(), tifs.DescribeLayerOptions{Profile: profile, LayerID: layerID})
 		},
 	}, info)
 	cmd.Flags().String("layer-id", "", "The ID of the specified file system layer.")
@@ -1650,7 +1656,7 @@ func newFSRollbackLayerCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.RollbackLayer(ctx.cmd.Context(), tdcfs.LayerActionOptions{Profile: profile, LayerID: layerID})
+			return service.RollbackLayer(ctx.cmd.Context(), tifs.LayerActionOptions{Profile: profile, LayerID: layerID})
 		},
 		DryRun: func(ctx commandContext) (dryrun.Result, error) {
 			service, profile, err := fsServiceAndProfile(ctx)
@@ -1684,7 +1690,7 @@ func newFSCommitLayerCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.CommitLayer(ctx.cmd.Context(), tdcfs.LayerActionOptions{Profile: profile, LayerID: layerID})
+			return service.CommitLayer(ctx.cmd.Context(), tifs.LayerActionOptions{Profile: profile, LayerID: layerID})
 		},
 		DryRun: func(ctx commandContext) (dryrun.Result, error) {
 			service, profile, err := fsServiceAndProfile(ctx)
@@ -1698,7 +1704,7 @@ func newFSCommitLayerCommand(info version.Info) *cobra.Command {
 			return service.DryRunLayerMutation(ctx.cmd.Context(), ctx.CommandPath(), "commit_layer", "POST", "/v1/layers/"+layerID+"/commit", map[string]any{}, profile, authz.FSFileWrite)
 		},
 	}, info)
-	cmd.Flags().String("layer-id", "", "tdc fs layer id")
+	cmd.Flags().String("layer-id", "", "ti fs layer id")
 	markUsageRequired(cmd, "layer-id")
 	return cmd
 }
@@ -1809,20 +1815,20 @@ func newFSMountFileSystemCommand(info version.Info) *cobra.Command {
 			return service.DryRunMountFileSystem(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("file-system-name", "", "The name of the file system. Can also be supplied through TDC_FS_FILE_SYSTEM_NAME.")
+	cmd.Flags().String("file-system-name", "", "The name of the file system. Can also be supplied through TI_FS_FILE_SYSTEM_NAME.")
 	cmd.Flags().String("mount-path", "", "Local mount path.")
 	cmd.Flags().String("remote-path", "/", "The TiDB Cloud file system root path to mount.")
 	cmd.Flags().String("driver", "auto", "Mount driver: auto, fuse, or webdav.")
 	cmd.Flags().Bool("foreground", false, "Run the mount runtime in the foreground until interrupted.")
 	cmd.Flags().Bool("read-only", false, "Read-only mount mode.")
 	cmd.Flags().Duration("ready-timeout", 30*time.Second, "Time to wait for a background mount to become ready.")
-	cmd.Flags().String("cache-dir", "", "Local FUSE cache directory. Default: ~/.tdc/cache/mounts/<mount-hash>.")
+	cmd.Flags().String("cache-dir", "", "Local FUSE cache directory. Default: ~/.ti/cache/mounts/<mount-hash>.")
 	cmd.Flags().Int64("read-cache-size-mb", 128, "FUSE read cache size in MiB. 0 uses the default.")
 	cmd.Flags().Int64("read-cache-max-file-mb", 4, "Maximumfile size admitted to the FUSE read cache in MiB. 0 uses the default.")
 	cmd.Flags().Duration("read-cache-ttl", 30*time.Second, "FUSE read cache Time-to-Live.")
 	cmd.Flags().Bool("write-back-cache", true, "Persist FUSE writes locally before writing them to the file system on flush.")
 	cmd.Flags().String("mount-profile", "", "Mount profile: coding-agent, portable, or none. Default: none.")
-	cmd.Flags().String("local-root", "", "Local overlay root. Default: ~/.tdc/local/fs/<mount-hash>.")
+	cmd.Flags().String("local-root", "", "Local overlay root. Default: ~/.ti/local/fs/<mount-hash>.")
 	cmd.Flags().StringArray("pack-path", nil, "Local overlay path included by automatic or manual pack. Repeatable.")
 	cmd.Flags().String("unpack-archive-path", "", "Restore the pack archive before mounting.")
 	cmd.Flags().Bool("no-auto-unpack", false, "Skip default auto-unpack for portable mount profile before mounting.")
@@ -1870,32 +1876,32 @@ func newFSUnmountFileSystemCommand(info version.Info) *cobra.Command {
 	return cmd
 }
 
-func fsUnmountOptions(ctx commandContext, profile *config.Profile) (tdcfs.UnmountFileSystemOptions, error) {
+func fsUnmountOptions(ctx commandContext, profile *config.Profile) (tifs.UnmountFileSystemOptions, error) {
 	mountPath, err := ctx.StringFlag("mount-path")
 	if err != nil {
-		return tdcfs.UnmountFileSystemOptions{}, err
+		return tifs.UnmountFileSystemOptions{}, err
 	}
 	timeout, err := ctx.DurationFlag("timeout")
 	if err != nil {
-		return tdcfs.UnmountFileSystemOptions{}, err
+		return tifs.UnmountFileSystemOptions{}, err
 	}
 	force, err := ctx.BoolFlag("force")
 	if err != nil {
-		return tdcfs.UnmountFileSystemOptions{}, err
+		return tifs.UnmountFileSystemOptions{}, err
 	}
 	ignoreAbsent, err := ctx.BoolFlag("ignore-absent")
 	if err != nil {
-		return tdcfs.UnmountFileSystemOptions{}, err
+		return tifs.UnmountFileSystemOptions{}, err
 	}
 	packArchivePath, err := ctx.StringFlag("pack-archive-path")
 	if err != nil {
-		return tdcfs.UnmountFileSystemOptions{}, err
+		return tifs.UnmountFileSystemOptions{}, err
 	}
 	noAutoPack, err := ctx.BoolFlag("no-auto-pack")
 	if err != nil {
-		return tdcfs.UnmountFileSystemOptions{}, err
+		return tifs.UnmountFileSystemOptions{}, err
 	}
-	return tdcfs.UnmountFileSystemOptions{
+	return tifs.UnmountFileSystemOptions{
 		Profile:         profile,
 		MountPath:       mountPath,
 		Timeout:         timeout,
@@ -1926,7 +1932,7 @@ func newFSDrainFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.DrainFileSystem(ctx.cmd.Context(), tdcfs.DrainFileSystemOptions{
+			return service.DrainFileSystem(ctx.cmd.Context(), tifs.DrainFileSystemOptions{
 				Profile:   profile,
 				MountPath: mountPath,
 				Timeout:   timeout,
@@ -1945,7 +1951,7 @@ func newFSDrainFileSystemCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunDrainFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tdcfs.DrainFileSystemOptions{
+			return service.DryRunDrainFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tifs.DrainFileSystemOptions{
 				Profile:   profile,
 				MountPath: mountPath,
 				Timeout:   timeout,
@@ -1958,32 +1964,32 @@ func newFSDrainFileSystemCommand(info version.Info) *cobra.Command {
 	return cmd
 }
 
-func fsPackFileSystemOptions(ctx commandContext, profile *config.Profile) (tdcfs.PackFileSystemOptions, error) {
+func fsPackFileSystemOptions(ctx commandContext, profile *config.Profile) (tifs.PackFileSystemOptions, error) {
 	localRoot, err := ctx.StringFlag("local-root")
 	if err != nil {
-		return tdcfs.PackFileSystemOptions{}, err
+		return tifs.PackFileSystemOptions{}, err
 	}
 	remoteRoot, err := ctx.StringFlag("remote-root")
 	if err != nil {
-		return tdcfs.PackFileSystemOptions{}, err
+		return tifs.PackFileSystemOptions{}, err
 	}
 	mountPath, err := ctx.StringFlag("mount-path")
 	if err != nil {
-		return tdcfs.PackFileSystemOptions{}, err
+		return tifs.PackFileSystemOptions{}, err
 	}
 	mountProfile, err := ctx.StringFlag("mount-profile")
 	if err != nil {
-		return tdcfs.PackFileSystemOptions{}, err
+		return tifs.PackFileSystemOptions{}, err
 	}
 	archivePath, err := ctx.StringFlag("archive-path")
 	if err != nil {
-		return tdcfs.PackFileSystemOptions{}, err
+		return tifs.PackFileSystemOptions{}, err
 	}
 	paths, err := ctx.StringArrayFlag("path")
 	if err != nil {
-		return tdcfs.PackFileSystemOptions{}, err
+		return tifs.PackFileSystemOptions{}, err
 	}
-	return tdcfs.PackFileSystemOptions{
+	return tifs.PackFileSystemOptions{
 		Profile:      profile,
 		LocalRoot:    localRoot,
 		RemoteRoot:   remoteRoot,
@@ -1994,32 +2000,32 @@ func fsPackFileSystemOptions(ctx commandContext, profile *config.Profile) (tdcfs
 	}, nil
 }
 
-func fsUnpackFileSystemOptions(ctx commandContext, profile *config.Profile) (tdcfs.UnpackFileSystemOptions, error) {
+func fsUnpackFileSystemOptions(ctx commandContext, profile *config.Profile) (tifs.UnpackFileSystemOptions, error) {
 	localRoot, err := ctx.StringFlag("local-root")
 	if err != nil {
-		return tdcfs.UnpackFileSystemOptions{}, err
+		return tifs.UnpackFileSystemOptions{}, err
 	}
 	remoteRoot, err := ctx.StringFlag("remote-root")
 	if err != nil {
-		return tdcfs.UnpackFileSystemOptions{}, err
+		return tifs.UnpackFileSystemOptions{}, err
 	}
 	mountPath, err := ctx.StringFlag("mount-path")
 	if err != nil {
-		return tdcfs.UnpackFileSystemOptions{}, err
+		return tifs.UnpackFileSystemOptions{}, err
 	}
 	mountProfile, err := ctx.StringFlag("mount-profile")
 	if err != nil {
-		return tdcfs.UnpackFileSystemOptions{}, err
+		return tifs.UnpackFileSystemOptions{}, err
 	}
 	archivePath, err := ctx.StringFlag("archive-path")
 	if err != nil {
-		return tdcfs.UnpackFileSystemOptions{}, err
+		return tifs.UnpackFileSystemOptions{}, err
 	}
 	noReplace, err := ctx.BoolFlag("no-replace")
 	if err != nil {
-		return tdcfs.UnpackFileSystemOptions{}, err
+		return tifs.UnpackFileSystemOptions{}, err
 	}
-	return tdcfs.UnpackFileSystemOptions{
+	return tifs.UnpackFileSystemOptions{
 		Profile:      profile,
 		LocalRoot:    localRoot,
 		RemoteRoot:   remoteRoot,
@@ -2030,68 +2036,68 @@ func fsUnpackFileSystemOptions(ctx commandContext, profile *config.Profile) (tdc
 	}, nil
 }
 
-func fsCopyFileOptions(ctx commandContext, profile *config.Profile) (tdcfs.CopyFileOptions, error) {
+func fsCopyFileOptions(ctx commandContext, profile *config.Profile) (tifs.CopyFileOptions, error) {
 	fromLocal, err := ctx.StringFlag("from-local")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	fromRemote, err := ctx.StringFlag("from-remote")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	toLocal, err := ctx.StringFlag("to-local")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	toRemote, err := ctx.StringFlag("to-remote")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	fromStdin, err := ctx.BoolFlag("from-stdin")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	toStdout, err := ctx.BoolFlag("to-stdout")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	overwrite, err := ctx.BoolFlag("overwrite")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	createParents, err := ctx.BoolFlag("create-parents")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	appendFile, err := ctx.BoolFlag("append")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	recursive, err := ctx.BoolFlag("recursive")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	resume, err := ctx.BoolFlag("resume")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	layerID, err := ctx.StringFlag("layer-id")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	tagValues, err := ctx.StringArrayFlag("tag")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
-	tags, err := tdcfs.ParseFileTags(tagValues)
+	tags, err := tifs.ParseFileTags(tagValues)
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
 	description, err := ctx.StringFlag("description")
 	if err != nil {
-		return tdcfs.CopyFileOptions{}, err
+		return tifs.CopyFileOptions{}, err
 	}
-	return tdcfs.CopyFileOptions{
+	return tifs.CopyFileOptions{
 		Profile:       profile,
 		FromLocal:     fromLocal,
 		FromRemote:    fromRemote,
@@ -2110,48 +2116,48 @@ func fsCopyFileOptions(ctx commandContext, profile *config.Profile) (tdcfs.CopyF
 	}, nil
 }
 
-func fsFindFilesOptions(ctx commandContext, profile *config.Profile) (tdcfs.FindFilesOptions, error) {
+func fsFindFilesOptions(ctx commandContext, profile *config.Profile) (tifs.FindFilesOptions, error) {
 	path, err := ctx.StringFlag("path")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
 	fileNamePattern, err := ctx.StringFlag("file-name-pattern")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
 	resourceType, err := ctx.StringFlag("resource-type")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
 	tag, err := ctx.StringFlag("tag")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
 	layerID, err := ctx.StringFlag("layer-id")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
 	newer, err := ctx.StringFlag("newer")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
 	older, err := ctx.StringFlag("older")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
 	minSizeBytes, err := ctx.Int64Flag("min-size-bytes")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
 	maxSizeBytes, err := ctx.Int64Flag("max-size-bytes")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
 	limit, err := ctx.Int32Flag("limit")
 	if err != nil {
-		return tdcfs.FindFilesOptions{}, err
+		return tifs.FindFilesOptions{}, err
 	}
-	return tdcfs.FindFilesOptions{
+	return tifs.FindFilesOptions{
 		Profile:         profile,
 		Path:            path,
 		FileNamePattern: fileNamePattern,
@@ -2166,32 +2172,32 @@ func fsFindFilesOptions(ctx commandContext, profile *config.Profile) (tdcfs.Find
 	}, nil
 }
 
-func fsCreateLayerOptions(ctx commandContext, profile *config.Profile) (tdcfs.CreateLayerOptions, error) {
+func fsCreateLayerOptions(ctx commandContext, profile *config.Profile) (tifs.CreateLayerOptions, error) {
 	layerID, err := ctx.StringFlag("layer-id")
 	if err != nil {
-		return tdcfs.CreateLayerOptions{}, err
+		return tifs.CreateLayerOptions{}, err
 	}
 	baseRootPath, err := ctx.StringFlag("base-root-path")
 	if err != nil {
-		return tdcfs.CreateLayerOptions{}, err
+		return tifs.CreateLayerOptions{}, err
 	}
 	layerName, err := ctx.StringFlag("layer-name")
 	if err != nil {
-		return tdcfs.CreateLayerOptions{}, err
+		return tifs.CreateLayerOptions{}, err
 	}
 	tags, err := ctx.StringArrayFlag("tag")
 	if err != nil {
-		return tdcfs.CreateLayerOptions{}, err
+		return tifs.CreateLayerOptions{}, err
 	}
 	durabilityMode, err := ctx.StringFlag("durability-mode")
 	if err != nil {
-		return tdcfs.CreateLayerOptions{}, err
+		return tifs.CreateLayerOptions{}, err
 	}
 	actorID, err := ctx.StringFlag("actor-id")
 	if err != nil {
-		return tdcfs.CreateLayerOptions{}, err
+		return tifs.CreateLayerOptions{}, err
 	}
-	return tdcfs.CreateLayerOptions{
+	return tifs.CreateLayerOptions{
 		Profile:        profile,
 		LayerID:        layerID,
 		BaseRootPath:   baseRootPath,
@@ -2202,36 +2208,36 @@ func fsCreateLayerOptions(ctx commandContext, profile *config.Profile) (tdcfs.Cr
 	}, nil
 }
 
-func fsLayerEntriesOptions(ctx commandContext, profile *config.Profile) (tdcfs.LayerEntriesOptions, error) {
+func fsLayerEntriesOptions(ctx commandContext, profile *config.Profile) (tifs.LayerEntriesOptions, error) {
 	layerID, err := ctx.StringFlag("layer-id")
 	if err != nil {
-		return tdcfs.LayerEntriesOptions{}, err
+		return tifs.LayerEntriesOptions{}, err
 	}
 	maxSeq, err := ctx.Int64Flag("max-seq")
 	if err != nil {
-		return tdcfs.LayerEntriesOptions{}, err
+		return tifs.LayerEntriesOptions{}, err
 	}
-	return tdcfs.LayerEntriesOptions{
+	return tifs.LayerEntriesOptions{
 		Profile: profile,
 		LayerID: layerID,
 		MaxSeq:  maxSeq,
 	}, nil
 }
 
-func fsCreateLayerCheckpointOptions(ctx commandContext, profile *config.Profile) (tdcfs.CreateLayerCheckpointOptions, error) {
+func fsCreateLayerCheckpointOptions(ctx commandContext, profile *config.Profile) (tifs.CreateLayerCheckpointOptions, error) {
 	layerID, err := ctx.StringFlag("layer-id")
 	if err != nil {
-		return tdcfs.CreateLayerCheckpointOptions{}, err
+		return tifs.CreateLayerCheckpointOptions{}, err
 	}
 	checkpointID, err := ctx.StringFlag("checkpoint-id")
 	if err != nil {
-		return tdcfs.CreateLayerCheckpointOptions{}, err
+		return tifs.CreateLayerCheckpointOptions{}, err
 	}
 	label, err := ctx.StringFlag("label")
 	if err != nil {
-		return tdcfs.CreateLayerCheckpointOptions{}, err
+		return tifs.CreateLayerCheckpointOptions{}, err
 	}
-	return tdcfs.CreateLayerCheckpointOptions{
+	return tifs.CreateLayerCheckpointOptions{
 		Profile:      profile,
 		LayerID:      layerID,
 		CheckpointID: checkpointID,
@@ -2239,76 +2245,76 @@ func fsCreateLayerCheckpointOptions(ctx commandContext, profile *config.Profile)
 	}, nil
 }
 
-func fsMountOptions(ctx commandContext, profile *config.Profile) (tdcfs.MountFileSystemOptions, error) {
+func fsMountOptions(ctx commandContext, profile *config.Profile) (tifs.MountFileSystemOptions, error) {
 	fileSystemName, err := ctx.StringFlag("file-system-name")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	mountPath, err := ctx.StringFlag("mount-path")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	remotePath, err := ctx.StringFlag("remote-path")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	driver, err := ctx.StringFlag("driver")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	foreground, err := ctx.BoolFlag("foreground")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	readOnly, err := ctx.BoolFlag("read-only")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	readyTimeout, err := ctx.DurationFlag("ready-timeout")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	cacheDir, err := ctx.StringFlag("cache-dir")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	readCacheMB, err := ctx.Int64Flag("read-cache-size-mb")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	readCacheFileMB, err := ctx.Int64Flag("read-cache-max-file-mb")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	readCacheTTL, err := ctx.DurationFlag("read-cache-ttl")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	writeBackCache, err := ctx.BoolFlag("write-back-cache")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	mountProfile, err := ctx.StringFlag("mount-profile")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	localRoot, err := ctx.StringFlag("local-root")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	packPaths, err := ctx.StringArrayFlag("pack-path")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	unpackArchivePath, err := ctx.StringFlag("unpack-archive-path")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
 	noAutoUnpack, err := ctx.BoolFlag("no-auto-unpack")
 	if err != nil {
-		return tdcfs.MountFileSystemOptions{}, err
+		return tifs.MountFileSystemOptions{}, err
 	}
-	return tdcfs.MountFileSystemOptions{
+	return tifs.MountFileSystemOptions{
 		Profile:           profile,
 		FileSystemName:    fileSystemName,
 		MountPath:         mountPath,
@@ -2330,28 +2336,28 @@ func fsMountOptions(ctx commandContext, profile *config.Profile) (tdcfs.MountFil
 	}, nil
 }
 
-func fsTDCServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, error) {
+func fsTIServiceAndProfile(ctx commandContext) (tifs.Service, *config.Profile, error) {
 	profile, err := ctx.LoadProfile()
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	return fsService(ctx, profile)
 }
 
-func fsLocalServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, error) {
+func fsLocalServiceAndProfile(ctx commandContext) (tifs.Service, *config.Profile, error) {
 	profile, err := ctx.LoadLocalProfile()
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	return fsService(ctx, profile)
 }
 
-func fsService(ctx commandContext, profile *config.Profile) (tdcfs.Service, *config.Profile, error) {
+func fsService(ctx commandContext, profile *config.Profile) (tifs.Service, *config.Profile, error) {
 	debug, err := ctx.BoolFlag("debug")
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
-	service := tdcfs.Service{
+	service := tifs.Service{
 		Timeout:     30 * time.Second,
 		Debug:       debug,
 		DebugWriter: ctx.cmd.ErrOrStderr(),
@@ -2363,48 +2369,48 @@ func fsService(ctx commandContext, profile *config.Profile) (tdcfs.Service, *con
 	return service, profile, nil
 }
 
-func fsServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, error) {
+func fsServiceAndProfile(ctx commandContext) (tifs.Service, *config.Profile, error) {
 	return fsAuthenticatedServiceAndProfile(ctx, true)
 }
 
-func fsTDCResourceServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, error) {
-	service, profile, err := fsTDCServiceAndProfile(ctx)
+func fsTIResourceServiceAndProfile(ctx commandContext) (tifs.Service, *config.Profile, error) {
+	service, profile, err := fsTIServiceAndProfile(ctx)
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	selected, err := fsResolveAuthenticatedProfile(ctx, profile, true)
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	if _, err := fscred.Get(profile.HomeDir, profile.Name, selected.FSResourceName); err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	return service, selected, nil
 }
 
-func fsAuthenticatedServiceAndProfile(ctx commandContext, tokenRequired bool) (tdcfs.Service, *config.Profile, error) {
+func fsAuthenticatedServiceAndProfile(ctx commandContext, tokenRequired bool) (tifs.Service, *config.Profile, error) {
 	service, profile, err := fsLocalServiceAndProfile(ctx)
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	selected, err := fsResolveAuthenticatedProfile(ctx, profile, tokenRequired)
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	return service, selected, nil
 }
 
-func fsRegistryServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, error) {
+func fsRegistryServiceAndProfile(ctx commandContext) (tifs.Service, *config.Profile, error) {
 	service, profile, err := fsLocalServiceAndProfile(ctx)
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	selector := ""
 	selectorExplicit := false
 	if ctx.cmd.Flag("file-system-name") != nil {
 		selector, err = ctx.StringFlag("file-system-name")
 		if err != nil {
-			return tdcfs.Service{}, nil, err
+			return tifs.Service{}, nil, err
 		}
 		selectorExplicit = ctx.FlagChanged("file-system-name")
 	}
@@ -2414,19 +2420,19 @@ func fsRegistryServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Pro
 	}
 	selected, _, err := resolve(profile.HomeDir, profile, selector, selectorExplicit, nil)
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	return service, selected, nil
 }
 
-func fsAdjunctServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, error) {
+func fsAdjunctServiceAndProfile(ctx commandContext) (tifs.Service, *config.Profile, error) {
 	return fsServiceAndProfile(ctx)
 }
 
-func fsVaultServiceAndProfile(ctx commandContext) (tdcfs.Service, *config.Profile, error) {
+func fsVaultServiceAndProfile(ctx commandContext) (tifs.Service, *config.Profile, error) {
 	token, err := vaultToken(ctx)
 	if err != nil {
-		return tdcfs.Service{}, nil, err
+		return tifs.Service{}, nil, err
 	}
 	return fsAuthenticatedServiceAndProfile(ctx, strings.TrimSpace(token) == "")
 }
@@ -2456,7 +2462,11 @@ func fsResolveAuthenticatedProfile(ctx commandContext, profile *config.Profile, 
 	if flag := ctx.cmd.Flag("region"); flag != nil && flag.Changed {
 		regionOverride = strings.TrimSpace(flag.Value.String())
 	} else {
-		regionOverride = strings.TrimSpace(os.Getenv("TDC_REGION_CODE"))
+		value, _, _, err := envcompat.ResolveNames(nil, "TI_REGION_CODE", "TDC_REGION_CODE")
+		if err != nil {
+			return nil, err
+		}
+		regionOverride = strings.TrimSpace(value)
 	}
 	dryRun, _ := ctx.BoolFlag("dry-run")
 	selected, _, err := fscred.ResolveAuthenticated(profile.HomeDir, profile, fscred.ResolveAuthOptions{
@@ -2522,7 +2532,7 @@ func newVaultCreateSecretCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.CreateVaultSecret(ctx.cmd.Context(), tdcfs.VaultCreateSecretOptions{
+			return service.CreateVaultSecret(ctx.cmd.Context(), tifs.VaultCreateSecretOptions{
 				Profile:    profile,
 				SecretName: name,
 				Fields:     fields,
@@ -2555,7 +2565,7 @@ func newVaultReplaceSecretCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.ReplaceVaultSecret(ctx.cmd.Context(), tdcfs.VaultReplaceSecretOptions{
+			return service.ReplaceVaultSecret(ctx.cmd.Context(), tifs.VaultReplaceSecretOptions{
 				Profile:       profile,
 				SecretPath:    secretPath,
 				FromDirectory: fromDirectory,
@@ -2595,7 +2605,7 @@ func newVaultReadSecretCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			result, err := service.ReadVaultSecret(ctx.cmd.Context(), tdcfs.VaultReadSecretOptions{
+			result, err := service.ReadVaultSecret(ctx.cmd.Context(), tifs.VaultReadSecretOptions{
 				Profile:    profile,
 				SecretName: name,
 				Field:      field,
@@ -2614,7 +2624,7 @@ func newVaultReadSecretCommand(info version.Info) *cobra.Command {
 	cmd.Flags().String("secret-name", "", "Vault secret name.")
 	cmd.Flags().String("field", "", "Field name to read.")
 	cmd.Flags().String("format", "json", "Read output format: json, raw, or env.")
-	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TDC_VAULT_TOKEN environment variable.")
+	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TI_VAULT_TOKEN environment variable.")
 	markUsageRequired(cmd, "secret-name")
 	return cmd
 }
@@ -2634,10 +2644,10 @@ func newVaultListSecretsCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.ListVaultSecrets(ctx.cmd.Context(), tdcfs.VaultListSecretsOptions{Profile: profile, VaultToken: token})
+			return service.ListVaultSecrets(ctx.cmd.Context(), tifs.VaultListSecretsOptions{Profile: profile, VaultToken: token})
 		},
 	}, info)
-	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TDC_VAULT_TOKEN environment variable.")
+	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TI_VAULT_TOKEN environment variable.")
 	return cmd
 }
 
@@ -2656,7 +2666,7 @@ func newVaultDeleteSecretCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.DeleteVaultSecret(ctx.cmd.Context(), tdcfs.VaultDeleteSecretOptions{Profile: profile, SecretName: name})
+			return service.DeleteVaultSecret(ctx.cmd.Context(), tifs.VaultDeleteSecretOptions{Profile: profile, SecretName: name})
 		},
 	}, info)
 	cmd.Flags().String("secret-name", "", "vault secret name")
@@ -2722,11 +2732,11 @@ func newVaultDeleteGrantCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.DeleteVaultGrant(ctx.cmd.Context(), tdcfs.VaultDeleteGrantOptions{Profile: profile, GrantID: grantID, RevokedBy: revokedBy, Reason: reason})
+			return service.DeleteVaultGrant(ctx.cmd.Context(), tifs.VaultDeleteGrantOptions{Profile: profile, GrantID: grantID, RevokedBy: revokedBy, Reason: reason})
 		},
 	}, info)
 	cmd.Flags().String("grant-id", "", "Vault grant ID.")
-	cmd.Flags().String("revoked-by", "tdc", "Actor label for the revoke audit entry.")
+	cmd.Flags().String("revoked-by", "ti", "Actor label for the revoke audit entry.")
 	cmd.Flags().String("reason", "", "The reason for the revoke.")
 	markUsageRequired(cmd, "grant-id")
 	return cmd
@@ -2759,7 +2769,7 @@ func newVaultListAuditEventsCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.ListVaultAuditEvents(ctx.cmd.Context(), tdcfs.VaultAuditOptions{
+			return service.ListVaultAuditEvents(ctx.cmd.Context(), tifs.VaultAuditOptions{
 				Profile:    profile,
 				SecretName: secretName,
 				AgentID:    agentID,
@@ -2771,7 +2781,7 @@ func newVaultListAuditEventsCommand(info version.Info) *cobra.Command {
 	cmd.Flags().String("secret-name", "", "Filter by vault secret name.")
 	cmd.Flags().String("agent-id", "", "Filter by agent ID.")
 	cmd.Flags().Duration("since", 0, "Relative time filter for client-side time, for example 24h.")
-	cmd.Flags().Int32("limit", int32(tdcfs.DefaultVaultAuditLimit), "The maximum number of events to return.")
+	cmd.Flags().Int32("limit", int32(tifs.DefaultVaultAuditLimit), "The maximum number of events to return.")
 	return cmd
 }
 
@@ -2793,7 +2803,7 @@ func newVaultRunWithSecretCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return service.RunWithVaultSecret(cmd.Context(), tdcfs.VaultRunWithSecretOptions{
+			return service.RunWithVaultSecret(cmd.Context(), tifs.VaultRunWithSecretOptions{
 				Profile:    profile,
 				SecretPath: secretPath,
 				VaultToken: token,
@@ -2806,7 +2816,7 @@ func newVaultRunWithSecretCommand(info version.Info) *cobra.Command {
 	}, info)
 	cmd.Args = cobra.ArbitraryArgs
 	cmd.Flags().String("secret-path", "", "Vault path in the form /n/vault/<secret>.")
-	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TDC_VAULT_TOKEN.")
+	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TI_VAULT_TOKEN.")
 	markUsageRequired(cmd, "secret-path")
 	return cmd
 }
@@ -2843,7 +2853,7 @@ func newVaultMountCommand(info version.Info) *cobra.Command {
 	cmd.Flags().String("mount-path", "", "The local mount path.")
 	cmd.Flags().Bool("foreground", false, "Run mount runtime in the foreground until interrupted.")
 	cmd.Flags().Duration("ready-timeout", 30*time.Second, "The time to wait for a background mount to become ready.")
-	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TDC_VAULT_TOKEN environment variable.")
+	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TI_VAULT_TOKEN environment variable.")
 	markUsageRequired(cmd, "mount-path")
 	return cmd
 }
@@ -2875,7 +2885,7 @@ func newVaultUnmountCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.UnmountFileSystem(ctx.cmd.Context(), tdcfs.UnmountFileSystemOptions{
+			return service.UnmountFileSystem(ctx.cmd.Context(), tifs.UnmountFileSystemOptions{
 				Profile:      profile,
 				MountPath:    mountPath,
 				Timeout:      timeout,
@@ -2905,7 +2915,7 @@ func newVaultUnmountCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunUnmountFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tdcfs.UnmountFileSystemOptions{
+			return service.DryRunUnmountFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tifs.UnmountFileSystemOptions{
 				Profile:      profile,
 				MountPath:    mountPath,
 				Timeout:      timeout,
@@ -2923,52 +2933,52 @@ func newVaultUnmountCommand(info version.Info) *cobra.Command {
 	return cmd
 }
 
-func vaultCreateGrantOptions(ctx commandContext, profile *config.Profile) (tdcfs.VaultCreateGrantOptions, error) {
+func vaultCreateGrantOptions(ctx commandContext, profile *config.Profile) (tifs.VaultCreateGrantOptions, error) {
 	agentID, err := ctx.StringFlag("agent-id")
 	if err != nil {
-		return tdcfs.VaultCreateGrantOptions{}, err
+		return tifs.VaultCreateGrantOptions{}, err
 	}
 	scopes, err := ctx.StringArrayFlag("scope")
 	if err != nil {
-		return tdcfs.VaultCreateGrantOptions{}, err
+		return tifs.VaultCreateGrantOptions{}, err
 	}
 	permission, err := ctx.StringFlag("permission")
 	if err != nil {
-		return tdcfs.VaultCreateGrantOptions{}, err
+		return tifs.VaultCreateGrantOptions{}, err
 	}
 	ttl, err := ctx.DurationFlag("ttl")
 	if err != nil {
-		return tdcfs.VaultCreateGrantOptions{}, err
+		return tifs.VaultCreateGrantOptions{}, err
 	}
 	labelHint, err := ctx.StringFlag("label-hint")
 	if err != nil {
-		return tdcfs.VaultCreateGrantOptions{}, err
+		return tifs.VaultCreateGrantOptions{}, err
 	}
 	tokenOnly, err := ctx.BoolFlag("token-only")
 	if err != nil {
-		return tdcfs.VaultCreateGrantOptions{}, err
+		return tifs.VaultCreateGrantOptions{}, err
 	}
-	return tdcfs.VaultCreateGrantOptions{Profile: profile, AgentID: agentID, Scopes: scopes, Permission: permission, TTL: ttl, LabelHint: labelHint, TokenOnly: tokenOnly}, nil
+	return tifs.VaultCreateGrantOptions{Profile: profile, AgentID: agentID, Scopes: scopes, Permission: permission, TTL: ttl, LabelHint: labelHint, TokenOnly: tokenOnly}, nil
 }
 
-func vaultMountOptions(ctx commandContext, profile *config.Profile) (tdcfs.VaultMountOptions, error) {
+func vaultMountOptions(ctx commandContext, profile *config.Profile) (tifs.VaultMountOptions, error) {
 	mountPath, err := ctx.StringFlag("mount-path")
 	if err != nil {
-		return tdcfs.VaultMountOptions{}, err
+		return tifs.VaultMountOptions{}, err
 	}
 	foreground, err := ctx.BoolFlag("foreground")
 	if err != nil {
-		return tdcfs.VaultMountOptions{}, err
+		return tifs.VaultMountOptions{}, err
 	}
 	readyTimeout, err := ctx.DurationFlag("ready-timeout")
 	if err != nil {
-		return tdcfs.VaultMountOptions{}, err
+		return tifs.VaultMountOptions{}, err
 	}
 	token, err := vaultToken(ctx)
 	if err != nil {
-		return tdcfs.VaultMountOptions{}, err
+		return tifs.VaultMountOptions{}, err
 	}
-	return tdcfs.VaultMountOptions{
+	return tifs.VaultMountOptions{
 		Profile:      profile,
 		MountPath:    mountPath,
 		VaultToken:   token,
@@ -2985,7 +2995,8 @@ func vaultToken(ctx commandContext) (string, error) {
 	if token != "" {
 		return token, nil
 	}
-	return os.Getenv("TDC_VAULT_TOKEN"), nil
+	value, _, _, err := envcompat.ResolveNames(nil, "TI_VAULT_TOKEN", "TDC_VAULT_TOKEN")
+	return value, err
 }
 
 func newFSGitCommand(info version.Info) *cobra.Command {
@@ -3047,7 +3058,7 @@ func newGitHydrateWorkspaceCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.HydrateGitWorkspace(ctx.cmd.Context(), tdcfs.GitWorkspaceHydrateOptions{Profile: profile, TargetPath: targetPath, Timeout: timeout})
+			return service.HydrateGitWorkspace(ctx.cmd.Context(), tifs.GitWorkspaceHydrateOptions{Profile: profile, TargetPath: targetPath, Timeout: timeout})
 		},
 	}, info)
 	cmd.Flags().String("target-path", "", "The workspace path with a file system mounted.")
@@ -3104,7 +3115,7 @@ func newGitRemoveWorktreeCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.RemoveGitWorktree(ctx.cmd.Context(), tdcfs.GitWorktreeRemoveOptions{Profile: profile, WorktreePath: worktreePath, Force: force})
+			return service.RemoveGitWorktree(ctx.cmd.Context(), tifs.GitWorktreeRemoveOptions{Profile: profile, WorktreePath: worktreePath, Force: force})
 		},
 	}, info)
 	cmd.Flags().String("worktree-path", "", "Mounted file system path of the linked worktree.")
@@ -3113,56 +3124,56 @@ func newGitRemoveWorktreeCommand(info version.Info) *cobra.Command {
 	return cmd
 }
 
-func gitWorkspaceCloneOptions(ctx commandContext, profile *config.Profile) (tdcfs.GitWorkspaceCloneOptions, error) {
+func gitWorkspaceCloneOptions(ctx commandContext, profile *config.Profile) (tifs.GitWorkspaceCloneOptions, error) {
 	repoURL, err := ctx.StringFlag("repo-url")
 	if err != nil {
-		return tdcfs.GitWorkspaceCloneOptions{}, err
+		return tifs.GitWorkspaceCloneOptions{}, err
 	}
 	targetPath, err := ctx.StringFlag("target-path")
 	if err != nil {
-		return tdcfs.GitWorkspaceCloneOptions{}, err
+		return tifs.GitWorkspaceCloneOptions{}, err
 	}
 	blobless, err := ctx.BoolFlag("blobless")
 	if err != nil {
-		return tdcfs.GitWorkspaceCloneOptions{}, err
+		return tifs.GitWorkspaceCloneOptions{}, err
 	}
 	hydrate, err := ctx.StringFlag("hydrate")
 	if err != nil {
-		return tdcfs.GitWorkspaceCloneOptions{}, err
+		return tifs.GitWorkspaceCloneOptions{}, err
 	}
-	return tdcfs.GitWorkspaceCloneOptions{Profile: profile, RepoURL: repoURL, TargetPath: targetPath, Blobless: blobless, HydrateMode: hydrate}, nil
+	return tifs.GitWorkspaceCloneOptions{Profile: profile, RepoURL: repoURL, TargetPath: targetPath, Blobless: blobless, HydrateMode: hydrate}, nil
 }
 
-func gitWorktreeAddOptions(ctx commandContext, profile *config.Profile) (tdcfs.GitWorktreeAddOptions, error) {
+func gitWorktreeAddOptions(ctx commandContext, profile *config.Profile) (tifs.GitWorktreeAddOptions, error) {
 	basePath, err := ctx.StringFlag("base-path")
 	if err != nil {
-		return tdcfs.GitWorktreeAddOptions{}, err
+		return tifs.GitWorktreeAddOptions{}, err
 	}
 	worktreePath, err := ctx.StringFlag("worktree-path")
 	if err != nil {
-		return tdcfs.GitWorktreeAddOptions{}, err
+		return tifs.GitWorktreeAddOptions{}, err
 	}
 	branchName, err := ctx.StringFlag("branch-name")
 	if err != nil {
-		return tdcfs.GitWorktreeAddOptions{}, err
+		return tifs.GitWorktreeAddOptions{}, err
 	}
 	detach, err := ctx.BoolFlag("detach")
 	if err != nil {
-		return tdcfs.GitWorktreeAddOptions{}, err
+		return tifs.GitWorktreeAddOptions{}, err
 	}
 	blobless, err := ctx.BoolFlag("blobless")
 	if err != nil {
-		return tdcfs.GitWorktreeAddOptions{}, err
+		return tifs.GitWorktreeAddOptions{}, err
 	}
 	hydrate, err := ctx.StringFlag("hydrate")
 	if err != nil {
-		return tdcfs.GitWorktreeAddOptions{}, err
+		return tifs.GitWorktreeAddOptions{}, err
 	}
 	commitISH, err := ctx.StringFlag("commit-ish")
 	if err != nil {
-		return tdcfs.GitWorktreeAddOptions{}, err
+		return tifs.GitWorktreeAddOptions{}, err
 	}
-	return tdcfs.GitWorktreeAddOptions{
+	return tifs.GitWorktreeAddOptions{
 		Profile:      profile,
 		BasePath:     basePath,
 		WorktreePath: worktreePath,
@@ -3220,7 +3231,7 @@ func newJournalCreateCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.CreateJournal(ctx.cmd.Context(), tdcfs.JournalCreateOptions{
+			return service.CreateJournal(ctx.cmd.Context(), tifs.JournalCreateOptions{
 				Profile:     profile,
 				JournalID:   journalID,
 				JournalKind: journalKind,
@@ -3277,7 +3288,7 @@ func newJournalAppendEntriesCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.AppendJournalEntries(ctx.cmd.Context(), tdcfs.JournalAppendOptions{
+			return service.AppendJournalEntries(ctx.cmd.Context(), tifs.JournalAppendOptions{
 				Profile:        profile,
 				JournalID:      journalID,
 				IdempotencyKey: idempotencyKey,
@@ -3324,7 +3335,7 @@ func newJournalReadEntriesCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.ReadJournalEntries(ctx.cmd.Context(), tdcfs.JournalReadOptions{
+			return service.ReadJournalEntries(ctx.cmd.Context(), tifs.JournalReadOptions{
 				Profile:   profile,
 				JournalID: journalID,
 				AfterSeq:  afterSeq,
@@ -3394,7 +3405,7 @@ func newJournalSearchEntriesCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.SearchJournal(ctx.cmd.Context(), tdcfs.JournalSearchOptions{
+			return service.SearchJournal(ctx.cmd.Context(), tifs.JournalSearchOptions{
 				Profile:        profile,
 				EntryType:      entryType,
 				Status:         status,
@@ -3439,7 +3450,7 @@ func newJournalVerifyCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.VerifyJournal(ctx.cmd.Context(), tdcfs.JournalVerifyOptions{
+			return service.VerifyJournal(ctx.cmd.Context(), tifs.JournalVerifyOptions{
 				Profile:   profile,
 				JournalID: journalID,
 			})

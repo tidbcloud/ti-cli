@@ -9,7 +9,7 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
-const VersionTable = "tdc_telemetry_schema_migrations"
+const VersionTable = "ti_telemetry_schema_migrations"
 
 //go:embed sql/*.sql
 var files embed.FS

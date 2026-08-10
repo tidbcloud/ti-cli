@@ -20,11 +20,11 @@ jobs:
   live-e2e:
     runs-on: ubuntu-latest
     env:
-      TDC_REGION_CODE: ${{ vars.TDC_REGION_CODE }}
-      TDC_PUBLIC_KEY: ${{ secrets.TDC_PUBLIC_KEY }}
-      TDC_PRIVATE_KEY: ${{ secrets.TDC_PRIVATE_KEY }}
-      TDC_LIVE_HOME: /tmp/tdc-live-home-${{ github.run_id }}-${{ github.run_attempt }}
-      TDC_LIVE_FS_NAME: tdc-live-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+      TI_REGION_CODE: ${{ vars.TI_REGION_CODE }}
+      TIDB_CLOUD_PUBLIC_KEY: ${{ secrets.TIDB_CLOUD_PUBLIC_KEY }}
+      TIDB_CLOUD_PRIVATE_KEY: ${{ secrets.TIDB_CLOUD_PRIVATE_KEY }}
+      TI_LIVE_HOME: /tmp/ti-live-home-${{ github.run_id }}-${{ github.run_attempt }}
+      TI_LIVE_FS_NAME: ti-live-e2e-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -37,18 +37,18 @@ jobs:
       - name: Mask live secrets
         run: |
           set -euo pipefail
-          if [ -n "${TDC_PUBLIC_KEY:-}" ]; then
-            echo "::add-mask::$TDC_PUBLIC_KEY"
+          if [ -n "${TIDB_CLOUD_PUBLIC_KEY:-}" ]; then
+            echo "::add-mask::$TIDB_CLOUD_PUBLIC_KEY"
           fi
-          if [ -n "${TDC_PRIVATE_KEY:-}" ]; then
-            echo "::add-mask::$TDC_PRIVATE_KEY"
+          if [ -n "${TIDB_CLOUD_PRIVATE_KEY:-}" ]; then
+            echo "::add-mask::$TIDB_CLOUD_PRIVATE_KEY"
           fi
 
       - name: Validate live configuration
         run: |
           set -euo pipefail
           missing=0
-          for name in TDC_REGION_CODE TDC_PUBLIC_KEY TDC_PRIVATE_KEY; do
+          for name in TI_REGION_CODE TIDB_CLOUD_PUBLIC_KEY TIDB_CLOUD_PRIVATE_KEY; do
             if [ -z "${!name:-}" ]; then
               echo "::error::$name is required for live-e2e"
               missing=1
@@ -75,36 +75,36 @@ jobs:
 
       - name: Configure live profile
         env:
-          HOME: ${{ env.TDC_LIVE_HOME }}
+          HOME: ${{ env.TI_LIVE_HOME }}
         run: |
           set -euo pipefail
           mkdir -p "$HOME"
-          bin/tdc configure --profile live-e2e --non-interactive
+          bin/ti configure --profile live-e2e --non-interactive
 
-      - name: Create temporary tdc fs resource
+      - name: Create temporary ti fs resource
         env:
-          HOME: ${{ env.TDC_LIVE_HOME }}
+          HOME: ${{ env.TI_LIVE_HOME }}
         run: |
           set -euo pipefail
-          bin/tdc fs create-file-system \
+          bin/ti fs create-file-system \
             --profile live-e2e \
-            --file-system-name "$TDC_LIVE_FS_NAME"
+            --file-system-name "$TI_LIVE_FS_NAME"
 
       - name: Run live e2e
         env:
-          HOME: ${{ env.TDC_LIVE_HOME }}
+          HOME: ${{ env.TI_LIVE_HOME }}
         run: make live-e2e
 
-      - name: Delete temporary tdc fs resource
+      - name: Delete temporary ti fs resource
         if: always()
         env:
-          HOME: ${{ env.TDC_LIVE_HOME }}
+          HOME: ${{ env.TI_LIVE_HOME }}
         run: |
           set -euo pipefail
-          if [ ! -f "$HOME/.tdc/config" ] || [ ! -f "$HOME/.tdc/credentials" ]; then
-            echo "Skipping tdc fs cleanup because live profile files were not created."
+          if [ ! -f "$HOME/.ti/config" ] || [ ! -f "$HOME/.ti/credentials" ]; then
+            echo "Skipping ti fs cleanup because live profile files were not created."
             exit 0
           fi
-          bin/tdc fs delete-file-system \
+          bin/ti fs delete-file-system \
             --profile live-e2e \
-            --file-system-name "$TDC_LIVE_FS_NAME"
+            --file-system-name "$TI_LIVE_FS_NAME"

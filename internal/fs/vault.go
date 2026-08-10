@@ -11,14 +11,14 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	"github.com/tidbcloud/tdc/internal/fs/mountdriver"
-	"github.com/tidbcloud/tdc/internal/fs/mountstate"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountdriver"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 )
 
 const (
@@ -173,7 +173,7 @@ func (s Service) DryRunMountVault(ctx context.Context, commandPath string, opts 
 		commandPath,
 		"mount_vault",
 		dryrun.RequestSummary{
-			Description: "normal execution starts a local read-only FUSE runtime exposing tdc fs-vault secrets as /<secret>/<field>",
+			Description: "normal execution starts a local read-only FUSE runtime exposing ti fs-vault secrets as /<secret>/<field>",
 			Method:      "GET",
 			Path:        "/v1/vault/secrets or /v1/vault/read",
 			Body: map[string]any{
@@ -188,7 +188,7 @@ func (s Service) DryRunMountVault(ctx context.Context, commandPath string, opts 
 func (s Service) mountVaultBackground(ctx context.Context, inputs vaultMountInputs, checks []MountRuntimeCheck) (MountResult, error) {
 	executable, err := os.Executable()
 	if err != nil {
-		return MountResult{}, apperr.Wrap("vault.executable_path", "runtime", 1, "determine tdc executable path for background vault mount", err)
+		return MountResult{}, apperr.Wrap("vault.executable_path", "runtime", 1, "determine ti executable path for background vault mount", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(inputs.logFile), 0o700); err != nil {
 		return MountResult{}, apperr.Wrap("vault.mount_log_dir", "runtime", 1, fmt.Sprintf("create mount log directory %q", filepath.Dir(inputs.logFile)), err)
@@ -201,7 +201,7 @@ func (s Service) mountVaultBackground(ctx context.Context, inputs vaultMountInpu
 	}
 	env := []string(nil)
 	if strings.TrimSpace(inputs.vaultToken) != "" {
-		env = append(env, "TDC_VAULT_TOKEN="+strings.TrimSpace(inputs.vaultToken))
+		env = append(env, "TI_VAULT_TOKEN="+strings.TrimSpace(inputs.vaultToken))
 	}
 	pid, err := startBackgroundMount(ctx, backgroundMountRequest{
 		Executable: executable,
@@ -232,7 +232,7 @@ func (s Service) vaultMountInputs(ctx context.Context, opts VaultMountOptions) (
 	if err != nil {
 		return vaultMountInputs{}, nil, err
 	}
-	client, ownerMode, err := s.vaultReadClient(opts.Profile, opts.VaultToken, authz.FSVaultSecretRead, "mount tdc fs-vault")
+	client, ownerMode, err := s.vaultReadClient(opts.Profile, opts.VaultToken, authz.FSVaultSecretRead, "mount ti fs-vault")
 	if err != nil {
 		return vaultMountInputs{}, nil, err
 	}
@@ -374,7 +374,7 @@ func (s Service) vaultReadClient(profile *config.Profile, token string, permissi
 		Timeout:     s.Timeout,
 		Debug:       s.Debug,
 		DebugWriter: s.DebugWriter,
-		UserAgent:   "tdc fs-vault",
+		UserAgent:   "ti fs-vault",
 	})
 	if err != nil {
 		return nil, false, err
@@ -578,7 +578,7 @@ func indexOfForbiddenVaultEnvByte(value string) int {
 	return -1
 }
 
-func scrubTDCCredEnv(base []string) []string {
+func scrubTICredEnv(base []string) []string {
 	out := make([]string, 0, len(base))
 	for _, entry := range base {
 		key, _, ok := strings.Cut(entry, "=")
@@ -587,7 +587,9 @@ func scrubTDCCredEnv(base []string) []string {
 			continue
 		}
 		switch key {
-		case "TDC_PRIVATE_KEY", "TDC_PUBLIC_KEY", "TDC_VAULT_TOKEN", "TDC_FS_API_KEY":
+		case "TIDB_CLOUD_PRIVATE_KEY", "TIDB_CLOUD_PUBLIC_KEY", "TI_VAULT_TOKEN", "TI_FS_TOKEN", "TI_FS_API_KEY",
+			"TDC_PRIVATE_KEY", "TDC_PUBLIC_KEY", "TDC_VAULT_TOKEN", "TDC_FS_TOKEN",
+			"DRIVE9_PRIVATE_KEY", "DRIVE9_PUBLIC_KEY", "DRIVE9_VAULT_TOKEN", "DRIVE9_API_KEY":
 			continue
 		}
 		out = append(out, entry)

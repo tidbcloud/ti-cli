@@ -10,11 +10,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apiiam "github.com/tidbcloud/tdc/internal/api/iam"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apiiam "github.com/tidbcloud/ti-cli/internal/api/iam"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 func TestRunWritesProfileAndDoesNotPrintSecret(t *testing.T) {
@@ -54,7 +54,7 @@ func TestRunWritesProfileAndDoesNotPrintSecret(t *testing.T) {
 	if profile.CloudProvider != "aws" || profile.RegionCode != "us-east-1" {
 		t.Fatalf("unexpected profile: %#v", profile)
 	}
-	if profile.TDCPrivateKey != "private-key" {
+	if profile.TiDBCloudPrivateKey != "private-key" {
 		t.Fatal("private key was not stored")
 	}
 	if profile.ProjectID != "virtual-1" {
@@ -84,9 +84,9 @@ func TestRunNonInteractiveUsesEnvironment(t *testing.T) {
 		HomeDir:        home,
 		NonInteractive: true,
 		Env: map[string]string{
-			"TDC_REGION_CODE": "aws-us-east-1",
-			"TDC_PUBLIC_KEY":  "env-public",
-			"TDC_PRIVATE_KEY": "env-private",
+			"TI_REGION_CODE":         "aws-us-east-1",
+			"TIDB_CLOUD_PUBLIC_KEY":  "env-public",
+			"TIDB_CLOUD_PRIVATE_KEY": "env-private",
 		},
 		Out:      &output,
 		Resolver: testProjectResolver(t, `{"projects":[{"id":"virtual-env","type":"tidbx_virtual"}]}`),
@@ -112,7 +112,7 @@ func TestRunNonInteractiveUsesEnvironment(t *testing.T) {
 	if profile.CloudProvider != "aws" || profile.RegionCode != "us-east-1" {
 		t.Fatalf("unexpected profile: %#v", profile)
 	}
-	if profile.TDCPublicKey != "env-public" || profile.TDCPrivateKey != "env-private" {
+	if profile.TiDBCloudPublicKey != "env-public" || profile.TiDBCloudPrivateKey != "env-private" {
 		t.Fatalf("env credentials not stored: %#v", profile)
 	}
 	if profile.ProjectID != "virtual-env" {
@@ -125,8 +125,8 @@ func TestRunNonInteractiveRequiresMissingValues(t *testing.T) {
 		HomeDir:        t.TempDir(),
 		NonInteractive: true,
 		Env: map[string]string{
-			"TDC_REGION_CODE": "aws-us-east-1",
-			"TDC_PUBLIC_KEY":  "env-public",
+			"TI_REGION_CODE":        "aws-us-east-1",
+			"TIDB_CLOUD_PUBLIC_KEY": "env-public",
 		},
 		Out: &bytes.Buffer{},
 	})
@@ -205,7 +205,7 @@ func TestSelectVirtualProjectPropagatesCancellation(t *testing.T) {
 
 func TestRunDiscoveryFailurePreservesExistingProfile(t *testing.T) {
 	home := t.TempDir()
-	if err := store.WriteProfile(home, "stage", store.ConfigProfile{RegionCode: "aws-us-west-2", ProjectID: "virtual-old"}, store.CredentialsProfile{TDCPublicKey: "old-public", TDCPrivateKey: "old-private"}); err != nil {
+	if err := store.WriteProfile(home, "stage", store.ConfigProfile{RegionCode: "aws-us-west-2", ProjectID: "virtual-old"}, store.CredentialsProfile{TiDBCloudPublicKey: "old-public", TiDBCloudPrivateKey: "old-private"}); err != nil {
 		t.Fatal(err)
 	}
 	beforeConfig, err := os.ReadFile(store.ConfigPath(home))
@@ -218,13 +218,13 @@ func TestRunDiscoveryFailurePreservesExistingProfile(t *testing.T) {
 	}
 
 	_, err = Run(context.Background(), Options{
-		Profile:        "stage",
-		HomeDir:        home,
-		NonInteractive: true,
-		RegionCode:     "aws-us-east-1",
-		TDCPublicKey:   "new-public",
-		TDCPrivateKey:  "new-private",
-		Resolver:       testProjectResolver(t, `{"projects":[{"id":"regular-1","type":"tidbx"}]}`),
+		Profile:             "stage",
+		HomeDir:             home,
+		NonInteractive:      true,
+		RegionCode:          "aws-us-east-1",
+		TiDBCloudPublicKey:  "new-public",
+		TiDBCloudPrivateKey: "new-private",
+		Resolver:            testProjectResolver(t, `{"projects":[{"id":"regular-1","type":"tidbx"}]}`),
 	})
 	if apperr.CodeFor(err) != "config.virtual_project_not_found" {
 		t.Fatalf("unexpected error: %v", err)
@@ -238,17 +238,17 @@ func TestRunDiscoveryFailurePreservesExistingProfile(t *testing.T) {
 
 func TestRunReconfigureReplacesProjectID(t *testing.T) {
 	home := t.TempDir()
-	if err := store.WriteProfile(home, "stage", store.ConfigProfile{RegionCode: "aws-us-west-2", ProjectID: "virtual-old"}, store.CredentialsProfile{TDCPublicKey: "old-public", TDCPrivateKey: "old-private"}); err != nil {
+	if err := store.WriteProfile(home, "stage", store.ConfigProfile{RegionCode: "aws-us-west-2", ProjectID: "virtual-old"}, store.CredentialsProfile{TiDBCloudPublicKey: "old-public", TiDBCloudPrivateKey: "old-private"}); err != nil {
 		t.Fatal(err)
 	}
 	_, err := Run(context.Background(), Options{
-		Profile:        "stage",
-		HomeDir:        home,
-		NonInteractive: true,
-		RegionCode:     "aws-us-east-1",
-		TDCPublicKey:   "new-public",
-		TDCPrivateKey:  "new-private",
-		Resolver:       testProjectResolver(t, `{"projects":[{"id":"virtual-new","type":"tidbx_virtual"}]}`),
+		Profile:             "stage",
+		HomeDir:             home,
+		NonInteractive:      true,
+		RegionCode:          "aws-us-east-1",
+		TiDBCloudPublicKey:  "new-public",
+		TiDBCloudPrivateKey: "new-private",
+		Resolver:            testProjectResolver(t, `{"projects":[{"id":"virtual-new","type":"tidbx_virtual"}]}`),
 	})
 	if err != nil {
 		t.Fatalf("reconfigure: %v", err)
@@ -257,7 +257,7 @@ func TestRunReconfigureReplacesProjectID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.ProjectID != "virtual-new" || profile.TDCPublicKey != "new-public" {
+	if profile.ProjectID != "virtual-new" || profile.TiDBCloudPublicKey != "new-public" {
 		t.Fatalf("profile was not refreshed: %#v", profile)
 	}
 }

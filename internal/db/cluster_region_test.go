@@ -3,8 +3,8 @@ package db
 import (
 	"testing"
 
-	apistarter "github.com/tidbcloud/tdc/internal/api/starter"
-	"github.com/tidbcloud/tdc/internal/config"
+	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
 func TestClusterRegionScopeMatchesDocumentedRepresentations(t *testing.T) {
@@ -24,7 +24,7 @@ func TestClusterRegionScopeMatchesDocumentedRepresentations(t *testing.T) {
 		{name: "alicloud name", scope: aliScope, region: apistarter.Region{Name: "regions/alicloud-ap-southeast-1"}, want: true},
 		{name: "alicloud provider and native id", scope: aliScope, region: apistarter.Region{RegionID: "ap-southeast-1", CloudProvider: "alicloud"}, want: true},
 		{name: "internal alibaba provider", scope: aliScope, region: apistarter.Region{RegionID: "ap-southeast-1", CloudProvider: "alibaba_cloud"}, want: true},
-		{name: "tdc-qualified alibaba id", scope: aliScope, region: apistarter.Region{RegionID: "ali-ap-southeast-1"}, want: true},
+		{name: "ti-qualified alibaba id", scope: aliScope, region: apistarter.Region{RegionID: "ali-ap-southeast-1"}, want: true},
 		{name: "other aws region", scope: awsScope, region: apistarter.Region{Name: "regions/aws-us-west-2"}},
 		{name: "same native region different provider", scope: aliScope, region: apistarter.Region{Name: "regions/aws-ap-southeast-1"}},
 		{name: "conflicting name and region id", scope: awsScope, region: apistarter.Region{Name: "regions/aws-us-east-1", RegionID: "us-west-2"}},

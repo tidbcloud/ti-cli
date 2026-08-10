@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/oplog"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/oplog"
 )
 
 type oplogRoundTripper struct {
@@ -66,7 +66,7 @@ func serviceName(service endpoints.Service) string {
 	case endpoints.ServiceIAM:
 		return "tidb_cloud_iam"
 	case endpoints.ServiceFS:
-		return "tdc_fs"
+		return "ti_fs"
 	default:
 		if service == "" {
 			return "api"

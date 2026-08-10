@@ -162,7 +162,7 @@ func TestUploadFileInitiatesUploadsPartsAndCompletes(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/parts/1":
 			uploaded = true
 			if got := r.Header.Get("Authorization"); got != "" {
-				t.Fatalf("presigned upload should not receive tdc auth, got %q", got)
+				t.Fatalf("presigned upload should not receive ti auth, got %q", got)
 			}
 			if got := r.Header.Get("X-Upload-Token"); got != "part" {
 				t.Fatalf("X-Upload-Token = %q", got)
@@ -246,7 +246,7 @@ func TestUploadFileUsesV2PresignRetryAndCompleteMetadata(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/v2-presigned/expired":
 			firstPartAttempts++
 			if got := r.Header.Get("Authorization"); got != "" {
-				t.Fatalf("presigned upload should not receive tdc auth, got %q", got)
+				t.Fatalf("presigned upload should not receive ti auth, got %q", got)
 			}
 			w.WriteHeader(http.StatusForbidden)
 		case r.Method == http.MethodPost && r.URL.Path == "/v2/uploads/v2-1/presign":
@@ -267,7 +267,7 @@ func TestUploadFileUsesV2PresignRetryAndCompleteMetadata(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/v2-presigned/fresh":
 			freshUploaded = true
 			if got := r.Header.Get("Authorization"); got != "" {
-				t.Fatalf("presigned upload should not receive tdc auth, got %q", got)
+				t.Fatalf("presigned upload should not receive ti auth, got %q", got)
 			}
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -601,7 +601,7 @@ func TestResumeUploadRequestsActiveUploadAndMissingParts(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/parts/1":
 			uploaded = true
 			if got := r.Header.Get("Authorization"); got != "" {
-				t.Fatalf("presigned upload should not receive tdc auth, got %q", got)
+				t.Fatalf("presigned upload should not receive ti auth, got %q", got)
 			}
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
@@ -718,7 +718,7 @@ func TestInitiateAppendAndUploadPatchParts(t *testing.T) {
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/read/1":
 			if got := r.Header.Get("Authorization"); got != "" {
-				t.Fatalf("presigned read should not receive tdc auth, got %q", got)
+				t.Fatalf("presigned read should not receive ti auth, got %q", got)
 			}
 			if got := r.Header.Get("Range"); got != "bytes=0-2" {
 				t.Fatalf("Range = %q", got)
@@ -727,7 +727,7 @@ func TestInitiateAppendAndUploadPatchParts(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/patch/1":
 			patchUploaded = true
 			if got := r.Header.Get("Authorization"); got != "" {
-				t.Fatalf("presigned upload should not receive tdc auth, got %q", got)
+				t.Fatalf("presigned upload should not receive ti auth, got %q", got)
 			}
 			if got := r.Header.Get("X-Upload-Token"); got != "append" {
 				t.Fatalf("X-Upload-Token = %q", got)
@@ -809,7 +809,7 @@ func TestPatchFileUploadsDirtyPartsAndCompletes(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/patch/1":
 			patchUploaded = true
 			if got := r.Header.Get("Authorization"); got != "" {
-				t.Fatalf("presigned upload should not receive tdc auth, got %q", got)
+				t.Fatalf("presigned upload should not receive ti auth, got %q", got)
 			}
 			if got := r.Header.Get("X-Upload-Token"); got != "patch" {
 				t.Fatalf("X-Upload-Token = %q", got)

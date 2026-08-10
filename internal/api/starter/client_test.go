@@ -7,10 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
 )
 
 func TestListClusters(t *testing.T) {

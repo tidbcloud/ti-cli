@@ -8,15 +8,16 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 const (
-	TDCDirName     = ".tdc"
+	TIDirName      = ".ti"
 	ConfigFileName = "config"
 	CredsFileName  = "credentials"
 	configFileMode = 0o644
 	credsFileMode  = 0o600
-	tdcDirFileMode = 0o700
+	tiDirFileMode  = 0o700
 )
 
 type ConfigDocument map[string]ConfigProfile
@@ -34,17 +35,25 @@ type ConfigProfile struct {
 type CredentialsDocument map[string]CredentialsProfile
 
 type CredentialsProfile struct {
-	TDCPublicKey  string `toml:"tdc_public_key,omitempty"`
-	TDCPrivateKey string `toml:"tdc_private_key,omitempty"`
-	FSAPIKey      string `toml:"fs_api_key,omitempty"`
+	TiDBCloudPublicKey  string `toml:"tidb_cloud_public_key,omitempty"`
+	TiDBCloudPrivateKey string `toml:"tidb_cloud_private_key,omitempty"`
+	FSAPIKey            string `toml:"fs_api_key,omitempty"`
+}
+
+type credentialsProfileWire struct {
+	TiDBCloudPublicKey  string `toml:"tidb_cloud_public_key,omitempty"`
+	TiDBCloudPrivateKey string `toml:"tidb_cloud_private_key,omitempty"`
+	LegacyTDCPublicKey  string `toml:"tdc_public_key,omitempty"`
+	LegacyTDCPrivateKey string `toml:"tdc_private_key,omitempty"`
+	FSAPIKey            string `toml:"fs_api_key,omitempty"`
 }
 
 func ConfigPath(homeDir string) string {
-	return filepath.Join(homeDir, TDCDirName, ConfigFileName)
+	return filepath.Join(homeDir, TIDirName, ConfigFileName)
 }
 
 func CredentialsPath(homeDir string) string {
-	return filepath.Join(homeDir, TDCDirName, CredsFileName)
+	return filepath.Join(homeDir, TIDirName, CredsFileName)
 }
 
 func ReadConfig(homeDir string) (ConfigDocument, error) {
@@ -89,14 +98,80 @@ func ReadCredentials(homeDir string) (CredentialsDocument, error) {
 		return nil, err
 	}
 
-	var doc CredentialsDocument
-	if err := toml.Unmarshal(data, &doc); err != nil {
+	return DecodeCredentials(data, path)
+}
+
+func DecodeCredentials(data []byte, path string) (CredentialsDocument, error) {
+	var wire map[string]credentialsProfileWire
+	if err := toml.Unmarshal(data, &wire); err != nil {
 		return nil, fmt.Errorf("parse credentials %s: %w", path, err)
 	}
-	if doc == nil {
-		doc = CredentialsDocument{}
+	doc := make(CredentialsDocument, len(wire))
+	for profileName, profile := range wire {
+		publicKey, err := resolveCredentialField(path, profileName, "tidb_cloud_public_key", profile.TiDBCloudPublicKey, "tdc_public_key", profile.LegacyTDCPublicKey)
+		if err != nil {
+			return nil, err
+		}
+		privateKey, err := resolveCredentialField(path, profileName, "tidb_cloud_private_key", profile.TiDBCloudPrivateKey, "tdc_private_key", profile.LegacyTDCPrivateKey)
+		if err != nil {
+			return nil, err
+		}
+		doc[profileName] = CredentialsProfile{
+			TiDBCloudPublicKey:  publicKey,
+			TiDBCloudPrivateKey: privateKey,
+			FSAPIKey:            profile.FSAPIKey,
+		}
 	}
 	return doc, nil
+}
+
+func NormalizeCredentials(data []byte, path string) ([]byte, error) {
+	doc, err := DecodeCredentials(data, path)
+	if err != nil {
+		return nil, err
+	}
+	if err := rejectDisallowedKeys(data, path); err != nil {
+		return nil, err
+	}
+	if err := rejectDisallowedCredentialKeys(data, path); err != nil {
+		return nil, err
+	}
+	var raw map[string]map[string]any
+	if err := toml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse credentials %s: %w", path, err)
+	}
+	for profileName, profile := range raw {
+		resolved := doc[profileName]
+		if resolved.TiDBCloudPublicKey != "" {
+			profile["tidb_cloud_public_key"] = resolved.TiDBCloudPublicKey
+		}
+		if resolved.TiDBCloudPrivateKey != "" {
+			profile["tidb_cloud_private_key"] = resolved.TiDBCloudPrivateKey
+		}
+		delete(profile, "tdc_public_key")
+		delete(profile, "tdc_private_key")
+		raw[profileName] = profile
+	}
+	normalized, err := toml.Marshal(raw)
+	if err != nil {
+		return nil, fmt.Errorf("marshal credentials %s: %w", path, err)
+	}
+	return normalized, nil
+}
+
+func resolveCredentialField(path, profileName, canonicalName, canonicalValue, legacyName, legacyValue string) (string, error) {
+	if canonicalValue != "" && legacyValue != "" && canonicalValue != legacyValue {
+		return "", apperr.New(
+			"config.environment_conflict",
+			"config",
+			2,
+			fmt.Sprintf("credential fields %s and %s contain different values for profile %q in %s; remove one or make them equal", canonicalName, legacyName, profileName, path),
+		)
+	}
+	if canonicalValue != "" {
+		return canonicalValue, nil
+	}
+	return legacyValue, nil
 }
 
 func WriteProfile(homeDir, profileName string, cfg ConfigProfile, creds CredentialsProfile) error {
@@ -144,11 +219,11 @@ func WriteProfile(homeDir, profileName string, cfg ConfigProfile, creds Credenti
 		return err
 	}
 	existingCreds := credentialsDoc[profileName]
-	if creds.TDCPublicKey != "" {
-		existingCreds.TDCPublicKey = creds.TDCPublicKey
+	if creds.TiDBCloudPublicKey != "" {
+		existingCreds.TiDBCloudPublicKey = creds.TiDBCloudPublicKey
 	}
-	if creds.TDCPrivateKey != "" {
-		existingCreds.TDCPrivateKey = creds.TDCPrivateKey
+	if creds.TiDBCloudPrivateKey != "" {
+		existingCreds.TiDBCloudPrivateKey = creds.TiDBCloudPrivateKey
 	}
 	if creds.FSAPIKey != "" {
 		existingCreds.FSAPIKey = creds.FSAPIKey
@@ -252,7 +327,7 @@ func ensureDir(homeDir string) error {
 	if homeDir == "" {
 		return errors.New("home directory is required")
 	}
-	return os.MkdirAll(filepath.Join(homeDir, TDCDirName), tdcDirFileMode)
+	return os.MkdirAll(filepath.Join(homeDir, TIDirName), tiDirFileMode)
 }
 
 func writeTOML(path string, value any, mode os.FileMode) error {
@@ -262,7 +337,7 @@ func writeTOML(path string, value any, mode os.FileMode) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, tdcDirFileMode); err != nil {
+	if err := os.MkdirAll(dir, tiDirFileMode); err != nil {
 		return err
 	}
 
@@ -345,7 +420,7 @@ func rejectDisallowedCredentialKeys(data []byte, path string) error {
 					next = prefix + "." + key
 				}
 				if strings.EqualFold(key, "db_users") {
-					return fmt.Errorf("unsupported DB user credentials key %q in %s; store DB SQL users under ~/.tdc/db_users/<cluster-id>/credentials", next, path)
+					return fmt.Errorf("unsupported DB user credentials key %q in %s; store DB SQL users under ~/.ti/db_users/<cluster-id>/credentials", next, path)
 				}
 				if err := walk(next, nested); err != nil {
 					return err

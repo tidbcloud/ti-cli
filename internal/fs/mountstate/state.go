@@ -28,7 +28,7 @@ type State struct {
 	StartedAt      time.Time `json:"started_at"`
 }
 
-const schema = "tdc.fs.mount/v1"
+const schema = "ti.fs.mount/v1"
 
 func New(profile, fileSystemName, mountPath, remotePath, driver, endpoint string, pid int, readOnly bool, startedAt time.Time) (State, error) {
 	canonical, err := CanonicalMountPath(mountPath)
@@ -77,7 +77,7 @@ func Path(homeDir, mountPath string) (string, error) {
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(canonical))
-	return filepath.Join(homeDir, ".tdc", "mounts", hex.EncodeToString(sum[:8])+".json"), nil
+	return filepath.Join(homeDir, ".ti", "mounts", hex.EncodeToString(sum[:8])+".json"), nil
 }
 
 func LogPath(homeDir, mountPath string) (string, error) {
@@ -86,7 +86,7 @@ func LogPath(homeDir, mountPath string) (string, error) {
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(canonical))
-	return filepath.Join(homeDir, ".tdc", "mounts", hex.EncodeToString(sum[:8])+".log"), nil
+	return filepath.Join(homeDir, ".ti", "mounts", hex.EncodeToString(sum[:8])+".log"), nil
 }
 
 func ControlSocketPath(mountPath string) (string, error) {
@@ -98,9 +98,9 @@ func ControlSocketPath(mountPath string) (string, error) {
 	sum := sha256.Sum256([]byte(uid + "\x00" + canonical))
 	dir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR"))
 	if dir == "" || !filepath.IsAbs(dir) {
-		dir = filepath.Join(os.TempDir(), "tdc-"+uid)
+		dir = filepath.Join(os.TempDir(), "ti-"+uid)
 	}
-	return filepath.Join(dir, "tdc-mount-"+hex.EncodeToString(sum[:8])+".sock"), nil
+	return filepath.Join(dir, "ti-mount-"+hex.EncodeToString(sum[:8])+".sock"), nil
 }
 
 func Write(homeDir string, state State) (string, error) {

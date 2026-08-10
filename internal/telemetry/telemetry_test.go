@@ -14,9 +14,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/tidbcloud/tdc/internal/config/store"
-	"github.com/tidbcloud/tdc/internal/settings"
-	"github.com/tidbcloud/tdc/internal/version"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/settings"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
 func TestStartResolutionAndStateCreation(t *testing.T) {
@@ -240,7 +240,7 @@ func TestInstallationIDIsPrivateStableAndRaceSafe(t *testing.T) {
 func TestMalformedOrUnreadableInstallationIDFailsClosed(t *testing.T) {
 	t.Run("malformed", func(t *testing.T) {
 		home := t.TempDir()
-		before := "tdc_not-valid!\n"
+		before := "ti_not-valid!\n"
 		writeTestFile(t, InstallationIDPath(home), before, 0o600)
 		if session := Start(enabledConfig(home)); session != nil {
 			t.Fatal("malformed identity should disable telemetry")
@@ -271,7 +271,7 @@ func TestFinishSendsOnlyAllowlistedEventFields(t *testing.T) {
 		if got := request.Header.Get("Content-Type"); got != "application/json" {
 			t.Errorf("Content-Type = %q", got)
 		}
-		if got := request.Header.Get("User-Agent"); got != "tdc/0.2.0" {
+		if got := request.Header.Get("User-Agent"); got != "ti/0.2.0" {
 			t.Errorf("User-Agent = %q", got)
 		}
 		body, _ := io.ReadAll(request.Body)
@@ -286,8 +286,8 @@ func TestFinishSendsOnlyAllowlistedEventFields(t *testing.T) {
 	cfg.Now = func() time.Time { return time.Date(2026, 7, 28, 1, 2, 3, 0, time.UTC) }
 	session := Start(cfg)
 	session.Finish(EventInput{
-		CommandPath:   "tdc db execute-sql-statement",
-		FlagNames:     []string{"sql", "db-cluster-id", "tdc-private-key"},
+		CommandPath:   "ti db execute-sql-statement",
+		FlagNames:     []string{"sql", "db-cluster-id", "tidb-cloud-private-key"},
 		ExitCode:      2,
 		ErrorCode:     "db.invalid_sql",
 		Duration:      182 * time.Millisecond,
@@ -307,11 +307,11 @@ func TestFinishSendsOnlyAllowlistedEventFields(t *testing.T) {
 	}
 	events := decoded["events"].([]any)
 	event := events[0].(map[string]any)
-	if event["command_path"] != "tdc db execute-sql-statement" || event["error_code"] != "db.invalid_sql" {
+	if event["command_path"] != "ti db execute-sql-statement" || event["error_code"] != "db.invalid_sql" {
 		t.Fatalf("unexpected event: %#v", event)
 	}
 	flags := event["flag_names"].([]any)
-	if strings.Join([]string{flags[0].(string), flags[1].(string), flags[2].(string)}, ",") != "db-cluster-id,sql,tdc-private-key" {
+	if strings.Join([]string{flags[0].(string), flags[1].(string), flags[2].(string)}, ",") != "db-cluster-id,sql,tidb-cloud-private-key" {
 		t.Fatalf("flags were not canonical names only: %#v", flags)
 	}
 }
@@ -334,7 +334,7 @@ func TestTelemetryEnvironmentMetadataIsBoundedAndNotPersisted(t *testing.T) {
 	if session == nil {
 		t.Fatal("telemetry session was not created")
 	}
-	session.Finish(EventInput{CommandPath: "tdc db list-db-clusters"})
+	session.Finish(EventInput{CommandPath: "ti db list-db-clusters"})
 	body := <-requests
 	var payload struct {
 		SchemaVersion int `json:"schema_version"`
@@ -355,7 +355,7 @@ func TestTelemetryEnvironmentMetadataIsBoundedAndNotPersisted(t *testing.T) {
 	if got := string(payload.Events[0].Extra); got != `{"campaign":"launch","runtime":"e2b"}` {
 		t.Fatalf("extra = %s", got)
 	}
-	for _, path := range []string{settings.Path(home), store.ConfigPath(home), filepath.Join(home, ".tdc", "credentials")} {
+	for _, path := range []string{settings.Path(home), store.ConfigPath(home), filepath.Join(home, ".ti", "credentials")} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("metadata unexpectedly persisted to %s: %v", path, err)
 		}
@@ -379,7 +379,7 @@ func TestInvalidTelemetryEnvironmentMetadataIsOmittedWithoutLeaking(t *testing.T
 	cfg.DebugWriter = &diagnostic
 	cfg.Environment[TagEnvironmentVariable] = string([]byte{0xff})
 	cfg.Environment[ExtraEnvironmentVariable] = `{"password":"must-not-leak"}`
-	Start(cfg).Finish(EventInput{CommandPath: "tdc db list-db-clusters"})
+	Start(cfg).Finish(EventInput{CommandPath: "ti db list-db-clusters"})
 	body := <-requests
 	if strings.Contains(string(body), "must-not-leak") || strings.Contains(diagnostic.String(), "must-not-leak") {
 		t.Fatalf("metadata leaked: payload=%s debug=%s", body, diagnostic.String())
@@ -475,7 +475,7 @@ func TestDeliveryFailuresAreSilentByDefault(t *testing.T) {
 		cfg.Endpoint = server.URL
 		var debug strings.Builder
 		cfg.DebugWriter = &debug
-		Start(cfg).Finish(EventInput{CommandPath: "tdc organization list-projects"})
+		Start(cfg).Finish(EventInput{CommandPath: "ti organization list-projects"})
 		server.Close()
 		if debug.Len() != 0 {
 			t.Fatalf("status %d produced normal output: %q", status, debug.String())
@@ -497,7 +497,7 @@ func TestDeliveryDoesNotFollowRedirects(t *testing.T) {
 	defer server.Close()
 	cfg := enabledConfig(t.TempDir())
 	cfg.Endpoint = server.URL
-	Start(cfg).Finish(EventInput{CommandPath: "tdc organization list-projects"})
+	Start(cfg).Finish(EventInput{CommandPath: "ti organization list-projects"})
 	if redirected {
 		t.Fatal("telemetry followed a redirect away from its configured endpoint")
 	}

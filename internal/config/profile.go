@@ -6,9 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config/region"
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config/envcompat"
+	"github.com/tidbcloud/ti-cli/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 const DefaultProfile = "default"
@@ -29,8 +30,8 @@ type Profile struct {
 	CloudProvider         string
 	RegionCode            string
 	ProjectID             string
-	TDCPublicKey          string
-	TDCPrivateKey         string
+	TiDBCloudPublicKey    string
+	TiDBCloudPrivateKey   string
 	FSResourceName        string
 	FSTenantID            string
 	FSPlacementRegionCode string
@@ -77,7 +78,7 @@ func Load(ctx context.Context, opts LoadOptions) (*Profile, error) {
 		return nil, err
 	}
 
-	publicKey, privateKey, source, err := resolveTDCCredentials(opts.HomeDir, profileName, creds, hasCreds, opts.Env)
+	publicKey, privateKey, source, err := resolveTiDBCloudCredentials(opts.HomeDir, profileName, creds, hasCreds, opts.Env)
 	if err != nil {
 		return nil, err
 	}
@@ -98,8 +99,8 @@ func Load(ctx context.Context, opts LoadOptions) (*Profile, error) {
 		CloudProvider:         placement.Provider,
 		RegionCode:            placement.NativeCode,
 		ProjectID:             cfg.ProjectID,
-		TDCPublicKey:          publicKey,
-		TDCPrivateKey:         privateKey,
+		TiDBCloudPublicKey:    publicKey,
+		TiDBCloudPrivateKey:   privateKey,
 		FSResourceName:        cfg.FSResourceName,
 		FSTenantID:            cfg.FSTenantID,
 		FSPlacementRegionCode: fsPlacement.Code,
@@ -192,7 +193,11 @@ func ValidateProfileName(name string) error {
 func resolveOptionalPlacement(cfg store.ConfigProfile, regionOverride string, env map[string]string) (region.Placement, bool, error) {
 	regionCode := strings.TrimSpace(regionOverride)
 	if regionCode == "" {
-		regionCode = strings.TrimSpace(envValue(env, "TDC_REGION_CODE"))
+		resolved, _, _, err := envcompat.ResolveNames(env, "TI_REGION_CODE", "TDC_REGION_CODE")
+		if err != nil {
+			return region.Placement{}, false, err
+		}
+		regionCode = strings.TrimSpace(resolved)
 	}
 	if regionCode == "" {
 		regionCode = strings.TrimSpace(cfg.RegionCode)
@@ -210,7 +215,11 @@ func resolveOptionalPlacement(cfg store.ConfigProfile, regionOverride string, en
 func resolvePlacement(homeDir, profileName string, cfg store.ConfigProfile, hasConfig bool, regionOverride string, env map[string]string) (region.Placement, error) {
 	regionCode := strings.TrimSpace(regionOverride)
 	if regionCode == "" {
-		regionCode = envValue(env, "TDC_REGION_CODE")
+		resolved, _, _, err := envcompat.ResolveNames(env, "TI_REGION_CODE", "TDC_REGION_CODE")
+		if err != nil {
+			return region.Placement{}, err
+		}
+		regionCode = strings.TrimSpace(resolved)
 	}
 	if regionCode == "" {
 		regionCode = cfg.RegionCode
@@ -221,7 +230,7 @@ func resolvePlacement(homeDir, profileName string, cfg store.ConfigProfile, hasC
 				"config.profile_not_found",
 				"config",
 				2,
-				fmt.Sprintf("profile %q not found in %s; run tdc configure --profile %s or write ~/.tdc/config", profileName, store.ConfigPath(homeDir), profileName),
+				fmt.Sprintf("profile %q not found in %s; run ti configure --profile %s or write ~/.ti/config", profileName, store.ConfigPath(homeDir), profileName),
 			)
 		}
 		return region.Placement{}, missingConfig(profileName, store.ConfigPath(homeDir), "region_code")
@@ -229,29 +238,37 @@ func resolvePlacement(homeDir, profileName string, cfg store.ConfigProfile, hasC
 	return parsePlacement(regionCode)
 }
 
-func resolveTDCCredentials(homeDir, profileName string, creds store.CredentialsProfile, hasCreds bool, env map[string]string) (string, string, string, error) {
-	envPublic := strings.TrimSpace(envValue(env, "TDC_PUBLIC_KEY"))
-	envPrivate := strings.TrimSpace(envValue(env, "TDC_PRIVATE_KEY"))
+func resolveTiDBCloudCredentials(homeDir, profileName string, creds store.CredentialsProfile, hasCreds bool, env map[string]string) (string, string, string, error) {
+	envPublicValue, _, _, err := envcompat.ResolveNames(env, "TIDB_CLOUD_PUBLIC_KEY", "TDC_PUBLIC_KEY")
+	if err != nil {
+		return "", "", "", err
+	}
+	envPrivateValue, _, _, err := envcompat.ResolveNames(env, "TIDB_CLOUD_PRIVATE_KEY", "TDC_PRIVATE_KEY")
+	if err != nil {
+		return "", "", "", err
+	}
+	envPublic := strings.TrimSpace(envPublicValue)
+	envPrivate := strings.TrimSpace(envPrivateValue)
 	if envPublic != "" || envPrivate != "" {
 		if envPublic == "" {
-			return "", "", "", envMissing("TDC_PUBLIC_KEY")
+			return "", "", "", envMissing("TIDB_CLOUD_PUBLIC_KEY")
 		}
 		if envPrivate == "" {
-			return "", "", "", envMissing("TDC_PRIVATE_KEY")
+			return "", "", "", envMissing("TIDB_CLOUD_PRIVATE_KEY")
 		}
 		return envPublic, envPrivate, "env", nil
 	}
 
 	if !hasCreds {
-		return "", "", "", missingCredential(profileName, store.CredentialsPath(homeDir), "tdc_public_key")
+		return "", "", "", missingCredential(profileName, store.CredentialsPath(homeDir), "tidb_cloud_public_key")
 	}
-	if creds.TDCPublicKey == "" {
-		return "", "", "", missingCredential(profileName, store.CredentialsPath(homeDir), "tdc_public_key")
+	if creds.TiDBCloudPublicKey == "" {
+		return "", "", "", missingCredential(profileName, store.CredentialsPath(homeDir), "tidb_cloud_public_key")
 	}
-	if creds.TDCPrivateKey == "" {
-		return "", "", "", missingCredential(profileName, store.CredentialsPath(homeDir), "tdc_private_key")
+	if creds.TiDBCloudPrivateKey == "" {
+		return "", "", "", missingCredential(profileName, store.CredentialsPath(homeDir), "tidb_cloud_private_key")
 	}
-	return creds.TDCPublicKey, creds.TDCPrivateKey, "profile", nil
+	return creds.TiDBCloudPublicKey, creds.TiDBCloudPrivateKey, "profile", nil
 }
 
 func envMissing(key string) error {
@@ -259,7 +276,7 @@ func envMissing(key string) error {
 		"config.env_missing",
 		"config",
 		2,
-		fmt.Sprintf("%s is required when using TDC_* environment credentials", key),
+		fmt.Sprintf("%s is required when using TiDB Cloud environment credentials", key),
 	)
 }
 
@@ -276,7 +293,7 @@ func missingConfig(profileName, path, key string) error {
 		"config.missing_config",
 		"config",
 		2,
-		fmt.Sprintf("%s missing for profile %q in %s; run tdc configure --profile %s or write ~/.tdc/config", key, profileName, path, profileName),
+		fmt.Sprintf("%s missing for profile %q in %s; run ti configure --profile %s or write ~/.ti/config", key, profileName, path, profileName),
 	)
 }
 
@@ -285,13 +302,6 @@ func missingCredential(profileName, path, key string) error {
 		"config.missing_credentials",
 		"config",
 		2,
-		fmt.Sprintf("%s missing for profile %q in %s; run tdc configure --profile %s or write ~/.tdc/credentials", key, profileName, path, profileName),
+		fmt.Sprintf("%s missing for profile %q in %s; run ti configure --profile %s or write ~/.ti/credentials", key, profileName, path, profileName),
 	)
-}
-
-func envValue(env map[string]string, key string) string {
-	if env != nil {
-		return env[key]
-	}
-	return os.Getenv(key)
 }

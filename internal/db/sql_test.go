@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/db/connectionstring"
-	"github.com/tidbcloud/tdc/internal/db/sqlcred"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/db/connectionstring"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
 )
 
 func TestPrepareQueryAccessCreatesAndStoresCredentials(t *testing.T) {
@@ -59,10 +59,10 @@ func TestPrepareQueryAccessCreatesAndStoresCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read credentials: %v", err)
 	}
-	if !strings.Contains(string(data), "[read_only]") || !strings.Contains(string(data), "prefix.tdc_admin") {
+	if !strings.Contains(string(data), "[read_only]") || !strings.Contains(string(data), "prefix.ti_admin") {
 		t.Fatalf("unexpected credentials:\n%s", string(data))
 	}
-	if strings.Contains(string(data), ".tdc/credentials") {
+	if strings.Contains(string(data), ".ti/credentials") {
 		t.Fatalf("DB credentials should not be stored in main credentials shape:\n%s", string(data))
 	}
 }
@@ -88,13 +88,13 @@ func TestPrepareQueryAccessRejectsNonStarterBeforeIAMOrCredentialWrite(t *testin
 	if requests != 1 {
 		t.Fatalf("requests = %d, want only the cluster preflight", requests)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".tdc", "db_users")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".ti", "db_users")); !os.IsNotExist(err) {
 		t.Fatalf("non-Starter rejection wrote local DB credentials: %v", err)
 	}
 }
 
 func TestDryRunPrepareQueryAccessDescribesStarterPrecondition(t *testing.T) {
-	result, err := Service{}.DryRunPrepareQueryAccess(context.Background(), "tdc db create-db-sql-users", PrepareQueryAccessOptions{
+	result, err := Service{}.DryRunPrepareQueryAccess(context.Background(), "ti db create-db-sql-users", PrepareQueryAccessOptions{
 		Profile: testProfile(), ClusterID: "cluster-1",
 	})
 	if err != nil {
@@ -124,11 +124,11 @@ func TestCreateConnectionString(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateConnectionString failed: %v", err)
 	}
-	if result.AccessMode != sqlcred.ReadOnly || result.Username != "prefix.tdc_ro" {
+	if result.AccessMode != sqlcred.ReadOnly || result.Username != "prefix.ti_ro" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
 	if !strings.Contains(result.ConnectionString, "jdbc:mysql://gateway.example.com:4000/app?") ||
-		!strings.Contains(result.ConnectionString, "user=prefix.tdc_ro") {
+		!strings.Contains(result.ConnectionString, "user=prefix.ti_ro") {
 		t.Fatalf("unexpected connection string: %s", result.ConnectionString)
 	}
 }
@@ -141,7 +141,7 @@ func TestExecuteSQLHTTP(t *testing.T) {
 	var sqlBody map[string]string
 	sqlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		user, password, ok := r.BasicAuth()
-		if !ok || user != "prefix.tdc_rw" || password != "rw-pass" {
+		if !ok || user != "prefix.ti_rw" || password != "rw-pass" {
 			t.Fatalf("unexpected basic auth user=%q password=%q ok=%t", user, password, ok)
 		}
 		if err := json.NewDecoder(r.Body).Decode(&sqlBody); err != nil {
@@ -215,7 +215,7 @@ func TestConnectionAndSQLRejectNonStarterBeforeCredentialOrSQLAccess(t *testing.
 	if sqlRequests != 0 {
 		t.Fatalf("SQL requests = %d, want 0", sqlRequests)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".tdc", "db_users")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, ".ti", "db_users")); !os.IsNotExist(err) {
 		t.Fatalf("non-Starter connection path accessed local DB credentials: %v", err)
 	}
 }
@@ -273,9 +273,9 @@ func clusterEndpointServer(t *testing.T) *httptest.Server {
 func writeSQLCreds(t *testing.T, home, clusterID string) {
 	t.Helper()
 	if err := sqlcred.Write(home, clusterID, sqlcred.Document{
-		ReadOnly:  sqlcred.Credential{Username: "prefix.tdc_ro", Password: "ro-pass"},
-		ReadWrite: sqlcred.Credential{Username: "prefix.tdc_rw", Password: "rw-pass"},
-		Admin:     sqlcred.Credential{Username: "prefix.tdc_admin", Password: "admin-pass"},
+		ReadOnly:  sqlcred.Credential{Username: "prefix.ti_ro", Password: "ro-pass"},
+		ReadWrite: sqlcred.Credential{Username: "prefix.ti_rw", Password: "rw-pass"},
+		Admin:     sqlcred.Credential{Username: "prefix.ti_admin", Password: "admin-pass"},
 	}); err != nil {
 		t.Fatalf("write SQL credentials: %v", err)
 	}
@@ -283,7 +283,7 @@ func writeSQLCreds(t *testing.T, home, clusterID string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(path, filepath.Join(".tdc", "db_users", clusterID, "credentials")) {
+	if !strings.Contains(path, filepath.Join(".ti", "db_users", clusterID, "credentials")) {
 		t.Fatalf("unexpected SQL credentials path: %s", path)
 	}
 }

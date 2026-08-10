@@ -13,14 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/auth"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/auth"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 )
 
 const defaultLiveProfile = "live-e2e"
@@ -42,10 +42,10 @@ func TestMain(m *testing.M) {
 func TestLiveProfileConfigured(t *testing.T) {
 	requireLive(t)
 
-	bin := tdcBinary(t)
-	version := runTDC(t, bin, "--version")
+	bin := tiBinary(t)
+	version := runTI(t, bin, "--version")
 	version.wantExitCode(0)
-	version.wantStdoutContains("tdc ")
+	version.wantStdoutContains("ti ")
 
 	profile := liveProfile(t)
 	if profile.CloudProvider == "" || profile.RegionCode == "" {
@@ -85,10 +85,10 @@ func TestLiveOrganizationAPIReadOnlyProbes(t *testing.T) {
 func TestLiveFSResourceRegistryLifecycle(t *testing.T) {
 	requireLive(t)
 
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	suffix := fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102150405"), os.Getpid())
-	names := []string{"tdc-e2e-fs-" + suffix + "-a", "tdc-e2e-fs-" + suffix + "-b"}
+	names := []string{"ti-e2e-fs-" + suffix + "-a", "ti-e2e-fs-" + suffix + "-b"}
 	created := make(map[string]bool, len(names))
 	defer func() {
 		for i := len(names) - 1; i >= 0; i-- {
@@ -96,37 +96,37 @@ func TestLiveFSResourceRegistryLifecycle(t *testing.T) {
 			if !created[name] {
 				continue
 			}
-			result := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", name)
+			result := runTI(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", name)
 			if result.exitCode != 0 {
-				t.Logf("cleanup delete failed for tdc fs resource %q: exit=%d stdout=%s stderr=%s", name, result.exitCode, result.stdout, result.stderr)
+				t.Logf("cleanup delete failed for ti fs resource %q: exit=%d stdout=%s stderr=%s", name, result.exitCode, result.stdout, result.stderr)
 			}
 		}
 	}()
 
 	for i, name := range names {
-		create := runTDC(t, bin, "--profile", profileName, "fs", "create-file-system", "--file-system-name", name, "--wait")
+		create := runTI(t, bin, "--profile", profileName, "fs", "create-file-system", "--file-system-name", name, "--wait")
 		if create.exitCode != 0 {
 			if isLiveFSQuotaError(create.stderr) {
 				if i == 0 {
-					t.Skipf("tdc fs live registry lifecycle requires one free Starter slot: %s", strings.TrimSpace(create.stderr))
+					t.Skipf("ti fs live registry lifecycle requires one free Starter slot: %s", strings.TrimSpace(create.stderr))
 				}
-				t.Logf("second tdc fs resource could not be created because Starter quota is full; single-resource live flow completed and multi-resource selection remains covered by the fake-companion e2e: %s", strings.TrimSpace(create.stderr))
-				check := runTDC(t, bin, "--profile", profileName, "fs", "check-file-system", "--file-system-name", names[0])
+				t.Logf("second ti fs resource could not be created because Starter quota is full; single-resource live flow completed and multi-resource selection remains covered by the fake-companion e2e: %s", strings.TrimSpace(create.stderr))
+				check := runTI(t, bin, "--profile", profileName, "fs", "check-file-system", "--file-system-name", names[0])
 				check.wantExitCode(0)
 				check.wantStdoutContains(`"status": "passed"`)
 				return
 			}
-			create.fail("create live tdc fs registry resource")
+			create.fail("create live ti fs registry resource")
 		}
 		if strings.Contains(create.stdout, `"status": "exists"`) {
-			create.fail("generated live tdc fs resource name already existed; refusing to delete a resource not created by this test")
+			create.fail("generated live ti fs resource name already existed; refusing to delete a resource not created by this test")
 		}
 		created[name] = true
 		create.wantStdoutContains(`"credentials_stored": true`)
 		create.wantStdoutContains(`"status": "ready"`)
 	}
 
-	list := runTDC(t, bin, "--profile", profileName, "fs", "list-file-systems")
+	list := runTI(t, bin, "--profile", profileName, "fs", "list-file-systems")
 	list.wantExitCode(0)
 	for _, name := range names {
 		list.wantStdoutContains(`"file_system_name": "` + name + `"`)
@@ -134,26 +134,26 @@ func TestLiveFSResourceRegistryLifecycle(t *testing.T) {
 	list.wantStdoutNotContains("default_file_system_name")
 	list.wantStdoutNotContains("is_default")
 
-	missingSelector := runTDCWithInput(t, bin, "", []string{"TDC_FS_FILE_SYSTEM_NAME="}, "--profile", profileName, "fs", "check-file-system")
+	missingSelector := runTIWithInput(t, bin, "", []string{"TI_FS_FILE_SYSTEM_NAME="}, "--profile", profileName, "fs", "check-file-system")
 	missingSelector.wantExitCode(2)
-	missingSelector.wantStderrContains("file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
-	environmentCheck := runTDCWithInput(t, bin, "", []string{"TDC_FS_FILE_SYSTEM_NAME=" + names[0]}, "--profile", profileName, "fs", "check-file-system")
+	missingSelector.wantStderrContains("file system name is required; pass --file-system-name or set TI_FS_FILE_SYSTEM_NAME")
+	environmentCheck := runTIWithInput(t, bin, "", []string{"TI_FS_FILE_SYSTEM_NAME=" + names[0]}, "--profile", profileName, "fs", "check-file-system")
 	environmentCheck.wantExitCode(0)
 	environmentCheck.wantStdoutContains(`"file_system_name": "` + names[0] + `"`)
-	explicitCheck := runTDC(t, bin, "--profile", profileName, "fs", "check-file-system", "--file-system-name", names[1])
+	explicitCheck := runTI(t, bin, "--profile", profileName, "fs", "check-file-system", "--file-system-name", names[1])
 	explicitCheck.wantExitCode(0)
 	explicitCheck.wantStdoutContains(`"file_system_name": "` + names[1] + `"`)
 
-	deleteFirst := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", names[0])
+	deleteFirst := runTI(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", names[0])
 	deleteFirst.wantExitCode(0)
 	deleteFirst.wantStdoutContains(`"status": "deleting"`)
 	deleteFirst.wantStdoutContains(`"remote_deletion_state": "deleting"`)
 	created[names[0]] = false
-	remaining := runTDC(t, bin, "--profile", profileName, "fs", "describe-file-system", "--file-system-name", names[1])
+	remaining := runTI(t, bin, "--profile", profileName, "fs", "describe-file-system", "--file-system-name", names[1])
 	remaining.wantExitCode(0)
 	remaining.wantStdoutContains(`"file_system_name": "` + names[1] + `"`)
 
-	deleteSecond := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", names[1])
+	deleteSecond := runTI(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", names[1])
 	deleteSecond.wantExitCode(0)
 	deleteSecond.wantStdoutContains(`"status": "deleting"`)
 	deleteSecond.wantStdoutContains(`"remote_deletion_state": "deleting"`)
@@ -162,10 +162,10 @@ func TestLiveFSResourceRegistryLifecycle(t *testing.T) {
 
 func TestLiveCLICommandSurface(t *testing.T) {
 	requireLive(t)
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	testLiveHelpCommands(t, bin, [][]string{{"help"}, {"update", "help"}})
 
-	checkUpdateHelp := runTDC(t, bin, "update", "help")
+	checkUpdateHelp := runTI(t, bin, "update", "help")
 	checkUpdateHelp.wantExitCode(0)
 	checkUpdateHelp.wantStdoutContains("--check")
 	checkUpdateHelp.wantStdoutContains("--fail-if-update-available")
@@ -174,12 +174,12 @@ func TestLiveCLICommandSurface(t *testing.T) {
 
 func TestLiveOrganizationCommandSurface(t *testing.T) {
 	requireLive(t)
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	testLiveHelpCommands(t, bin, [][]string{{"organization", "help"}})
 	testLiveReadOnlyDryRunRejections(t, bin, profileName, [][]string{{"organization", "list-projects"}})
 
-	projects := runTDC(t, bin, "--profile", profileName, "organization", "list-projects", "--page-size", "1")
+	projects := runTI(t, bin, "--profile", profileName, "organization", "list-projects", "--page-size", "1")
 	projects.wantExitCode(0)
 	projects.wantStdoutContains(`"projects"`)
 	var projectList struct {
@@ -197,11 +197,11 @@ func TestLiveOrganizationCommandSurface(t *testing.T) {
 		t.Fatalf("expected live profile %q to see at least one project with an id and type:\n%s", profileName, projects.stdout)
 	}
 
-	query := runTDC(t, bin, "--profile", profileName, "organization", "list-projects", "--page-size", "1", "--query", "projects[0].id")
+	query := runTI(t, bin, "--profile", profileName, "organization", "list-projects", "--page-size", "1", "--query", "projects[0].id")
 	query.wantExitCode(0)
 	query.wantStdoutContains(projectList.Projects[0].ID)
 
-	text := runTDC(t, bin, "--profile", profileName, "organization", "list-projects", "--page-size", "1", "--output", "text")
+	text := runTI(t, bin, "--profile", profileName, "organization", "list-projects", "--page-size", "1", "--output", "text")
 	text.wantExitCode(0)
 	text.wantStdoutContains("ID")
 	text.wantStdoutContains("TYPE")
@@ -211,7 +211,7 @@ func TestLiveOrganizationCommandSurface(t *testing.T) {
 
 func TestLiveDBCommandSurface(t *testing.T) {
 	requireLive(t)
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	profile := liveProfile(t)
 	expectedRegionName := "regions/" + endpoints.APIProvider(profile.CloudProvider) + "-" + profile.RegionCode
@@ -235,7 +235,7 @@ func TestLiveDBCommandSurface(t *testing.T) {
 		{"db", "execute-sql-statement"},
 	})
 
-	clusters := runTDC(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1")
+	clusters := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1")
 	clusters.wantExitCode(0)
 	clusters.wantStdoutContains(`"clusters"`)
 	var clusterList struct {
@@ -256,15 +256,15 @@ func TestLiveDBCommandSurface(t *testing.T) {
 		}
 	}
 
-	clusterQuery := runTDC(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1", "--query", "clusters[].id")
+	clusterQuery := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1", "--query", "clusters[].id")
 	clusterQuery.wantExitCode(0)
 
-	clusterText := runTDC(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1", "--output", "text")
+	clusterText := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1", "--output", "text")
 	clusterText.wantExitCode(0)
 	clusterText.wantStdoutContains("ID")
 
 	if len(clusterList.Clusters) > 0 && clusterList.Clusters[0].ID != "" {
-		describe := runTDC(t, bin, "--profile", profileName, "db", "describe-db-cluster", "--db-cluster-id", clusterList.Clusters[0].ID)
+		describe := runTI(t, bin, "--profile", profileName, "db", "describe-db-cluster", "--db-cluster-id", clusterList.Clusters[0].ID)
 		describe.wantExitCode(0)
 		describe.wantStdoutContains(`"id"`)
 		describe.wantStdoutContains(clusterList.Clusters[0].ID)
@@ -273,7 +273,7 @@ func TestLiveDBCommandSurface(t *testing.T) {
 
 func TestLiveFSCommandSurface(t *testing.T) {
 	requireLive(t)
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	fileSystemName := liveFileSystemName(t)
 	ensureLiveFSResource(t, bin, profileName)
@@ -300,11 +300,11 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "create-layer", "--layer-id", "layer-1", "--base-root-path", "/workspace", "--layer-name", "dev"},
 		{"fs", "create-layer-checkpoint", "--layer-id", "layer-1", "--checkpoint-id", "cp-1"},
 		{"fs", "rollback-layer", "--layer-id", "layer-1"}, {"fs", "commit-layer", "--layer-id", "layer-1"},
-		{"fs", "pack-file-system", "--local-root", "/tmp/tdc-e2e-pack", "--remote-root", "/workspace", "--mount-profile", "portable"},
-		{"fs", "unpack-file-system", "--local-root", "/tmp/tdc-e2e-pack", "--remote-root", "/workspace", "--mount-profile", "portable"},
-		{"fs", "mount-file-system", "--mount-path", "/tmp/tdc-e2e-mount", "--driver", "webdav"},
+		{"fs", "pack-file-system", "--local-root", "/tmp/ti-e2e-pack", "--remote-root", "/workspace", "--mount-profile", "portable"},
+		{"fs", "unpack-file-system", "--local-root", "/tmp/ti-e2e-pack", "--remote-root", "/workspace", "--mount-profile", "portable"},
+		{"fs", "mount-file-system", "--mount-path", "/tmp/ti-e2e-mount", "--driver", "webdav"},
 	}, "remote_mutation")
-	unmountDryRun := runTDC(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", "/tmp/tdc-e2e-mount", "--ignore-absent", "--dry-run", "--query", "checks[].name")
+	unmountDryRun := runTI(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", "/tmp/ti-e2e-mount", "--ignore-absent", "--dry-run", "--query", "checks[].name")
 	unmountDryRun.wantExitCode(0)
 	for _, check := range []string{"input_validation", "mount_locator", "remote_mutation"} {
 		unmountDryRun.wantStdoutContains(check)
@@ -323,7 +323,7 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "unset-default-file-system"},
 		{"fs", "create-file-system", "--file-system-name", "removed-flag", "--set-default"},
 	} {
-		result := runTDC(t, bin, append([]string{"--profile", profileName}, args...)...)
+		result := runTI(t, bin, append([]string{"--profile", profileName}, args...)...)
 		result.wantExitCode(2)
 	}
 	testLiveReadOnlyDryRunRejections(t, bin, profileName, [][]string{
@@ -336,7 +336,7 @@ func TestLiveFSCommandSurface(t *testing.T) {
 
 func TestLiveFSVaultCommandSurface(t *testing.T) {
 	requireLive(t)
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	ensureLiveFSResource(t, bin, profileName)
 	testLiveHelpCommands(t, bin, [][]string{
@@ -348,14 +348,14 @@ func TestLiveFSVaultCommandSurface(t *testing.T) {
 		{"fs-vault", "mount-vault", "help"}, {"fs-vault", "unmount-vault", "help"},
 	})
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
-		{"fs-vault", "create-secret", "--secret-name", "tdc-e2e-secret", "--field", "DB_URL=mysql://example"},
-		{"fs-vault", "replace-secret", "--secret-path", "/n/vault/tdc-e2e-secret", "--from-directory", "/tmp"},
-		{"fs-vault", "delete-secret", "--secret-name", "tdc-e2e-secret"},
-		{"fs-vault", "create-grant", "--agent-id", "tdc-live-e2e", "--scope", "tdc-e2e-secret/DB_URL", "--permission", "read", "--ttl", "10m"},
+		{"fs-vault", "create-secret", "--secret-name", "ti-e2e-secret", "--field", "DB_URL=mysql://example"},
+		{"fs-vault", "replace-secret", "--secret-path", "/n/vault/ti-e2e-secret", "--from-directory", "/tmp"},
+		{"fs-vault", "delete-secret", "--secret-name", "ti-e2e-secret"},
+		{"fs-vault", "create-grant", "--agent-id", "ti-live-e2e", "--scope", "ti-e2e-secret/DB_URL", "--permission", "read", "--ttl", "10m"},
 		{"fs-vault", "delete-grant", "--grant-id", "grant-1"},
-		{"fs-vault", "mount-vault", "--mount-path", "/tmp/tdc-e2e-vault"},
+		{"fs-vault", "mount-vault", "--mount-path", "/tmp/ti-e2e-vault"},
 	}, "remote_mutation")
-	unmountDryRun := runTDC(t, bin, "--profile", profileName, "fs-vault", "unmount-vault", "--mount-path", "/tmp/tdc-e2e-vault", "--ignore-absent", "--dry-run", "--query", "checks[].name")
+	unmountDryRun := runTI(t, bin, "--profile", profileName, "fs-vault", "unmount-vault", "--mount-path", "/tmp/ti-e2e-vault", "--ignore-absent", "--dry-run", "--query", "checks[].name")
 	unmountDryRun.wantExitCode(0)
 	for _, check := range []string{"input_validation", "mount_locator", "remote_mutation"} {
 		unmountDryRun.wantStdoutContains(check)
@@ -368,7 +368,7 @@ func TestLiveFSVaultCommandSurface(t *testing.T) {
 
 func TestLiveFSJournalCommandSurface(t *testing.T) {
 	requireLive(t)
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	ensureLiveFSResource(t, bin, profileName)
 	testLiveHelpCommands(t, bin, [][]string{
@@ -377,8 +377,8 @@ func TestLiveFSJournalCommandSurface(t *testing.T) {
 		{"fs-journal", "search-journal-entries", "help"}, {"fs-journal", "verify-journal", "help"},
 	})
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
-		{"fs-journal", "create-journal", "--journal-id", "jrn-tdc-e2e", "--journal-kind", "agent"},
-		{"fs-journal", "append-journal-entries", "--journal-id", "jrn-tdc-e2e", "--entry-json", `{"type":"task.started"}`},
+		{"fs-journal", "create-journal", "--journal-id", "jrn-ti-e2e", "--journal-kind", "agent"},
+		{"fs-journal", "append-journal-entries", "--journal-id", "jrn-ti-e2e", "--entry-json", `{"type":"task.started"}`},
 	}, "remote_mutation")
 	testLiveReadOnlyDryRunRejections(t, bin, profileName, [][]string{
 		{"fs-journal", "read-journal-entries"}, {"fs-journal", "search-journal-entries"},
@@ -388,7 +388,7 @@ func TestLiveFSJournalCommandSurface(t *testing.T) {
 
 func TestLiveFSGitCommandSurface(t *testing.T) {
 	requireLive(t)
-	testLiveHelpCommands(t, tdcBinary(t), [][]string{
+	testLiveHelpCommands(t, tiBinary(t), [][]string{
 		{"fs-git", "help"}, {"fs-git", "clone-git-workspace", "help"},
 		{"fs-git", "hydrate-git-workspace", "help"}, {"fs-git", "add-git-worktree", "help"},
 		{"fs-git", "remove-git-worktree", "help"},
@@ -398,17 +398,17 @@ func TestLiveFSGitCommandSurface(t *testing.T) {
 func TestLiveFSGitLifecycle(t *testing.T) {
 	requireLive(t)
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		t.Skip("tdc fs-git live e2e requires a FUSE-capable macOS or Linux host")
+		t.Skip("ti fs-git live e2e requires a FUSE-capable macOS or Linux host")
 	}
 	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("tdc fs-git live e2e requires git")
+		t.Skip("ti fs-git live e2e requires git")
 	}
 
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	selected := ensureLiveFSResource(t, bin, profileName)
 	suffix := fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102150405"), os.Getpid())
-	remoteRoot := "/tdc-e2e-git-" + suffix
+	remoteRoot := "/ti-e2e-git-" + suffix
 	mountPath := filepath.Join(t.TempDir(), "mount")
 	if err := os.MkdirAll(mountPath, 0o755); err != nil {
 		t.Fatalf("create fs-git mount path: %v", err)
@@ -417,53 +417,53 @@ func TestLiveFSGitLifecycle(t *testing.T) {
 	remoteDeleted := false
 	defer func() {
 		if !unmounted {
-			cleanupUnmount := runTDC(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath, "--ignore-absent", "--force")
+			cleanupUnmount := runTI(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath, "--ignore-absent", "--force")
 			if cleanupUnmount.exitCode != 0 {
 				t.Logf("cleanup fs-git unmount failed for %s: exit=%d stdout=%s stderr=%s", mountPath, cleanupUnmount.exitCode, cleanupUnmount.stdout, cleanupUnmount.stderr)
 			}
 		}
 		if !remoteDeleted {
-			cleanupRemote := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
+			cleanupRemote := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
 			if cleanupRemote.exitCode != 0 && cleanupRemote.exitCode != 5 {
 				t.Logf("cleanup fs-git remote path failed for %s: exit=%d stdout=%s stderr=%s", remoteRoot, cleanupRemote.exitCode, cleanupRemote.stdout, cleanupRemote.stderr)
 			}
 		}
 	}()
 
-	createDir := runTDC(t, bin, "--profile", profileName, "fs", "create-directory", "--path", remoteRoot, "--mode", "0755")
+	createDir := runTI(t, bin, "--profile", profileName, "fs", "create-directory", "--path", remoteRoot, "--mode", "0755")
 	createDir.wantExitCode(0)
-	mount := runTDC(t, bin, "--profile", profileName, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", remoteRoot, "--driver", "fuse", "--ready-timeout", "30s")
+	mount := runTI(t, bin, "--profile", profileName, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", remoteRoot, "--driver", "fuse", "--ready-timeout", "30s")
 	mount.wantExitCode(0)
 
 	repoPath := filepath.Join(mountPath, "hello-world")
-	clone := runTDC(t, bin, "--profile", profileName, "fs-git", "clone-git-workspace", "--repo-url", "https://github.com/octocat/Hello-World.git", "--target-path", repoPath, "--blobless", "--hydrate", "sync")
+	clone := runTI(t, bin, "--profile", profileName, "fs-git", "clone-git-workspace", "--repo-url", "https://github.com/octocat/Hello-World.git", "--target-path", repoPath, "--blobless", "--hydrate", "sync")
 	clone.wantExitCode(0)
 	clone.wantStdoutContains(`"operation": "clone_git_workspace"`)
 	if _, err := os.Stat(filepath.Join(repoPath, ".git")); err != nil {
 		t.Fatalf("cloned fs-git workspace is missing .git: %v", err)
 	}
 
-	hydrate := runTDCWithInput(t, bin, "", liveFSTokenEnv(selected, t.TempDir()), "fs-git", "hydrate-git-workspace", "--target-path", repoPath, "--timeout", "5m")
+	hydrate := runTIWithInput(t, bin, "", liveFSTokenEnv(selected, t.TempDir()), "fs-git", "hydrate-git-workspace", "--target-path", repoPath, "--timeout", "5m")
 	hydrate.wantExitCode(0)
 	hydrate.wantStdoutContains(`"operation": "hydrate_git_workspace"`)
 
 	worktreePath := filepath.Join(mountPath, "hello-world-worktree")
-	branchName := "tdc-e2e-" + suffix
-	addWorktree := runTDC(t, bin, "--profile", profileName, "fs-git", "add-git-worktree", "--base-path", repoPath, "--worktree-path", worktreePath, "--branch-name", branchName, "--hydrate", "sync")
+	branchName := "ti-e2e-" + suffix
+	addWorktree := runTI(t, bin, "--profile", profileName, "fs-git", "add-git-worktree", "--base-path", repoPath, "--worktree-path", worktreePath, "--branch-name", branchName, "--hydrate", "sync")
 	addWorktree.wantExitCode(0)
 	addWorktree.wantStdoutContains(`"operation": "add_git_worktree"`)
 	if _, err := os.Stat(filepath.Join(worktreePath, ".git")); err != nil {
 		t.Fatalf("fs-git linked worktree is missing .git: %v", err)
 	}
 
-	removeWorktree := runTDC(t, bin, "--profile", profileName, "fs-git", "remove-git-worktree", "--worktree-path", worktreePath, "--force")
+	removeWorktree := runTI(t, bin, "--profile", profileName, "fs-git", "remove-git-worktree", "--worktree-path", worktreePath, "--force")
 	removeWorktree.wantExitCode(0)
 	removeWorktree.wantStdoutContains(`"status": "removed"`)
 
-	unmount := runTDC(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath)
+	unmount := runTI(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath)
 	unmount.wantExitCode(0)
 	unmounted = true
-	deleteRoot := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
+	deleteRoot := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
 	deleteRoot.wantExitCode(0)
 	remoteDeleted = true
 }
@@ -471,7 +471,7 @@ func TestLiveFSGitLifecycle(t *testing.T) {
 func testLiveHelpCommands(t *testing.T, bin string, commands [][]string) {
 	t.Helper()
 	for _, args := range commands {
-		result := runTDC(t, bin, args...)
+		result := runTI(t, bin, args...)
 		result.wantExitCode(0)
 		result.wantStdoutContains("Usage:")
 	}
@@ -482,7 +482,7 @@ func testLiveMutatingDryRuns(t *testing.T, bin, profileName string, commands [][
 	for _, args := range commands {
 		fullArgs := append([]string{"--profile", profileName}, args...)
 		fullArgs = append(fullArgs, "--dry-run", "--query", "checks[].name")
-		result := runTDC(t, bin, fullArgs...)
+		result := runTI(t, bin, fullArgs...)
 		result.wantExitCode(0)
 		result.wantStdoutContains("config_and_credentials")
 		result.wantStdoutContains("endpoint_selection")
@@ -496,7 +496,7 @@ func testLiveReadOnlyDryRunRejections(t *testing.T, bin, profileName string, com
 	for _, args := range commands {
 		fullArgs := append([]string{"--profile", profileName}, args...)
 		fullArgs = append(fullArgs, "--dry-run")
-		result := runTDC(t, bin, fullArgs...)
+		result := runTI(t, bin, fullArgs...)
 		result.wantExitCode(2)
 		result.wantStderrContains("unknown flag: --dry-run")
 	}
@@ -510,7 +510,7 @@ func resolveLiveFSResource(t *testing.T, profile *config.Profile, name string) *
 	}
 	selected, _, err := fscred.Resolve(home, profile, name, true, nil)
 	if err != nil {
-		t.Fatalf("resolve live tdc fs resource %q: %v", name, err)
+		t.Fatalf("resolve live ti fs resource %q: %v", name, err)
 	}
 	return selected
 }
@@ -524,11 +524,11 @@ func isLiveFSQuotaError(message string) bool {
 func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 	requireLive(t)
 
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	profile := ensureLiveFSResource(t, bin, profileName)
 	suffix := time.Now().UTC().Format("20060102150405")
-	rootPath := "/tdc-e2e-" + suffix
+	rootPath := "/ti-e2e-" + suffix
 	sourcePath := rootPath + "/README.md"
 	copyPath := rootPath + "/README.copy.md"
 	movedPath := rootPath + "/README.moved.md"
@@ -537,48 +537,48 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 		if deleted {
 			return
 		}
-		cleanup := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--path", rootPath, "--recursive")
+		cleanup := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", rootPath, "--recursive")
 		if cleanup.exitCode != 0 && cleanup.exitCode != 5 {
 			t.Logf("cleanup delete failed for %s: exit=%d stdout=%s stderr=%s", rootPath, cleanup.exitCode, cleanup.stdout, cleanup.stderr)
 		}
 	}()
 
-	createDir := runTDC(t, bin, "--profile", profileName, "fs", "create-directory", "--path", rootPath, "--mode", "0755")
+	createDir := runTI(t, bin, "--profile", profileName, "fs", "create-directory", "--path", rootPath, "--mode", "0755")
 	createDir.wantExitCode(0)
 	createDir.wantStdoutContains(`"status": "created"`)
 
-	content := "hello tdc fs live e2e " + suffix + "\n"
+	content := "hello ti fs live e2e " + suffix + "\n"
 	localFile := filepath.Join(t.TempDir(), "README.md")
 	if err := os.WriteFile(localFile, []byte(content), 0o644); err != nil {
 		t.Fatalf("write local test file: %v", err)
 	}
 
-	upload := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", localFile, "--to-remote", sourcePath)
+	upload := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", localFile, "--to-remote", sourcePath)
 	upload.wantExitCode(0)
 	upload.wantStdoutContains(`"status": "copied"`)
 
-	list := runTDC(t, bin, "--profile", profileName, "fs", "list-files", "--path", rootPath)
+	list := runTI(t, bin, "--profile", profileName, "fs", "list-files", "--path", rootPath)
 	list.wantExitCode(0)
 	list.wantStdoutContains("README.md")
 
-	listText := runTDC(t, bin, "--profile", profileName, "fs", "list-files", "--path", rootPath, "--output", "text")
+	listText := runTI(t, bin, "--profile", profileName, "fs", "list-files", "--path", rootPath, "--output", "text")
 	listText.wantExitCode(0)
 	listText.wantStdoutContains("NAME")
 	listText.wantStdoutContains("README.md")
 
-	describe := runTDC(t, bin, "--profile", profileName, "fs", "describe-file", "--path", sourcePath)
+	describe := runTI(t, bin, "--profile", profileName, "fs", "describe-file", "--path", sourcePath)
 	describe.wantExitCode(0)
 	describe.wantStdoutContains(`"size_bytes"`)
 
-	read := runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", sourcePath)
+	read := runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", sourcePath)
 	read.wantExitCode(0)
 	if read.stdout != content {
 		read.fail("read-file should return raw file bytes exactly")
 	}
 
-	rangeRead := runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", sourcePath, "--offset", "6", "--length", "3")
+	rangeRead := runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", sourcePath, "--offset", "6", "--length", "3")
 	rangeRead.wantExitCode(0)
-	if rangeRead.stdout != "tdc" {
+	if rangeRead.stdout != "ti" {
 		rangeRead.fail("read-file --offset/--length should return the requested byte range")
 	}
 
@@ -587,11 +587,11 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 	if err := os.WriteFile(appendFile, []byte(appendText), 0o644); err != nil {
 		t.Fatalf("write append file: %v", err)
 	}
-	appendRemote := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", appendFile, "--to-remote", sourcePath, "--append")
+	appendRemote := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", appendFile, "--to-remote", sourcePath, "--append")
 	appendRemote.wantExitCode(0)
 	appendRemote.wantStdoutContains(`"status": "appended"`)
 	fullContent := content + appendText
-	readAppended := runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", sourcePath)
+	readAppended := runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", sourcePath)
 	readAppended.wantExitCode(0)
 	if readAppended.stdout != fullContent {
 		readAppended.fail("read-file should include appended bytes")
@@ -599,51 +599,51 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 
 	stdinPath := rootPath + "/stdin.txt"
 	stdinContent := "stdin live e2e " + suffix + "\n"
-	stdinUpload := runTDCWithInput(t, bin, stdinContent, nil, "--profile", profileName, "fs", "copy-file", "--from-stdin", "--to-remote", stdinPath, "--tag", "source=stdin", "--tag", "suite=live-e2e", "--description", "tdc live e2e stdin")
+	stdinUpload := runTIWithInput(t, bin, stdinContent, nil, "--profile", profileName, "fs", "copy-file", "--from-stdin", "--to-remote", stdinPath, "--tag", "source=stdin", "--tag", "suite=live-e2e", "--description", "ti live e2e stdin")
 	stdinUpload.wantExitCode(0)
 	stdinUpload.wantStdoutContains(`"status": "copied"`)
-	stdinDownload := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", stdinPath, "--to-stdout")
+	stdinDownload := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", stdinPath, "--to-stdout")
 	stdinDownload.wantExitCode(0)
 	if stdinDownload.stdout != stdinContent {
 		stdinDownload.fail("copy-file --to-stdout should return raw file bytes exactly")
 	}
 
 	taggedPath := rootPath + "/tagged.md"
-	taggedUpload := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", localFile, "--to-remote", taggedPath, "--tag", "source=local", "--tag", "suite=live-e2e", "--description", "tdc live e2e tagged")
+	taggedUpload := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", localFile, "--to-remote", taggedPath, "--tag", "source=local", "--tag", "suite=live-e2e", "--description", "ti live e2e tagged")
 	taggedUpload.wantExitCode(0)
 	taggedUpload.wantStdoutContains(`"status": "copied"`)
-	taggedDescribe := runTDC(t, bin, "--profile", profileName, "fs", "describe-file", "--path", taggedPath)
+	taggedDescribe := runTI(t, bin, "--profile", profileName, "fs", "describe-file", "--path", taggedPath)
 	taggedDescribe.wantExitCode(0)
 	taggedDescribe.wantStdoutContains(`"source": "local"`)
 	taggedDescribe.wantStdoutContains(`"suite": "live-e2e"`)
 
-	chmod := runTDC(t, bin, "--profile", profileName, "fs", "chmod-file", "--path", sourcePath, "--mode", "0600")
+	chmod := runTI(t, bin, "--profile", profileName, "fs", "chmod-file", "--path", sourcePath, "--mode", "0600")
 	chmod.wantExitCode(0)
 	chmod.wantStdoutContains(`"status": "updated"`)
-	describeMode := runTDC(t, bin, "--profile", profileName, "fs", "describe-file", "--path", sourcePath)
+	describeMode := runTI(t, bin, "--profile", profileName, "fs", "describe-file", "--path", sourcePath)
 	describeMode.wantExitCode(0)
 	describeMode.wantStdoutContains(sourcePath)
 
 	symlinkPath := rootPath + "/README.link.md"
-	symlink := runTDC(t, bin, "--profile", profileName, "fs", "create-symlink", "--target", "README.md", "--link-path", symlinkPath)
+	symlink := runTI(t, bin, "--profile", profileName, "fs", "create-symlink", "--target", "README.md", "--link-path", symlinkPath)
 	symlink.wantExitCode(0)
 	symlink.wantStdoutContains(`"status": "created"`)
-	listSymlink := runTDC(t, bin, "--profile", profileName, "fs", "list-files", "--path", rootPath)
+	listSymlink := runTI(t, bin, "--profile", profileName, "fs", "list-files", "--path", rootPath)
 	listSymlink.wantExitCode(0)
 	listSymlink.wantStdoutContains("README.link.md")
 
 	hardlinkPath := rootPath + "/README.hard.md"
-	hardlink := runTDC(t, bin, "--profile", profileName, "fs", "create-hardlink", "--source-path", sourcePath, "--link-path", hardlinkPath)
+	hardlink := runTI(t, bin, "--profile", profileName, "fs", "create-hardlink", "--source-path", sourcePath, "--link-path", hardlinkPath)
 	hardlink.wantExitCode(0)
 	hardlink.wantStdoutContains(`"status": "created"`)
-	readHardlink := runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", hardlinkPath)
+	readHardlink := runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", hardlinkPath)
 	readHardlink.wantExitCode(0)
 	if readHardlink.stdout != fullContent {
 		readHardlink.fail("hardlink should read the source file contents")
 	}
 
 	aliasDir := rootPath + "/alias"
-	aliasMkdir := runTDC(t, bin, "--profile", profileName, "fs", "mkdir", "--path", aliasDir, "--mode", "0755")
+	aliasMkdir := runTI(t, bin, "--profile", profileName, "fs", "mkdir", "--path", aliasDir, "--mode", "0755")
 	aliasMkdir.wantExitCode(0)
 	aliasMkdir.wantStdoutContains(`"status": "created"`)
 
@@ -653,35 +653,35 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 		t.Fatalf("write alias local file: %v", err)
 	}
 	aliasPath := aliasDir + "/alias.txt"
-	aliasUpload := runTDC(t, bin, "--profile", profileName, "fs", "cp", "--from-local", aliasLocalFile, "--to-remote", aliasPath)
+	aliasUpload := runTI(t, bin, "--profile", profileName, "fs", "cp", "--from-local", aliasLocalFile, "--to-remote", aliasPath)
 	aliasUpload.wantExitCode(0)
 	aliasUpload.wantStdoutContains(`"status": "copied"`)
 
-	aliasList := runTDC(t, bin, "--profile", profileName, "fs", "ls", "--path", aliasDir)
+	aliasList := runTI(t, bin, "--profile", profileName, "fs", "ls", "--path", aliasDir)
 	aliasList.wantExitCode(0)
 	aliasList.wantStdoutContains("alias.txt")
 
-	aliasStat := runTDC(t, bin, "--profile", profileName, "fs", "stat", "--path", aliasPath)
+	aliasStat := runTI(t, bin, "--profile", profileName, "fs", "stat", "--path", aliasPath)
 	aliasStat.wantExitCode(0)
 	aliasStat.wantStdoutContains(`"size_bytes"`)
 
-	aliasRead := runTDC(t, bin, "--profile", profileName, "fs", "cat", "--path", aliasPath)
+	aliasRead := runTI(t, bin, "--profile", profileName, "fs", "cat", "--path", aliasPath)
 	aliasRead.wantExitCode(0)
 	if aliasRead.stdout != aliasContent {
 		aliasRead.fail("cat alias should return raw file bytes exactly")
 	}
 
-	aliasChmod := runTDC(t, bin, "--profile", profileName, "fs", "chmod", "--path", aliasPath, "--mode", "0600")
+	aliasChmod := runTI(t, bin, "--profile", profileName, "fs", "chmod", "--path", aliasPath, "--mode", "0600")
 	aliasChmod.wantExitCode(0)
 	aliasChmod.wantStdoutContains(`"status": "updated"`)
 
 	aliasSymlinkPath := aliasDir + "/alias.link"
-	aliasSymlink := runTDC(t, bin, "--profile", profileName, "fs", "symlink", "--target", "alias.txt", "--link-path", aliasSymlinkPath)
+	aliasSymlink := runTI(t, bin, "--profile", profileName, "fs", "symlink", "--target", "alias.txt", "--link-path", aliasSymlinkPath)
 	aliasSymlink.wantExitCode(0)
 	aliasSymlink.wantStdoutContains(`"status": "created"`)
 
 	aliasHardlinkPath := aliasDir + "/alias.hard"
-	aliasHardlink := runTDC(t, bin, "--profile", profileName, "fs", "hardlink", "--source-path", aliasPath, "--link-path", aliasHardlinkPath)
+	aliasHardlink := runTI(t, bin, "--profile", profileName, "fs", "hardlink", "--source-path", aliasPath, "--link-path", aliasHardlinkPath)
 	aliasHardlink.wantExitCode(0)
 	aliasHardlink.wantStdoutContains(`"status": "created"`)
 
@@ -689,16 +689,16 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 	waitLiveFSResult(t, bin, []string{"--profile", profileName, "fs", "find", "--path", aliasDir, "--file-name-pattern", "alias.txt", "--limit", "5"}, aliasPath, 2*time.Minute, "find alias file by name")
 
 	aliasCopyPath := aliasDir + "/alias.copy.txt"
-	aliasCopy := runTDC(t, bin, "--profile", profileName, "fs", "cp", "--from-remote", aliasPath, "--to-remote", aliasCopyPath)
+	aliasCopy := runTI(t, bin, "--profile", profileName, "fs", "cp", "--from-remote", aliasPath, "--to-remote", aliasCopyPath)
 	aliasCopy.wantExitCode(0)
 	aliasCopy.wantStdoutContains(`"status": "copied"`)
 
 	aliasMovedPath := aliasDir + "/alias.moved.txt"
-	aliasMove := runTDC(t, bin, "--profile", profileName, "fs", "mv", "--from-remote", aliasCopyPath, "--to-remote", aliasMovedPath)
+	aliasMove := runTI(t, bin, "--profile", profileName, "fs", "mv", "--from-remote", aliasCopyPath, "--to-remote", aliasMovedPath)
 	aliasMove.wantExitCode(0)
 	aliasMove.wantStdoutContains(`"status": "moved"`)
 
-	aliasDelete := runTDC(t, bin, "--profile", profileName, "fs", "rm", "--path", aliasMovedPath)
+	aliasDelete := runTI(t, bin, "--profile", profileName, "fs", "rm", "--path", aliasMovedPath)
 	aliasDelete.wantExitCode(0)
 	aliasDelete.wantStdoutContains(`"status": "deleted"`)
 
@@ -708,10 +708,10 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 	if err := os.WriteFile(largeFile, []byte(largeContent), 0o644); err != nil {
 		t.Fatalf("write large local file: %v", err)
 	}
-	largeUpload := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", largeFile, "--to-remote", largePath)
+	largeUpload := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", largeFile, "--to-remote", largePath)
 	largeUpload.wantExitCode(0)
 	largeUpload.wantStdoutContains(`"status": "copied"`)
-	readLarge := runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", largePath)
+	readLarge := runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", largePath)
 	readLarge.wantExitCode(0)
 	if readLarge.stdout != largeContent {
 		readLarge.fail("large multipart upload should preserve file contents")
@@ -722,10 +722,10 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 	if err := os.WriteFile(largeAppendFile, []byte(largeAppendText), 0o644); err != nil {
 		t.Fatalf("write large append file: %v", err)
 	}
-	largeAppend := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", largeAppendFile, "--to-remote", largePath, "--append")
+	largeAppend := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", largeAppendFile, "--to-remote", largePath, "--append")
 	largeAppend.wantExitCode(0)
 	largeAppend.wantStdoutContains(`"status": "appended"`)
-	readLargeAppended := runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", largePath)
+	readLargeAppended := runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", largePath)
 	readLargeAppended.wantExitCode(0)
 	if readLargeAppended.stdout != largeContent+largeAppendText {
 		readLargeAppended.fail("efficient append should preserve existing and appended bytes")
@@ -744,28 +744,28 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 		defer cancel()
 		_ = fsClient.AbortUpload(ctx, resumeUploadID)
 	}()
-	resumeUpload := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", resumeUploadFile, "--to-remote", resumeUploadPath, "--resume")
+	resumeUpload := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", resumeUploadFile, "--to-remote", resumeUploadPath, "--resume")
 	resumeUpload.wantExitCode(0)
 	resumeUpload.wantStdoutContains(`"status": "resumed"`)
-	readResumeUpload := runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", resumeUploadPath)
+	readResumeUpload := runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", resumeUploadPath)
 	readResumeUpload.wantExitCode(0)
 	if readResumeUpload.stdout != resumeUploadContent {
 		readResumeUpload.fail("upload resume should preserve uploaded contents")
 	}
 
-	layerID := "tdc-e2e-layer-" + suffix
+	layerID := "ti-e2e-layer-" + suffix
 	checkpointID := layerID + "-cp"
 	layerClosed := false
 	defer func() {
 		if layerClosed {
 			return
 		}
-		rollback := runTDC(t, bin, "--profile", profileName, "fs", "rollback-layer", "--layer-id", layerID)
+		rollback := runTI(t, bin, "--profile", profileName, "fs", "rollback-layer", "--layer-id", layerID)
 		if rollback.exitCode != 0 && rollback.exitCode != 5 {
 			t.Logf("cleanup rollback failed for layer %s: exit=%d stdout=%s stderr=%s", layerID, rollback.exitCode, rollback.stdout, rollback.stderr)
 		}
 	}()
-	createLayer := runTDC(
+	createLayer := runTI(
 		t,
 		bin,
 		"--profile", profileName,
@@ -774,18 +774,18 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 		"--base-root-path", rootPath,
 		"--layer-name", "live-e2e-"+suffix,
 		"--durability-mode", "restore-safe",
-		"--actor-id", "tdc-live-e2e",
-		"--tag", "test=tdc-e2e",
+		"--actor-id", "ti-live-e2e",
+		"--tag", "test=ti-e2e",
 		"--tag", "suffix="+suffix,
 	)
 	createLayer.wantExitCode(0)
 	createLayer.wantStdoutContains(layerID)
 
-	listLayers := runTDC(t, bin, "--profile", profileName, "fs", "list-layers", "--query", fmt.Sprintf("layers[?layer_id=='%s'].layer_id | [0]", layerID))
+	listLayers := runTI(t, bin, "--profile", profileName, "fs", "list-layers", "--query", fmt.Sprintf("layers[?layer_id=='%s'].layer_id | [0]", layerID))
 	listLayers.wantExitCode(0)
 	listLayers.wantStdoutContains(layerID)
 
-	describeLayer := runTDC(t, bin, "--profile", profileName, "fs", "describe-layer", "--layer-id", layerID)
+	describeLayer := runTI(t, bin, "--profile", profileName, "fs", "describe-layer", "--layer-id", layerID)
 	describeLayer.wantExitCode(0)
 	describeLayer.wantStdoutContains(layerID)
 
@@ -795,21 +795,21 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 	if err := os.WriteFile(layerCopyFile, []byte(layerCopyContent), 0o644); err != nil {
 		t.Fatalf("write layer copy file: %v", err)
 	}
-	copyToLayer := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", layerCopyFile, "--to-remote", layerCopyPath, "--layer-id", layerID)
+	copyToLayer := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", layerCopyFile, "--to-remote", layerCopyPath, "--layer-id", layerID)
 	copyToLayer.wantExitCode(0)
 	copyToLayer.wantStdoutContains(`"status"`)
 
-	diffLayer := runTDC(t, bin, "--profile", profileName, "fs", "diff-layer", "--layer-id", layerID, "--output", "text")
+	diffLayer := runTI(t, bin, "--profile", profileName, "fs", "diff-layer", "--layer-id", layerID, "--output", "text")
 	diffLayer.wantExitCode(0)
 	diffLayer.wantStdoutContains(layerCopyPath)
 
-	createCheckpoint := runTDC(t, bin, "--profile", profileName, "fs", "create-layer-checkpoint", "--layer-id", layerID, "--checkpoint-id", checkpointID, "--label", "live-e2e")
+	createCheckpoint := runTI(t, bin, "--profile", profileName, "fs", "create-layer-checkpoint", "--layer-id", layerID, "--checkpoint-id", checkpointID, "--label", "live-e2e")
 	createCheckpoint.wantExitCode(0)
 	createCheckpoint.wantStdoutContains(checkpointID)
 
 	waitLiveFSResult(t, bin, []string{"--profile", profileName, "fs", "find-files", "--path", rootPath, "--file-name-pattern", "copy-layer.txt", "--layer-id", layerID, "--limit", "5"}, layerCopyPath, 2*time.Minute, "find file inside layer")
 
-	commitLayer := runTDC(t, bin, "--profile", profileName, "fs", "commit-layer", "--layer-id", layerID)
+	commitLayer := runTI(t, bin, "--profile", profileName, "fs", "commit-layer", "--layer-id", layerID)
 	commitLayer.wantExitCode(0)
 	commitLayer.wantStdoutContains(`"status"`)
 	layerClosed = true
@@ -819,22 +819,22 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 
 func TestLiveFSVaultLifecycle(t *testing.T) {
 	requireLive(t)
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	selected := ensureLiveFSResource(t, bin, profileName)
 	suffix := time.Now().UTC().Format("20060102150405")
-	vaultSecretName := "tdc-e2e-vault-" + suffix
+	vaultSecretName := "ti-e2e-vault-" + suffix
 	vaultDeleted := false
 	defer func() {
 		if vaultDeleted {
 			return
 		}
-		cleanup := runTDC(t, bin, "--profile", profileName, "fs-vault", "delete-secret", "--secret-name", vaultSecretName)
+		cleanup := runTI(t, bin, "--profile", profileName, "fs-vault", "delete-secret", "--secret-name", vaultSecretName)
 		if cleanup.exitCode != 0 && cleanup.exitCode != 5 {
 			t.Logf("cleanup vault secret failed for %s: exit=%d stdout=%s stderr=%s", vaultSecretName, cleanup.exitCode, cleanup.stdout, cleanup.stderr)
 		}
 	}()
-	createVaultSecret := runTDC(
+	createVaultSecret := runTI(
 		t,
 		bin,
 		"--profile", profileName,
@@ -846,17 +846,17 @@ func TestLiveFSVaultLifecycle(t *testing.T) {
 	createVaultSecret.wantExitCode(0)
 	createVaultSecret.wantStdoutContains(vaultSecretName)
 
-	listVaultSecrets := runTDCWithInput(t, bin, "", liveFSTokenEnv(selected, t.TempDir()), "fs-vault", "list-secrets")
+	listVaultSecrets := runTIWithInput(t, bin, "", liveFSTokenEnv(selected, t.TempDir()), "fs-vault", "list-secrets")
 	listVaultSecrets.wantExitCode(0)
 	listVaultSecrets.wantStdoutContains(vaultSecretName)
 
-	readVaultSecret := runTDC(t, bin, "--profile", profileName, "fs-vault", "read-secret", "--secret-name", vaultSecretName, "--field", "PASSWORD", "--format", "raw")
+	readVaultSecret := runTI(t, bin, "--profile", profileName, "fs-vault", "read-secret", "--secret-name", vaultSecretName, "--field", "PASSWORD", "--format", "raw")
 	readVaultSecret.wantExitCode(0)
 	if readVaultSecret.stdout != "secret-"+suffix {
 		readVaultSecret.fail("vault read-secret --format raw should return exact field bytes")
 	}
 
-	readVaultEnv := runTDC(t, bin, "--profile", profileName, "fs-vault", "read-secret", "--secret-name", vaultSecretName, "--format", "env")
+	readVaultEnv := runTI(t, bin, "--profile", profileName, "fs-vault", "read-secret", "--secret-name", vaultSecretName, "--format", "env")
 	readVaultEnv.wantExitCode(0)
 	readVaultEnv.wantStdoutContains("DB_URL=mysql://" + suffix)
 	readVaultEnv.wantStdoutContains("PASSWORD=secret-" + suffix)
@@ -871,26 +871,26 @@ func TestLiveFSVaultLifecycle(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(replaceVaultDir, "PASSWORD"), []byte("replaced-"+suffix), 0o600); err != nil {
 		t.Fatalf("write replacement PASSWORD: %v", err)
 	}
-	replaceVaultSecret := runTDC(t, bin, "--profile", profileName, "fs-vault", "replace-secret", "--secret-path", "/n/vault/"+vaultSecretName, "--from-directory", replaceVaultDir)
+	replaceVaultSecret := runTI(t, bin, "--profile", profileName, "fs-vault", "replace-secret", "--secret-path", "/n/vault/"+vaultSecretName, "--from-directory", replaceVaultDir)
 	replaceVaultSecret.wantExitCode(0)
 	replaceVaultSecret.wantStdoutContains(vaultSecretName)
 
-	readReplacedVaultSecret := runTDC(t, bin, "--profile", profileName, "fs-vault", "read-secret", "--secret-name", vaultSecretName, "--field", "PASSWORD", "--format", "raw")
+	readReplacedVaultSecret := runTI(t, bin, "--profile", profileName, "fs-vault", "read-secret", "--secret-name", vaultSecretName, "--field", "PASSWORD", "--format", "raw")
 	readReplacedVaultSecret.wantExitCode(0)
 	if readReplacedVaultSecret.stdout != "replaced-"+suffix {
 		readReplacedVaultSecret.fail("vault replace-secret should replace stored field bytes")
 	}
 
-	createVaultGrant := runTDC(
+	createVaultGrant := runTI(
 		t,
 		bin,
 		"--profile", profileName,
 		"fs-vault", "create-grant",
-		"--agent-id", "tdc-live-e2e",
+		"--agent-id", "ti-live-e2e",
 		"--scope", vaultSecretName,
 		"--permission", "read",
 		"--ttl", "10m",
-		"--label-hint", "tdc-live-e2e-"+suffix,
+		"--label-hint", "ti-live-e2e-"+suffix,
 	)
 	createVaultGrant.wantExitCode(0)
 	vaultGrant := decodeLiveVaultToken(t, createVaultGrant)
@@ -902,7 +902,7 @@ func TestLiveFSVaultLifecycle(t *testing.T) {
 		if grantDeleted {
 			return
 		}
-		cleanup := runTDC(t, bin, "--profile", profileName, "fs-vault", "delete-grant", "--grant-id", vaultGrant.GrantID, "--reason", "cleanup")
+		cleanup := runTI(t, bin, "--profile", profileName, "fs-vault", "delete-grant", "--grant-id", vaultGrant.GrantID, "--reason", "cleanup")
 		if cleanup.exitCode != 0 && cleanup.exitCode != 5 {
 			t.Logf("cleanup vault grant failed for %s: exit=%d stdout=%s stderr=%s", vaultGrant.GrantID, cleanup.exitCode, cleanup.stdout, cleanup.stderr)
 		}
@@ -917,44 +917,44 @@ func TestLiveFSVaultLifecycle(t *testing.T) {
 			if vaultUnmounted {
 				return
 			}
-			cleanupUnmount := runTDC(t, bin, "--profile", profileName, "fs-vault", "unmount-vault", "--mount-path", vaultMountPath, "--ignore-absent", "--force")
+			cleanupUnmount := runTI(t, bin, "--profile", profileName, "fs-vault", "unmount-vault", "--mount-path", vaultMountPath, "--ignore-absent", "--force")
 			if cleanupUnmount.exitCode != 0 {
 				t.Logf("cleanup vault unmount failed for %s: exit=%d stdout=%s stderr=%s", vaultMountPath, cleanupUnmount.exitCode, cleanupUnmount.stdout, cleanupUnmount.stderr)
 			}
 		}()
-		mountVault := runTDC(t, bin, "--profile", profileName, "fs-vault", "mount-vault", "--mount-path", vaultMountPath, "--vault-token", vaultGrant.Token, "--ready-timeout", "30s")
+		mountVault := runTI(t, bin, "--profile", profileName, "fs-vault", "mount-vault", "--mount-path", vaultMountPath, "--vault-token", vaultGrant.Token, "--ready-timeout", "30s")
 		mountVault.wantExitCode(0)
 		mountVault.wantStdoutContains(`"status": "mounted"`)
 		waitLiveLocalFile(t, filepath.Join(vaultMountPath, vaultSecretName, "PASSWORD"), "replaced-"+suffix, 30*time.Second)
-		unmountVault := runTDC(t, bin, "--profile", profileName, "fs-vault", "unmount-vault", "--mount-path", vaultMountPath)
+		unmountVault := runTI(t, bin, "--profile", profileName, "fs-vault", "unmount-vault", "--mount-path", vaultMountPath)
 		unmountVault.wantExitCode(0)
 		unmountVault.wantStdoutContains(`"status": "unmounted"`)
 		vaultUnmounted = true
 	}
-	readVaultWithGrant := runTDC(t, bin, "--profile", profileName, "fs-vault", "read-secret", "--secret-name", vaultSecretName, "--field", "DB_URL", "--format", "raw", "--vault-token", vaultGrant.Token)
+	readVaultWithGrant := runTI(t, bin, "--profile", profileName, "fs-vault", "read-secret", "--secret-name", vaultSecretName, "--field", "DB_URL", "--format", "raw", "--vault-token", vaultGrant.Token)
 	readVaultWithGrant.wantExitCode(0)
 	if readVaultWithGrant.stdout != "mysql://replaced-"+suffix {
 		readVaultWithGrant.fail("delegated vault grant should read scoped field")
 	}
-	deleteVaultGrant := runTDC(t, bin, "--profile", profileName, "fs-vault", "delete-grant", "--grant-id", vaultGrant.GrantID, "--reason", "live-e2e-complete")
+	deleteVaultGrant := runTI(t, bin, "--profile", profileName, "fs-vault", "delete-grant", "--grant-id", vaultGrant.GrantID, "--reason", "live-e2e-complete")
 	deleteVaultGrant.wantExitCode(0)
 	grantDeleted = true
 
 	if runtime.GOOS != "windows" {
 		if _, err := exec.LookPath("env"); err == nil {
-			runWithVault := runTDC(t, bin, "--profile", profileName, "fs-vault", "run-with-secret", "--secret-path", "/n/vault/"+vaultSecretName, "--", "env")
+			runWithVault := runTI(t, bin, "--profile", profileName, "fs-vault", "run-with-secret", "--secret-path", "/n/vault/"+vaultSecretName, "--", "env")
 			runWithVault.wantExitCode(0)
 			runWithVault.wantStdoutContains("DB_URL=mysql://replaced-" + suffix)
 			runWithVault.wantStdoutContains("PASSWORD=replaced-" + suffix)
-			runWithVault.wantStdoutNotContains("TDC_PRIVATE_KEY=")
+			runWithVault.wantStdoutNotContains("TIDB_CLOUD_PRIVATE_KEY=")
 		}
 	}
 
-	listVaultAuditEvents := runTDC(t, bin, "--profile", profileName, "fs-vault", "list-audit-events", "--secret-name", vaultSecretName, "--limit", "20")
+	listVaultAuditEvents := runTI(t, bin, "--profile", profileName, "fs-vault", "list-audit-events", "--secret-name", vaultSecretName, "--limit", "20")
 	listVaultAuditEvents.wantExitCode(0)
 	listVaultAuditEvents.wantStdoutContains(`"events"`)
 
-	deleteVaultSecret := runTDC(t, bin, "--profile", profileName, "fs-vault", "delete-secret", "--secret-name", vaultSecretName)
+	deleteVaultSecret := runTI(t, bin, "--profile", profileName, "fs-vault", "delete-secret", "--secret-name", vaultSecretName)
 	deleteVaultSecret.wantExitCode(0)
 	deleteVaultSecret.wantStdoutContains(`"status": "deleted"`)
 	vaultDeleted = true
@@ -962,43 +962,43 @@ func TestLiveFSVaultLifecycle(t *testing.T) {
 
 func TestLiveFSJournalLifecycle(t *testing.T) {
 	requireLive(t)
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	selected := ensureLiveFSResource(t, bin, profileName)
 	suffix := time.Now().UTC().Format("20060102150405")
-	rootPath := "/tdc-e2e-journal-" + suffix
-	journalID := "jrn-tdc-e2e-" + suffix
-	appendID := "app-tdc-e2e-" + suffix
-	createJournal := runTDC(
+	rootPath := "/ti-e2e-journal-" + suffix
+	journalID := "jrn-ti-e2e-" + suffix
+	appendID := "app-ti-e2e-" + suffix
+	createJournal := runTI(
 		t,
 		bin,
 		"--profile", profileName,
 		"fs-journal", "create-journal",
 		"--journal-id", journalID,
 		"--journal-kind", "agent",
-		"--title", "tdc live e2e "+suffix,
-		"--actor", "agent:tdc-live-e2e",
-		"--label", "test=tdc-e2e",
+		"--title", "ti live e2e "+suffix,
+		"--actor", "agent:ti-live-e2e",
+		"--label", "test=ti-e2e",
 		"--label", "suffix="+suffix,
 	)
 	createJournal.wantExitCode(0)
 	createJournal.wantStdoutContains(journalID)
 
-	appendJournal := runTDC(
+	appendJournal := runTI(
 		t,
 		bin,
 		"--profile", profileName,
 		"fs-journal", "append-journal-entries",
 		"--journal-id", journalID,
 		"--idempotency-key", appendID,
-		"--entry-json", `{"type":"task.started","summary":{"message":"tdc live e2e `+suffix+`"}}`,
+		"--entry-json", `{"type":"task.started","summary":{"message":"ti live e2e `+suffix+`"}}`,
 		"--subject", "path:"+rootPath,
 	)
 	appendJournal.wantExitCode(0)
 	appendJournal.wantStdoutContains(`"count": 1`)
 	appendJournal.wantStdoutContains(appendID)
 
-	readJournal := runTDCWithInput(t, bin, "", liveFSTokenEnv(selected, t.TempDir()), "fs-journal", "read-journal-entries", "--journal-id", journalID, "--limit", "10")
+	readJournal := runTIWithInput(t, bin, "", liveFSTokenEnv(selected, t.TempDir()), "fs-journal", "read-journal-entries", "--journal-id", journalID, "--limit", "10")
 	readJournal.wantExitCode(0)
 	readJournal.wantStdoutContains(journalID)
 	readJournal.wantStdoutContains("task.started")
@@ -1010,7 +1010,7 @@ func TestLiveFSJournalLifecycle(t *testing.T) {
 			"--profile", profileName,
 			"fs-journal", "search-journal-entries",
 			"--entry-type", "task.started",
-			"--label", "test=tdc-e2e",
+			"--label", "test=ti-e2e",
 			"--limit", "10",
 		},
 		journalID,
@@ -1018,26 +1018,26 @@ func TestLiveFSJournalLifecycle(t *testing.T) {
 		"index journal entry",
 	)
 
-	verifyJournal := runTDC(t, bin, "--profile", profileName, "fs-journal", "verify-journal", "--journal-id", journalID, "--output", "text")
+	verifyJournal := runTI(t, bin, "--profile", profileName, "fs-journal", "verify-journal", "--journal-id", journalID, "--output", "text")
 	verifyJournal.wantExitCode(0)
 	verifyJournal.wantStdoutContains("ok journal=" + journalID)
 }
 
 func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, sourcePath, copyPath, movedPath, suffix, fullContent string, deleted *bool) {
 	t.Helper()
-	waitLiveFSResult(t, bin, []string{"--profile", profileName, "fs", "search-file-content", "--path", rootPath, "--pattern", "tdc fs live e2e", "--limit", "5"}, "README.md", 5*time.Minute, "find uploaded file content")
+	waitLiveFSResult(t, bin, []string{"--profile", profileName, "fs", "search-file-content", "--path", rootPath, "--pattern", "ti fs live e2e", "--limit", "5"}, "README.md", 5*time.Minute, "find uploaded file content")
 	waitLiveFSResult(t, bin, []string{"--profile", profileName, "fs", "find-files", "--path", rootPath, "--file-name-pattern", "*.md", "--limit", "5"}, "README.md", 2*time.Minute, "find uploaded file by name")
 
-	remoteCopy := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", sourcePath, "--to-remote", copyPath)
+	remoteCopy := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", sourcePath, "--to-remote", copyPath)
 	remoteCopy.wantExitCode(0)
 	remoteCopy.wantStdoutContains(`"status": "copied"`)
 
-	move := runTDC(t, bin, "--profile", profileName, "fs", "move-file", "--from-remote", copyPath, "--to-remote", movedPath)
+	move := runTI(t, bin, "--profile", profileName, "fs", "move-file", "--from-remote", copyPath, "--to-remote", movedPath)
 	move.wantExitCode(0)
 	move.wantStdoutContains(`"status": "moved"`)
 
 	downloadPath := filepath.Join(t.TempDir(), "nested", "downloaded.md")
-	download := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", downloadPath, "--create-parents")
+	download := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", downloadPath, "--create-parents")
 	download.wantExitCode(0)
 	download.wantStdoutContains(`"status": "copied"`)
 	downloaded, err := os.ReadFile(downloadPath)
@@ -1052,7 +1052,7 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 	if err := os.WriteFile(resumePath, []byte(fullContent[:5]), 0o644); err != nil {
 		t.Fatalf("write partial resume file: %v", err)
 	}
-	resume := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", resumePath, "--resume")
+	resume := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", resumePath, "--resume")
 	resume.wantExitCode(0)
 	resume.wantStdoutContains(`"status": "resumed"`)
 	resumed, err := os.ReadFile(resumePath)
@@ -1074,27 +1074,27 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 		t.Fatalf("write nested local tree file: %v", err)
 	}
 	treeRoot := rootPath + "/tree"
-	recursiveUpload := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", localTree, "--to-remote", treeRoot, "--recursive")
+	recursiveUpload := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", localTree, "--to-remote", treeRoot, "--recursive")
 	recursiveUpload.wantExitCode(0)
 	recursiveUpload.wantStdoutContains(`"status": "copied"`)
-	readTreeFile := runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", treeRoot+"/nested/beta.txt")
+	readTreeFile := runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", treeRoot+"/nested/beta.txt")
 	readTreeFile.wantExitCode(0)
 	if readTreeFile.stdout != "beta "+suffix {
 		readTreeFile.fail("recursive local-to-remote copy should preserve nested file contents")
 	}
 
 	treeCopyRoot := rootPath + "/tree-copy"
-	recursiveRemoteCopy := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", treeRoot, "--to-remote", treeCopyRoot, "--recursive")
+	recursiveRemoteCopy := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", treeRoot, "--to-remote", treeCopyRoot, "--recursive")
 	recursiveRemoteCopy.wantExitCode(0)
 	recursiveRemoteCopy.wantStdoutContains(`"status": "copied"`)
-	readCopiedTreeFile := runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", treeCopyRoot+"/nested/beta.txt")
+	readCopiedTreeFile := runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", treeCopyRoot+"/nested/beta.txt")
 	readCopiedTreeFile.wantExitCode(0)
 	if readCopiedTreeFile.stdout != "beta "+suffix {
 		readCopiedTreeFile.fail("recursive remote-to-remote copy should preserve nested file contents")
 	}
 
 	downloadTree := filepath.Join(t.TempDir(), "download-tree")
-	recursiveDownload := runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", treeRoot, "--to-local", downloadTree, "--recursive")
+	recursiveDownload := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", treeRoot, "--to-local", downloadTree, "--recursive")
 	recursiveDownload.wantExitCode(0)
 	recursiveDownload.wantStdoutContains(`"status": "copied"`)
 	downloadedTreeFile, err := os.ReadFile(filepath.Join(downloadTree, "nested", "beta.txt"))
@@ -1115,12 +1115,12 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 		t.Fatalf("write pack overlay file: %v", err)
 	}
 	packArchivePath := rootPath + "/packs/portable.tar.gz"
-	pack := runTDC(t, bin, "--profile", profileName, "fs", "pack-file-system", "--local-root", packLocalRoot, "--remote-root", rootPath, "--mount-profile", "portable", "--archive-path", packArchivePath)
+	pack := runTI(t, bin, "--profile", profileName, "fs", "pack-file-system", "--local-root", packLocalRoot, "--remote-root", rootPath, "--mount-profile", "portable", "--archive-path", packArchivePath)
 	pack.wantExitCode(0)
 	pack.wantStdoutContains(`"status": "packed"`)
 	pack.wantStdoutContains(`"archive_path": "` + packArchivePath + `"`)
 	unpackLocalRoot := t.TempDir()
-	unpack := runTDC(t, bin, "--profile", profileName, "fs", "unpack-file-system", "--local-root", unpackLocalRoot, "--remote-root", rootPath, "--mount-profile", "portable", "--archive-path", packArchivePath)
+	unpack := runTI(t, bin, "--profile", profileName, "fs", "unpack-file-system", "--local-root", unpackLocalRoot, "--remote-root", rootPath, "--mount-profile", "portable", "--archive-path", packArchivePath)
 	unpack.wantExitCode(0)
 	unpack.wantStdoutContains(`"status": "unpacked"`)
 	unpackedPackFile, err := os.ReadFile(filepath.Join(unpackLocalRoot, "overlay", "repo", "cache", "item.txt"))
@@ -1131,11 +1131,11 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 		t.Fatalf("unpacked pack content mismatch: got %q want %q", unpackedPackFile, packContent)
 	}
 
-	deleteMoved := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--path", movedPath)
+	deleteMoved := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", movedPath)
 	deleteMoved.wantExitCode(0)
 	deleteMoved.wantStdoutContains(`"status": "deleted"`)
 
-	deleteRoot := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--path", rootPath, "--recursive")
+	deleteRoot := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", rootPath, "--recursive")
 	deleteRoot.wantExitCode(0)
 	deleteRoot.wantStdoutContains(`"status": "deleted"`)
 	*deleted = true
@@ -1144,14 +1144,14 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 func TestLiveFSMountRuntime(t *testing.T) {
 	requireLive(t)
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		t.Skip("tdc fs FUSE mount live e2e currently runs on macOS or Linux")
+		t.Skip("ti fs FUSE mount live e2e currently runs on macOS or Linux")
 	}
 
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	ensureLiveFSResource(t, bin, profileName)
 	suffix := time.Now().UTC().Format("20060102150405")
-	remoteRoot := "/tdc-e2e-mount-" + suffix
+	remoteRoot := "/ti-e2e-mount-" + suffix
 	mountPath := filepath.Join(t.TempDir(), "mount")
 	if err := os.MkdirAll(mountPath, 0o755); err != nil {
 		t.Fatalf("create mount path: %v", err)
@@ -1160,57 +1160,57 @@ func TestLiveFSMountRuntime(t *testing.T) {
 	remoteDeleted := false
 	defer func() {
 		if !unmounted {
-			cleanupUnmount := runTDC(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath, "--ignore-absent", "--force")
+			cleanupUnmount := runTI(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath, "--ignore-absent", "--force")
 			if cleanupUnmount.exitCode != 0 {
 				t.Logf("cleanup unmount failed for %s: exit=%d stdout=%s stderr=%s", mountPath, cleanupUnmount.exitCode, cleanupUnmount.stdout, cleanupUnmount.stderr)
 			}
 		}
 		if !remoteDeleted {
-			cleanupRemote := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
+			cleanupRemote := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
 			if cleanupRemote.exitCode != 0 && cleanupRemote.exitCode != 5 {
 				t.Logf("cleanup remote failed for %s: exit=%d stdout=%s stderr=%s", remoteRoot, cleanupRemote.exitCode, cleanupRemote.stdout, cleanupRemote.stderr)
 			}
 		}
 	}()
 
-	createDir := runTDC(t, bin, "--profile", profileName, "fs", "create-directory", "--path", remoteRoot, "--mode", "0755")
+	createDir := runTI(t, bin, "--profile", profileName, "fs", "create-directory", "--path", remoteRoot, "--mode", "0755")
 	createDir.wantExitCode(0)
 	localSeed := filepath.Join(t.TempDir(), "README.md")
-	seedContent := "hello mounted tdc fs " + suffix + "\n"
+	seedContent := "hello mounted ti fs " + suffix + "\n"
 	if err := os.WriteFile(localSeed, []byte(seedContent), 0o644); err != nil {
 		t.Fatalf("write local seed: %v", err)
 	}
 	upload := runLiveFSSetupCommand(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", localSeed, "--to-remote", remoteRoot+"/README.md")
 	upload.wantExitCode(0)
 
-	mount := runTDC(t, bin, "--profile", profileName, "fs", "mount", "--mount-path", mountPath, "--remote-path", remoteRoot, "--ready-timeout", "30s")
+	mount := runTI(t, bin, "--profile", profileName, "fs", "mount", "--mount-path", mountPath, "--remote-path", remoteRoot, "--ready-timeout", "30s")
 	mount.wantExitCode(0)
 	mount.wantStdoutContains(`"status": "mounted"`)
 	mount.wantStdoutContains(`"driver":`)
 
 	waitLiveLocalFile(t, filepath.Join(mountPath, "README.md"), seedContent, 30*time.Second)
-	overwriteContent := "overwritten through mounted tdc fs " + suffix + "\n"
+	overwriteContent := "overwritten through mounted ti fs " + suffix + "\n"
 	if err := os.WriteFile(filepath.Join(mountPath, "README.md"), []byte(overwriteContent), 0o644); err != nil {
 		t.Fatalf("overwrite existing remote file through mount failed: %v", err)
 	}
-	localWrite := "written through mounted tdc fs " + suffix + "\n"
+	localWrite := "written through mounted ti fs " + suffix + "\n"
 	if err := os.WriteFile(filepath.Join(mountPath, "local-write.txt"), []byte(localWrite), 0o644); err != nil {
 		t.Fatalf("write through mount failed: %v", err)
 	}
 	if strings.Contains(mount.stdout, `"driver": "fuse"`) {
-		drain := runTDC(t, bin, "--profile", profileName, "fs", "drain", "--mount-path", mountPath, "--timeout", "30s")
+		drain := runTI(t, bin, "--profile", profileName, "fs", "drain", "--mount-path", mountPath, "--timeout", "30s")
 		drain.wantExitCode(0)
 		drain.wantStdoutContains(`"status": "drained"`)
 	}
 	waitLiveRemoteRead(t, bin, profileName, remoteRoot+"/README.md", overwriteContent, 30*time.Second)
 	waitLiveRemoteRead(t, bin, profileName, remoteRoot+"/local-write.txt", localWrite, 30*time.Second)
 
-	unmount := runTDC(t, bin, "--profile", profileName, "fs", "umount", "--mount-path", mountPath)
+	unmount := runTI(t, bin, "--profile", profileName, "fs", "umount", "--mount-path", mountPath)
 	unmount.wantExitCode(0)
 	unmount.wantStdoutContains(`"status": "unmounted"`)
 	unmounted = true
 
-	deleteRoot := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
+	deleteRoot := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
 	deleteRoot.wantExitCode(0)
 	remoteDeleted = true
 }
@@ -1218,14 +1218,14 @@ func TestLiveFSMountRuntime(t *testing.T) {
 func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 	requireLive(t)
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
-		t.Skip("tdc fs configuration-free mount live e2e currently runs on macOS or Linux")
+		t.Skip("ti fs configuration-free mount live e2e currently runs on macOS or Linux")
 	}
 
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	suffix := fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102150405"), os.Getpid())
-	fileSystemName := "tdc-e2e-token-" + suffix
-	create := runTDC(t, bin, "--profile", profileName, "fs", "create-file-system", "--file-system-name", fileSystemName, "--wait")
+	fileSystemName := "ti-e2e-token-" + suffix
+	create := runTI(t, bin, "--profile", profileName, "fs", "create-file-system", "--file-system-name", fileSystemName, "--wait")
 	create.wantExitCode(0)
 	var created struct {
 		FileSystemName string `json:"file_system_name"`
@@ -1244,7 +1244,7 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 		t.Fatalf("generated configuration-free FS resource name unexpectedly existed")
 	}
 	if created.Status != "ready" {
-		t.Fatalf("--wait returned tdc fs resource in status %q", created.Status)
+		t.Fatalf("--wait returned ti fs resource in status %q", created.Status)
 	}
 
 	deletedResource := false
@@ -1252,7 +1252,7 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 		if deletedResource {
 			return
 		}
-		cleanup := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", fileSystemName)
+		cleanup := runTI(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", fileSystemName)
 		if cleanup.exitCode != 0 {
 			t.Logf("cleanup configuration-free FS resource failed for %q: exit=%d stderr=%s", fileSystemName, cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
 		}
@@ -1265,28 +1265,28 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 	}
 	cleanHome := t.TempDir()
 	authEnv := liveFSTokenEnv(selected, cleanHome)
-	remoteRoot := "/tdc-e2e-token-" + suffix
+	remoteRoot := "/ti-e2e-token-" + suffix
 	remoteDeleted := false
 	defer func() {
 		if remoteDeleted {
 			return
 		}
-		cleanup := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", fileSystemName, "--path", remoteRoot, "--recursive")
+		cleanup := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", fileSystemName, "--path", remoteRoot, "--recursive")
 		if cleanup.exitCode != 0 && cleanup.exitCode != 5 {
 			t.Logf("cleanup configuration-free remote path failed for %s: exit=%d stderr=%s", remoteRoot, cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
 		}
 	}()
 
-	createDir := runTDCWithInput(t, bin, "", authEnv, "fs", "create-directory", "--path", remoteRoot)
+	createDir := runTIWithInput(t, bin, "", authEnv, "fs", "create-directory", "--path", remoteRoot)
 	createDir.wantExitCode(0)
 	seedContent := "configuration-free seed " + suffix + "\n"
 	seedPath := filepath.Join(t.TempDir(), "seed.txt")
 	if err := os.WriteFile(seedPath, []byte(seedContent), 0o600); err != nil {
 		t.Fatalf("write configuration-free seed: %v", err)
 	}
-	upload := runTDCWithInput(t, bin, "", authEnv, "fs", "copy-file", "--from-local", seedPath, "--to-remote", remoteRoot+"/seed.txt")
+	upload := runTIWithInput(t, bin, "", authEnv, "fs", "copy-file", "--from-local", seedPath, "--to-remote", remoteRoot+"/seed.txt")
 	upload.wantExitCode(0)
-	read := runTDCWithInput(t, bin, "", authEnv, "fs", "read-file", "--path", remoteRoot+"/seed.txt")
+	read := runTIWithInput(t, bin, "", authEnv, "fs", "read-file", "--path", remoteRoot+"/seed.txt")
 	read.wantExitCode(0)
 	if read.stdout != seedContent {
 		read.fail("configuration-free data-plane read should match uploaded bytes")
@@ -1302,13 +1302,13 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 		if unmounted {
 			return
 		}
-		cleanup := runTDCWithInput(t, bin, "", locatorEnv, "fs", "unmount-file-system", "--mount-path", mountPath, "--ignore-absent", "--force")
+		cleanup := runTIWithInput(t, bin, "", locatorEnv, "fs", "unmount-file-system", "--mount-path", mountPath, "--ignore-absent", "--force")
 		if cleanup.exitCode != 0 {
 			t.Logf("cleanup configuration-free mount failed for %s: exit=%d stderr=%s", mountPath, cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
 		}
 	}()
 
-	mount := runTDCWithInput(t, bin, "", authEnv, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", remoteRoot, "--ready-timeout", "30s")
+	mount := runTIWithInput(t, bin, "", authEnv, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", remoteRoot, "--ready-timeout", "30s")
 	mount.wantExitCode(0)
 	waitLiveLocalFile(t, filepath.Join(mountPath, "seed.txt"), seedContent, 30*time.Second)
 
@@ -1323,28 +1323,28 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 	if err := os.WriteFile(directPath, []byte(directContent), 0o600); err != nil {
 		t.Fatalf("write configuration-free direct source: %v", err)
 	}
-	directUpload := runTDCWithInput(t, bin, "", authEnv, "fs", "copy-file", "--from-local", directPath, "--to-remote", remoteRoot+"/direct.txt")
+	directUpload := runTIWithInput(t, bin, "", authEnv, "fs", "copy-file", "--from-local", directPath, "--to-remote", remoteRoot+"/direct.txt")
 	directUpload.wantExitCode(0)
 	waitLiveLocalFile(t, filepath.Join(mountPath, "direct.txt"), directContent, 30*time.Second)
 
 	if strings.Contains(mount.stdout, `"driver": "fuse"`) {
-		drain := runTDCWithInput(t, bin, "", locatorEnv, "fs", "drain-file-system", "--mount-path", mountPath, "--timeout", "30s")
+		drain := runTIWithInput(t, bin, "", locatorEnv, "fs", "drain-file-system", "--mount-path", mountPath, "--timeout", "30s")
 		drain.wantExitCode(0)
 	}
-	unmount := runTDCWithInput(t, bin, "", locatorEnv, "fs", "unmount-file-system", "--mount-path", mountPath)
+	unmount := runTIWithInput(t, bin, "", locatorEnv, "fs", "unmount-file-system", "--mount-path", mountPath)
 	unmount.wantExitCode(0)
 	unmounted = true
 
 	for _, path := range []string{
-		filepath.Join(cleanHome, ".tdc", "config"),
-		filepath.Join(cleanHome, ".tdc", "credentials"),
-		filepath.Join(cleanHome, ".tdc", "fs_resources"),
+		filepath.Join(cleanHome, ".ti", "config"),
+		filepath.Join(cleanHome, ".ti", "credentials"),
+		filepath.Join(cleanHome, ".ti", "fs_resources"),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
-			t.Fatalf("configuration-free live command persisted tdc configuration at %s: %v", path, err)
+			t.Fatalf("configuration-free live command persisted ti configuration at %s: %v", path, err)
 		}
 	}
-	locators, err := filepath.Glob(filepath.Join(cleanHome, ".tdc", "mounts", "*.locator.json"))
+	locators, err := filepath.Glob(filepath.Join(cleanHome, ".ti", "mounts", "*.locator.json"))
 	if err != nil {
 		t.Fatalf("inspect configuration-free mount locators: %v", err)
 	}
@@ -1352,10 +1352,10 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 		t.Fatalf("successful configuration-free unmount left %d mount locator(s)", len(locators))
 	}
 
-	deleteRemote := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", fileSystemName, "--path", remoteRoot, "--recursive")
+	deleteRemote := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", fileSystemName, "--path", remoteRoot, "--recursive")
 	deleteRemote.wantExitCode(0)
 	remoteDeleted = true
-	deleteResource := runTDC(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", fileSystemName)
+	deleteResource := runTI(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-name", fileSystemName)
 	deleteResource.wantExitCode(0)
 	deleteResource.wantStdoutContains(`"status": "deleting"`)
 	deleteResource.wantStdoutContains(`"remote_deletion_state": "deleting"`)
@@ -1365,7 +1365,7 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 func TestLiveFSWebDAVMountRuntime(t *testing.T) {
 	requireLive(t)
 	if runtime.GOOS != "darwin" {
-		t.Skip("tdc fs WebDAV mount live e2e currently runs on macOS")
+		t.Skip("ti fs WebDAV mount live e2e currently runs on macOS")
 	}
 	if _, err := exec.LookPath("mount_webdav"); err != nil {
 		t.Skip("mount_webdav is not available")
@@ -1374,11 +1374,11 @@ func TestLiveFSWebDAVMountRuntime(t *testing.T) {
 		t.Skip("umount is not available")
 	}
 
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	ensureLiveFSResource(t, bin, profileName)
 	suffix := time.Now().UTC().Format("20060102150405")
-	remoteRoot := "/tdc-e2e-webdav-mount-" + suffix
+	remoteRoot := "/ti-e2e-webdav-mount-" + suffix
 	mountPath := filepath.Join(t.TempDir(), "mount")
 	if err := os.MkdirAll(mountPath, 0o755); err != nil {
 		t.Fatalf("create mount path: %v", err)
@@ -1387,42 +1387,42 @@ func TestLiveFSWebDAVMountRuntime(t *testing.T) {
 	remoteDeleted := false
 	defer func() {
 		if !unmounted {
-			cleanupUnmount := runTDC(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath, "--ignore-absent", "--force")
+			cleanupUnmount := runTI(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath, "--ignore-absent", "--force")
 			if cleanupUnmount.exitCode != 0 {
 				t.Logf("cleanup unmount failed for %s: exit=%d stdout=%s stderr=%s", mountPath, cleanupUnmount.exitCode, cleanupUnmount.stdout, cleanupUnmount.stderr)
 			}
 		}
 		if !remoteDeleted {
-			cleanupRemote := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
+			cleanupRemote := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
 			if cleanupRemote.exitCode != 0 && cleanupRemote.exitCode != 5 {
 				t.Logf("cleanup remote failed for %s: exit=%d stdout=%s stderr=%s", remoteRoot, cleanupRemote.exitCode, cleanupRemote.stdout, cleanupRemote.stderr)
 			}
 		}
 	}()
 
-	createDir := runTDC(t, bin, "--profile", profileName, "fs", "create-directory", "--path", remoteRoot, "--mode", "0755")
+	createDir := runTI(t, bin, "--profile", profileName, "fs", "create-directory", "--path", remoteRoot, "--mode", "0755")
 	createDir.wantExitCode(0)
 	localSeed := filepath.Join(t.TempDir(), "README.md")
-	seedContent := "hello webdav mounted tdc fs " + suffix + "\n"
+	seedContent := "hello webdav mounted ti fs " + suffix + "\n"
 	if err := os.WriteFile(localSeed, []byte(seedContent), 0o644); err != nil {
 		t.Fatalf("write local seed: %v", err)
 	}
 	upload := runLiveFSSetupCommand(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", localSeed, "--to-remote", remoteRoot+"/README.md")
 	upload.wantExitCode(0)
 
-	mount := runTDC(t, bin, "--profile", profileName, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", remoteRoot, "--driver", "webdav", "--ready-timeout", "30s")
+	mount := runTI(t, bin, "--profile", profileName, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", remoteRoot, "--driver", "webdav", "--ready-timeout", "30s")
 	mount.wantExitCode(0)
 	mount.wantStdoutContains(`"status": "mounted"`)
 	mount.wantStdoutContains(`"driver": "webdav"`)
 
 	waitLiveLocalFile(t, filepath.Join(mountPath, "README.md"), seedContent, 30*time.Second)
 
-	unmount := runTDC(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath)
+	unmount := runTI(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath)
 	unmount.wantExitCode(0)
 	unmount.wantStdoutContains(`"status": "unmounted"`)
 	unmounted = true
 
-	deleteRoot := runTDC(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
+	deleteRoot := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
 	deleteRoot.wantExitCode(0)
 	remoteDeleted = true
 }
@@ -1430,13 +1430,13 @@ func TestLiveFSWebDAVMountRuntime(t *testing.T) {
 func TestLiveDBClusterLifecycle(t *testing.T) {
 	requireLive(t)
 
-	bin := tdcBinary(t)
+	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	releaseAutoCreatedLiveFSResource(t, bin, profileName)
 	profile := liveProfile(t)
 
 	suffix := time.Now().UTC().Format("20060102150405")
-	clusterName := "tdc-e2e-" + suffix
+	clusterName := "ti-e2e-" + suffix
 	updatedName := clusterName + "-u"
 	var clusterID string
 	deleted := false
@@ -1444,21 +1444,21 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 		if clusterID == "" || deleted {
 			return
 		}
-		cleanup := runTDC(t, bin, "--profile", profileName, "db", "delete-db-cluster", "--db-cluster-id", clusterID, "--wait")
+		cleanup := runTI(t, bin, "--profile", profileName, "db", "delete-db-cluster", "--db-cluster-id", clusterID, "--wait")
 		if cleanup.exitCode != 0 && cleanup.exitCode != 5 {
 			t.Logf("cleanup delete failed for cluster %s: exit=%d stdout=%s stderr=%s", clusterID, cleanup.exitCode, cleanup.stdout, cleanup.stderr)
 		}
 	}()
 
-	create := runTDCWithInput(
+	create := runTIWithInput(
 		t,
 		bin,
 		"",
 		[]string{
 			"HOME=" + t.TempDir(),
-			"TDC_REGION_CODE=" + profile.PlacementRegionCode,
-			"TDC_PUBLIC_KEY=" + profile.TDCPublicKey,
-			"TDC_PRIVATE_KEY=" + profile.TDCPrivateKey,
+			"TI_REGION_CODE=" + profile.PlacementRegionCode,
+			"TIDB_CLOUD_PUBLIC_KEY=" + profile.TiDBCloudPublicKey,
+			"TIDB_CLOUD_PRIVATE_KEY=" + profile.TiDBCloudPrivateKey,
 		},
 		"db", "create-db-cluster",
 		"--db-cluster-name", clusterName,
@@ -1475,7 +1475,7 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 	if created.State != "ACTIVE" {
 		t.Fatalf("--wait returned cluster in state %q: %#v", created.State, created)
 	}
-	describe := runTDC(t, bin, "--profile", profileName, "db", "describe-db-cluster", "--db-cluster-id", clusterID, "--view", "FULL")
+	describe := runTI(t, bin, "--profile", profileName, "db", "describe-db-cluster", "--db-cluster-id", clusterID, "--view", "FULL")
 	describe.wantExitCode(0)
 	described := decodeLiveCluster(t, describe)
 	if described.ID != clusterID || described.DisplayName != clusterName || described.State != "ACTIVE" {
@@ -1488,23 +1488,23 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 		t.Fatalf("server-selected project label is empty: %#v", described)
 	}
 
-	prepare := runTDC(t, bin, "--profile", profileName, "db", "create-db-sql-users", "--db-cluster-id", clusterID)
+	prepare := runTI(t, bin, "--profile", profileName, "db", "create-db-sql-users", "--db-cluster-id", clusterID)
 	prepare.wantExitCode(0)
 	prepare.wantStdoutContains(`"read_only"`)
 	prepare.wantStdoutContains(`"read_write"`)
 	prepare.wantStdoutContains(`"admin"`)
 
-	prepareAgain := runTDC(t, bin, "--profile", profileName, "db", "create-db-sql-users", "--db-cluster-id", clusterID)
+	prepareAgain := runTI(t, bin, "--profile", profileName, "db", "create-db-sql-users", "--db-cluster-id", clusterID)
 	prepareAgain.wantExitCode(0)
 	prepareAgain.wantStdoutContains(`"exists"`)
 
-	connectionString := runTDC(t, bin, "--profile", profileName, "db", "format-db-connection-string", "--db-cluster-id", clusterID, "--read-write", "--database", "test")
+	connectionString := runTI(t, bin, "--profile", profileName, "db", "format-db-connection-string", "--db-cluster-id", clusterID, "--read-write", "--database", "test")
 	connectionString.wantExitCode(0)
 	connectionString.wantStdoutContains(`"format": "mysql-uri"`)
 	connectionString.wantStdoutContains(`"access_mode": "read_write"`)
 	connectionString.wantStdoutContains(`"connection_string"`)
 
-	connectionEnv := runTDC(t, bin, "--profile", profileName, "db", "format-db-connection-string", "--db-cluster-id", clusterID, "--read-only", "--format", "env")
+	connectionEnv := runTI(t, bin, "--profile", profileName, "db", "format-db-connection-string", "--db-cluster-id", clusterID, "--read-only", "--format", "env")
 	connectionEnv.wantExitCode(0)
 	connectionEnv.wantStdoutContains("TIDB_HOST=")
 	connectionEnv.wantStdoutContains("TIDB_ACCESS_MODE=read_only")
@@ -1514,14 +1514,14 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 	waitLiveSQL(t, bin, profileName, clusterID, []string{"--read-only"}, "read-only SQL execution")
 	waitLiveSQL(t, bin, profileName, clusterID, []string{"--admin"}, "admin SQL execution")
 
-	branchName := "tdc-e2e-branch-" + suffix
+	branchName := "ti-e2e-branch-" + suffix
 	branchID := ""
 	branchDeleted := false
 	defer func() {
 		if branchID == "" || branchDeleted {
 			return
 		}
-		cleanup := runTDC(
+		cleanup := runTI(
 			t,
 			bin,
 			"--profile", profileName,
@@ -1534,7 +1534,7 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 		}
 	}()
 
-	branchCreate := runTDC(
+	branchCreate := runTI(
 		t,
 		bin,
 		"--profile", profileName,
@@ -1553,28 +1553,28 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 		t.Fatalf("--wait returned branch in state %q: %#v", createdBranch.State, createdBranch)
 	}
 
-	branches := runTDC(t, bin, "--profile", profileName, "db", "list-db-cluster-branches", "--db-cluster-id", clusterID, "--page-size", "100")
+	branches := runTI(t, bin, "--profile", profileName, "db", "list-db-cluster-branches", "--db-cluster-id", clusterID, "--page-size", "100")
 	branches.wantExitCode(0)
 	branches.wantStdoutContains(`"branches"`)
 	branches.wantStdoutContains(branchID)
 
-	branchQuery := runTDC(t, bin, "--profile", profileName, "db", "list-db-cluster-branches", "--db-cluster-id", clusterID, "--query", "branches[].id")
+	branchQuery := runTI(t, bin, "--profile", profileName, "db", "list-db-cluster-branches", "--db-cluster-id", clusterID, "--query", "branches[].id")
 	branchQuery.wantExitCode(0)
 	branchQuery.wantStdoutContains(branchID)
 
-	branchText := runTDC(t, bin, "--profile", profileName, "db", "list-db-cluster-branches", "--db-cluster-id", clusterID, "--output", "text")
+	branchText := runTI(t, bin, "--profile", profileName, "db", "list-db-cluster-branches", "--db-cluster-id", clusterID, "--output", "text")
 	branchText.wantExitCode(0)
 	branchText.wantStdoutContains("ID")
 	branchText.wantStdoutContains(branchName)
 
-	branchDescribe := runTDC(t, bin, "--profile", profileName, "db", "describe-db-cluster-branch", "--db-cluster-id", clusterID, "--db-cluster-branch-id", branchID, "--view", "FULL")
+	branchDescribe := runTI(t, bin, "--profile", profileName, "db", "describe-db-cluster-branch", "--db-cluster-id", clusterID, "--db-cluster-branch-id", branchID, "--view", "FULL")
 	branchDescribe.wantExitCode(0)
 	describedBranch := decodeLiveBranch(t, branchDescribe)
 	if describedBranch.ID != branchID || describedBranch.DisplayName != branchName {
 		t.Fatalf("unexpected described branch: %#v\n%s", describedBranch, branchDescribe.stdout)
 	}
 
-	branchDelete := runTDC(
+	branchDelete := runTI(
 		t,
 		bin,
 		"--profile", profileName,
@@ -1591,7 +1591,7 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 
 	waitLiveBranchDeleted(t, bin, profileName, clusterID, branchID, 5*time.Minute)
 
-	update := runTDC(
+	update := runTI(
 		t,
 		bin,
 		"--profile", profileName,
@@ -1608,7 +1608,7 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 		return cluster.ID == clusterID && cluster.DisplayName == updatedName
 	}, 3*time.Minute, "show updated display name")
 
-	remove := runTDC(
+	remove := runTI(
 		t,
 		bin,
 		"--profile", profileName,
@@ -1629,8 +1629,8 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 
 func requireLive(t *testing.T) {
 	t.Helper()
-	if os.Getenv("TDC_LIVE") != "1" {
-		t.Skip("TDC_LIVE=1 is required; run make live-e2e")
+	if os.Getenv("TI_LIVE") != "1" {
+		t.Skip("TI_LIVE=1 is required; run make live-e2e")
 	}
 }
 
@@ -1714,7 +1714,7 @@ func waitLiveCluster(t *testing.T, bin, profileName, clusterID string, ready fun
 	deadline := time.Now().Add(timeout)
 	var last liveCluster
 	for {
-		describe := runTDC(t, bin, "--profile", profileName, "db", "describe-db-cluster", "--db-cluster-id", clusterID, "--view", "FULL")
+		describe := runTI(t, bin, "--profile", profileName, "db", "describe-db-cluster", "--db-cluster-id", clusterID, "--view", "FULL")
 		describe.wantExitCode(0)
 		last = decodeLiveCluster(t, describe)
 		if ready(last) {
@@ -1735,7 +1735,7 @@ func waitLiveSQL(t *testing.T, bin, profileName, clusterID string, modeArgs []st
 		args := []string{"--profile", profileName, "db", "execute-sql-statement", "--db-cluster-id", clusterID}
 		args = append(args, modeArgs...)
 		args = append(args, "--sql", "select 1")
-		last = runTDC(t, bin, args...)
+		last = runTI(t, bin, args...)
 		if last.exitCode == 0 {
 			last.wantStdoutContains(`"transport": "https"`)
 			last.wantStdoutContains(`"row_count": 1`)
@@ -1753,12 +1753,12 @@ func waitLiveFSResult(t *testing.T, bin string, args []string, want string, time
 	deadline := time.Now().Add(timeout)
 	var last commandResult
 	for {
-		last = runTDC(t, bin, args...)
+		last = runTI(t, bin, args...)
 		if last.exitCode == 0 && strings.Contains(last.stdout, want) {
 			return last
 		}
 		if time.Now().After(deadline) {
-			last.fail("timed out waiting for tdc fs to %s", description)
+			last.fail("timed out waiting for ti fs to %s", description)
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -1790,7 +1790,7 @@ func waitLiveRemoteRead(t *testing.T, bin, profileName, remotePath, want string,
 	deadline := time.Now().Add(timeout)
 	var last commandResult
 	for {
-		last = runTDC(t, bin, "--profile", profileName, "fs", "read-file", "--path", remotePath)
+		last = runTI(t, bin, "--profile", profileName, "fs", "read-file", "--path", remotePath)
 		if last.exitCode == 0 && last.stdout == want {
 			return
 		}
@@ -1806,7 +1806,7 @@ func waitLiveRemoteReadWithEnv(t *testing.T, bin string, env []string, remotePat
 	deadline := time.Now().Add(timeout)
 	var last commandResult
 	for {
-		last = runTDCWithInput(t, bin, "", env, "fs", "read-file", "--path", remotePath)
+		last = runTIWithInput(t, bin, "", env, "fs", "read-file", "--path", remotePath)
 		if last.exitCode == 0 && last.stdout == want {
 			return
 		}
@@ -1820,26 +1820,26 @@ func waitLiveRemoteReadWithEnv(t *testing.T, bin string, env []string, remotePat
 func liveFSTokenEnv(profile *config.Profile, home string) []string {
 	return []string{
 		"HOME=" + home,
-		"TDC_LOGGING=off",
-		"TDC_PROFILE=",
-		"TDC_PUBLIC_KEY=",
-		"TDC_PRIVATE_KEY=",
-		"TDC_FS_FILE_SYSTEM_NAME=" + profile.FSResourceName,
-		"TDC_FS_TOKEN=" + profile.FSAPIKey,
-		"TDC_REGION_CODE=" + profile.FSPlacementRegionCode,
+		"TI_LOGGING=off",
+		"TI_PROFILE=",
+		"TIDB_CLOUD_PUBLIC_KEY=",
+		"TIDB_CLOUD_PRIVATE_KEY=",
+		"TI_FS_FILE_SYSTEM_NAME=" + profile.FSResourceName,
+		"TI_FS_TOKEN=" + profile.FSAPIKey,
+		"TI_REGION_CODE=" + profile.FSPlacementRegionCode,
 	}
 }
 
 func liveFSLocatorEnv(home string) []string {
 	return []string{
 		"HOME=" + home,
-		"TDC_LOGGING=off",
-		"TDC_PROFILE=",
-		"TDC_PUBLIC_KEY=",
-		"TDC_PRIVATE_KEY=",
-		"TDC_FS_FILE_SYSTEM_NAME=",
-		"TDC_FS_TOKEN=",
-		"TDC_REGION_CODE=",
+		"TI_LOGGING=off",
+		"TI_PROFILE=",
+		"TIDB_CLOUD_PUBLIC_KEY=",
+		"TIDB_CLOUD_PRIVATE_KEY=",
+		"TI_FS_FILE_SYSTEM_NAME=",
+		"TI_FS_TOKEN=",
+		"TI_REGION_CODE=",
 	}
 }
 
@@ -1847,7 +1847,7 @@ func waitLiveBranchDeleted(t *testing.T, bin, profileName, clusterID, branchID s
 	t.Helper()
 	deadline := time.Now().Add(timeout)
 	for {
-		describe := runTDC(t, bin, "--profile", profileName, "db", "describe-db-cluster-branch", "--db-cluster-id", clusterID, "--db-cluster-branch-id", branchID)
+		describe := runTI(t, bin, "--profile", profileName, "db", "describe-db-cluster-branch", "--db-cluster-id", clusterID, "--db-cluster-branch-id", branchID)
 		switch describe.exitCode {
 		case 0:
 			branch := decodeLiveBranch(t, describe)
@@ -1881,7 +1881,7 @@ func cleanupLiveSQLCredentials(t *testing.T, clusterID string) {
 		t.Logf("cannot determine home directory for SQL credential cleanup: %v", err)
 		return
 	}
-	path := filepath.Join(home, ".tdc", "db_users", clusterID)
+	path := filepath.Join(home, ".ti", "db_users", clusterID)
 	if err := os.RemoveAll(path); err != nil {
 		t.Logf("cleanup SQL credentials failed for %s: %v", path, err)
 	}
@@ -1908,7 +1908,7 @@ func ensureLiveFSResource(t *testing.T, bin, profileName string) *config.Profile
 		t.Fatalf("resolve live fs resource %q: %v", name, err)
 	}
 
-	create := runTDC(t, bin, "--profile", profileName, "fs", "create-file-system", "--file-system-name", name, "--wait")
+	create := runTI(t, bin, "--profile", profileName, "fs", "create-file-system", "--file-system-name", name, "--wait")
 	create.wantExitCode(0)
 	create.wantStdoutContains(`"credentials_stored": true`)
 	create.wantStdoutContains(`"status": "ready"`)
@@ -1917,7 +1917,7 @@ func ensureLiveFSResource(t *testing.T, bin, profileName string) *config.Profile
 	profile = liveProfile(t)
 	selected, _, err := fscred.Resolve(home, profile, name, true, nil)
 	if err != nil {
-		t.Fatalf("tdc fs resource %q was created but is not in profile %q registry: %v", name, profileName, err)
+		t.Fatalf("ti fs resource %q was created but is not in profile %q registry: %v", name, profileName, err)
 	}
 	return selected
 }
@@ -1926,14 +1926,14 @@ func waitLiveFSReady(t *testing.T, bin, profileName string, profile *config.Prof
 	t.Helper()
 	client := liveFSClient(t, profile, authz.FSVolumeRead)
 	probeLocalPath := filepath.Join(t.TempDir(), "ready.txt")
-	if err := os.WriteFile(probeLocalPath, []byte("tdc fs live readiness probe\n"), 0o600); err != nil {
-		t.Fatalf("write tdc fs readiness probe: %v", err)
+	if err := os.WriteFile(probeLocalPath, []byte("ti fs live readiness probe\n"), 0o600); err != nil {
+		t.Fatalf("write ti fs readiness probe: %v", err)
 	}
-	probeRemotePath := fmt.Sprintf("/tdc-e2e-readiness-%d-%d.txt", os.Getpid(), time.Now().UnixNano())
+	probeRemotePath := fmt.Sprintf("/ti-e2e-readiness-%d-%d.txt", os.Getpid(), time.Now().UnixNano())
 	defer func() {
 		cleanup := runLiveFSSetupCommand(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", profile.FSResourceName, "--path", probeRemotePath)
 		if cleanup.exitCode != 0 && !isLiveFSNotFound(cleanup.stderr) {
-			t.Logf("cleanup tdc fs readiness probe failed: exit=%d stderr=%s", cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
+			t.Logf("cleanup ti fs readiness probe failed: exit=%d stderr=%s", cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
 		}
 	}()
 	deadline := time.Now().Add(timeout)
@@ -1947,11 +1947,11 @@ func waitLiveFSReady(t *testing.T, bin, profileName string, profile *config.Prof
 			lastStatus = status
 			state := strings.ToLower(strings.TrimSpace(status.Status))
 			if state == "" || (!strings.Contains(state, "provision") && !strings.Contains(state, "delet")) {
-				lastProbe = runTDC(t, bin, "--profile", profileName, "fs", "copy-file", "--file-system-name", profile.FSResourceName, "--from-local", probeLocalPath, "--to-remote", probeRemotePath, "--overwrite")
+				lastProbe = runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--file-system-name", profile.FSResourceName, "--from-local", probeLocalPath, "--to-remote", probeRemotePath, "--overwrite")
 				if lastProbe.exitCode == 0 {
 					cleanup := runLiveFSSetupCommand(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-name", profile.FSResourceName, "--path", probeRemotePath)
 					if cleanup.exitCode != 0 && !isLiveFSNotFound(cleanup.stderr) {
-						cleanup.fail("delete tdc fs readiness probe")
+						cleanup.fail("delete ti fs readiness probe")
 					}
 					consecutiveWriteProbes++
 					if consecutiveWriteProbes >= 5 {
@@ -1960,18 +1960,18 @@ func waitLiveFSReady(t *testing.T, bin, profileName string, profile *config.Prof
 				} else {
 					consecutiveWriteProbes = 0
 					if !isLiveFSReadinessError(lastProbe.stderr) {
-						lastProbe.fail("probe tdc fs data-plane readiness")
+						lastProbe.fail("probe ti fs data-plane readiness")
 					}
 				}
 			}
 		} else {
 			lastErr = err
 			if !isLiveFSReadinessError(err.Error()) {
-				t.Fatalf("check tdc fs readiness for profile %q failed: %v", profile.Name, err)
+				t.Fatalf("check ti fs readiness for profile %q failed: %v", profile.Name, err)
 			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for tdc fs resource %q in profile %q to become data-plane ready; last_status=%#v last_error=%v last_probe_stderr=%q", profile.FSResourceName, profile.Name, lastStatus, lastErr, strings.TrimSpace(lastProbe.stderr))
+			t.Fatalf("timed out waiting for ti fs resource %q in profile %q to become data-plane ready; last_status=%#v last_error=%v last_probe_stderr=%q", profile.FSResourceName, profile.Name, lastStatus, lastErr, strings.TrimSpace(lastProbe.stderr))
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -1996,7 +1996,7 @@ func runLiveFSSetupCommand(t *testing.T, bin string, args ...string) commandResu
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		result := runTDC(t, bin, args...)
+		result := runTI(t, bin, args...)
 		if result.exitCode == 0 || !isLiveFSReadinessError(result.stderr) || time.Now().After(deadline) {
 			return result
 		}
@@ -2011,8 +2011,8 @@ func isLiveFSNotFound(stderr string) bool {
 func TestIsLiveFSReadinessError(t *testing.T) {
 	t.Parallel()
 	for _, message := range []string{
-		"tdc [ERROR]: fs ls: storage backend unavailable; contact support",
-		"tdc [ERROR]: fs cp: HTTP 503:",
+		"ti [ERROR]: fs ls: storage backend unavailable; contact support",
+		"ti [ERROR]: fs cp: HTTP 503:",
 		"resource is still provisioning",
 		"503 Service Unavailable",
 		"connection reset by peer",
@@ -2025,18 +2025,18 @@ func TestIsLiveFSReadinessError(t *testing.T) {
 			t.Fatalf("expected readiness error for %q", message)
 		}
 	}
-	if isLiveFSReadinessError("tdc [ERROR]: authentication required") {
+	if isLiveFSReadinessError("ti [ERROR]: authentication required") {
 		t.Fatal("authentication errors must fail readiness immediately")
 	}
 }
 
 func cleanupAutoCreatedLiveFSResource() {
-	if os.Getenv("TDC_LIVE") != "1" {
+	if os.Getenv("TI_LIVE") != "1" {
 		return
 	}
-	bin := os.Getenv("TDC_E2E_BIN")
+	bin := os.Getenv("TI_E2E_BIN")
 	if bin == "" {
-		_, _ = fmt.Fprintln(os.Stderr, "tdc live e2e cleanup warning: TDC_E2E_BIN is not set; cannot delete auto-created tdc fs resource")
+		_, _ = fmt.Fprintln(os.Stderr, "ti live e2e cleanup warning: TI_E2E_BIN is not set; cannot delete auto-created ti fs resource")
 		return
 	}
 	profileName := liveProfileNameFromEnv()
@@ -2049,7 +2049,7 @@ func cleanupAutoCreatedLiveFSResource() {
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "tdc live e2e cleanup warning: delete tdc fs resource %q failed: %v\n%s", name, err, string(output))
+		_, _ = fmt.Fprintf(os.Stderr, "ti live e2e cleanup warning: delete ti fs resource %q failed: %v\n%s", name, err, string(output))
 	}
 }
 
@@ -2061,7 +2061,7 @@ func releaseAutoCreatedLiveFSResource(t *testing.T, bin, profileName string) {
 		return
 	}
 	name := liveFileSystemName(t)
-	result := runTDC(
+	result := runTI(
 		t,
 		bin,
 		"--profile", profileName,
@@ -2082,7 +2082,7 @@ func liveProfileName(t *testing.T) string {
 }
 
 func liveProfileNameFromEnv() string {
-	profileName := os.Getenv("TDC_PROFILE")
+	profileName := os.Getenv("TI_PROFILE")
 	if profileName == "" {
 		profileName = defaultLiveProfile
 	}
@@ -2095,7 +2095,7 @@ func liveFileSystemName(t *testing.T) string {
 }
 
 func liveFileSystemNameFromEnv() string {
-	name := strings.TrimSpace(os.Getenv("TDC_LIVE_FS_NAME"))
+	name := strings.TrimSpace(os.Getenv("TI_LIVE_FS_NAME"))
 	if name == "" {
 		name = "workspace"
 	}
@@ -2115,16 +2115,16 @@ func liveProfile(t *testing.T) *config.Profile {
 	}
 	profile, err := load()
 	if err != nil {
-		t.Fatalf("load live e2e profile %q: %v\nconfigure it with: bin/tdc configure --profile %s", profileName, err, profileName)
+		t.Fatalf("load live e2e profile %q: %v\nconfigure it with: bin/ti configure --profile %s", profileName, err, profileName)
 	}
 	if profile.ProjectID != "" {
 		return profile
 	}
 
-	configured := runTDCWithInput(t, tdcBinary(t), "", []string{
-		"TDC_REGION_CODE=" + profile.PlacementRegionCode,
-		"TDC_PUBLIC_KEY=" + profile.TDCPublicKey,
-		"TDC_PRIVATE_KEY=" + profile.TDCPrivateKey,
+	configured := runTIWithInput(t, tiBinary(t), "", []string{
+		"TI_REGION_CODE=" + profile.PlacementRegionCode,
+		"TIDB_CLOUD_PUBLIC_KEY=" + profile.TiDBCloudPublicKey,
+		"TIDB_CLOUD_PRIVATE_KEY=" + profile.TiDBCloudPrivateKey,
 	}, "configure", "--profile", profileName, "--non-interactive")
 	configured.wantExitCode(0)
 	configured.wantStdoutContains(`"project_type": "tidbx_virtual"`)
@@ -2143,7 +2143,7 @@ func liveDigestClient(t *testing.T, profile *config.Profile, endpoint endpoints.
 	client, err := api.NewDigestClient(profile, endpoint, permission, api.Options{
 		Timeout:    30 * time.Second,
 		MaxRetries: 1,
-		UserAgent:  "tdc-live-e2e",
+		UserAgent:  "ti-live-e2e",
 	})
 	if err != nil {
 		t.Fatalf("create live API client for %s: %v", endpoint.Service, err)
@@ -2163,15 +2163,15 @@ func liveFSClient(t *testing.T, profile *config.Profile, permission authz.Permis
 	}
 	endpoint, err := endpoints.NewResolver().ResolveFS(provider, regionCode)
 	if err != nil {
-		t.Fatalf("resolve live tdc fs endpoint: %v", err)
+		t.Fatalf("resolve live ti fs endpoint: %v", err)
 	}
 	client, err := api.NewBearerClient(profile.Name, profile.FSAPIKey, endpoint, permission, api.Options{
 		Timeout:    45 * time.Second,
 		MaxRetries: 1,
-		UserAgent:  "tdc-live-e2e",
+		UserAgent:  "ti-live-e2e",
 	})
 	if err != nil {
-		t.Fatalf("create live tdc fs client: %v", err)
+		t.Fatalf("create live ti fs client: %v", err)
 	}
 	return apifs.New(client)
 }

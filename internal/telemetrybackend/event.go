@@ -21,8 +21,8 @@ const (
 
 var (
 	eventIDPattern        = regexp.MustCompile(`^[A-Za-z0-9_-]{16,64}$`)
-	installationIDPattern = regexp.MustCompile(`^tdc_[A-Za-z0-9_-]{16,96}$`)
-	commandPathPattern    = regexp.MustCompile(`^tdc(?: [a-z][a-z0-9-]{0,63}){0,2}$`)
+	installationIDPattern = regexp.MustCompile(`^(?:ti|tdc)_[A-Za-z0-9_-]{16,96}$`)
+	commandPathPattern    = regexp.MustCompile(`^(?:ti|tdc)(?: [a-z][a-z0-9-]{0,63}){0,2}$`)
 	flagNamePattern       = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 	errorCodePattern      = regexp.MustCompile(`^[A-Za-z0-9._-]{0,64}$`)
 	cliVersionPattern     = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$`)
@@ -174,7 +174,7 @@ func validateEvent(raw wireEvent, schemaVersion int, receivedAt time.Time) (Even
 	if !eventIDPattern.MatchString(raw.EventID) {
 		return Event{}, errors.New("invalid event_id")
 	}
-	if raw.EventName != "tdc.command.finished" {
+	if raw.EventName != "ti.command.finished" && raw.EventName != "tdc.command.finished" {
 		return Event{}, errors.New("invalid event_name")
 	}
 	occurredAt, err := time.Parse(time.RFC3339Nano, raw.OccurredAt)

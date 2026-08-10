@@ -13,13 +13,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/store"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	"github.com/tidbcloud/tdc/internal/fs/fscred"
-	"github.com/tidbcloud/tdc/internal/fs/mountlocator"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
 )
 
 type fakeDrive9Call struct {
@@ -30,7 +30,7 @@ type fakeDrive9Call struct {
 func TestDrive9CreateFileSystemStoresRegistryCredentialsAndUsesCanonicalRegion(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	t.Setenv("DRIVE9_API_KEY", "ambient-drive9-key")
 	profile := testProfile()
 
@@ -93,8 +93,8 @@ func TestDrive9CreateFileSystemStoresRegistryCredentialsAndUsesCanonicalRegion(t
 func TestDrive9CreateFileSystemWaitsUntilReady(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
-	t.Setenv("TDC_FAKE_DRIVE9_STAT_FAILURE_SEQUENCE", filepath.Join(t.TempDir(), "stat-attempted"))
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_STAT_FAILURE_SEQUENCE", filepath.Join(t.TempDir(), "stat-attempted"))
 
 	service := testCompanionService(home, companion)
 	service.FSReadyWaitTimeout = time.Second
@@ -127,7 +127,7 @@ func TestDrive9CreateFileSystemWaitsUntilReady(t *testing.T) {
 func TestDrive9CreateFileSystemReadyTimeoutPreservesCredentials(t *testing.T) {
 	home := t.TempDir()
 	companion, _ := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_STAT_ALWAYS_FAIL", "1")
+	t.Setenv("TI_FAKE_DRIVE9_STAT_ALWAYS_FAIL", "1")
 
 	service := testCompanionService(home, companion)
 	service.FSReadyWaitTimeout = 10 * time.Millisecond
@@ -149,15 +149,15 @@ func TestDrive9CreateFileSystemReadyTimeoutPreservesCredentials(t *testing.T) {
 func TestDrive9CreateFileSystemFromEnvironmentProfileStoresDefaultProfile(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	profile := &config.Profile{
 		Name:                config.DefaultProfile,
 		Source:              "env",
 		PlacementRegionCode: "aws-us-east-1",
 		CloudProvider:       "aws",
 		RegionCode:          "us-east-1",
-		TDCPublicKey:        "env-public",
-		TDCPrivateKey:       "env-private",
+		TiDBCloudPublicKey:  "env-public",
+		TiDBCloudPrivateKey: "env-private",
 	}
 
 	if _, err := testCompanionService(home, companion).CreateFileSystem(context.Background(), CreateFileSystemOptions{
@@ -192,7 +192,7 @@ func TestDrive9CreateFileSystemFromEnvironmentProfileStoresDefaultProfile(t *tes
 func TestDrive9CreateSecondFileSystemUsesIndependentCompanionHome(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	profile := testProfile()
 	service := testCompanionService(home, companion)
 	if _, err := service.CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: profile, FileSystemName: "workspace"}); err != nil {
@@ -236,9 +236,9 @@ func TestDrive9CreateSecondFileSystemUsesIndependentCompanionHome(t *testing.T) 
 func TestDrive9DeleteFileSystemDeletesOnlySelectedRegistryResource(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	profile := dataProfile()
-	if err := store.WriteProfile(home, profile.Name, store.ConfigProfile{RegionCode: profile.PlacementRegionCode}, store.CredentialsProfile{TDCPublicKey: profile.TDCPublicKey, TDCPrivateKey: profile.TDCPrivateKey}); err != nil {
+	if err := store.WriteProfile(home, profile.Name, store.ConfigProfile{RegionCode: profile.PlacementRegionCode}, store.CredentialsProfile{TiDBCloudPublicKey: profile.TiDBCloudPublicKey, TiDBCloudPrivateKey: profile.TiDBCloudPrivateKey}); err != nil {
 		t.Fatal(err)
 	}
 	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "fs-secret"); err != nil {
@@ -276,7 +276,7 @@ func TestDrive9DeleteFileSystemDeletesOnlySelectedRegistryResource(t *testing.T)
 	if err != nil {
 		t.Fatalf("ReadCredentials failed: %v", err)
 	}
-	if got := credentialsDoc["stage"]; got.FSAPIKey != "" || got.TDCPublicKey != "public" {
+	if got := credentialsDoc["stage"]; got.FSAPIKey != "" || got.TiDBCloudPublicKey != "public" {
 		t.Fatalf("unexpected credentials after delete: %#v", got)
 	}
 	if _, err := fscred.Get(home, "stage", "workspace"); apperr.CodeFor(err) != "fs.resource_not_found" {
@@ -289,11 +289,11 @@ func TestDrive9DeleteFileSystemDeletesOnlySelectedRegistryResource(t *testing.T)
 
 func TestDrive9CheckFileSystemUsesSelectedResource(t *testing.T) {
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 
 	profile := dataProfile()
-	profile.TDCPublicKey = ""
-	profile.TDCPrivateKey = ""
+	profile.TiDBCloudPublicKey = ""
+	profile.TiDBCloudPrivateKey = ""
 	result, err := testCompanionService(t.TempDir(), companion).CheckFileSystem(context.Background(), CheckFileSystemOptions{Profile: profile})
 	if err != nil {
 		t.Fatalf("CheckFileSystem failed: %v", err)
@@ -321,7 +321,7 @@ func TestDrive9CheckFileSystemUsesSelectedResource(t *testing.T) {
 func TestDrive9DataPlaneCommandsTranslateToCompanion(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	localFile := filepath.Join(t.TempDir(), "README.md")
 	if err := os.WriteFile(localFile, []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
@@ -368,7 +368,7 @@ func TestDrive9DataPlaneCommandsTranslateToCompanion(t *testing.T) {
 func TestDrive9CopyDoesNotTreatNotFoundAfterTransientFailureAsSuccess(t *testing.T) {
 	companion, _ := buildFakeDrive9(t)
 	sequencePath := filepath.Join(t.TempDir(), "copy-attempted")
-	t.Setenv("TDC_FAKE_DRIVE9_CP_FAILURE_SEQUENCE", sequencePath)
+	t.Setenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE", sequencePath)
 
 	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
 		Profile:   dataProfile(),
@@ -395,8 +395,8 @@ func TestDrive9CopyDoesNotRetryNonReplayableStreamsOrAppend(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			companion, recordPath := buildFakeDrive9(t)
-			t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
-			t.Setenv("TDC_FAKE_DRIVE9_CP_FAILURE_SEQUENCE", filepath.Join(t.TempDir(), "copy-attempted"))
+			t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+			t.Setenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE", filepath.Join(t.TempDir(), "copy-attempted"))
 			tc.opts.Profile = dataProfile()
 
 			if _, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), tc.opts); err == nil {
@@ -418,21 +418,21 @@ func TestDrive9CopyDoesNotRetryNonReplayableStreamsOrAppend(t *testing.T) {
 
 func TestDrive9MissingCompanionIsActionable(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
-	_, err := Service{CompanionPath: filepath.Join(t.TempDir(), "missing-tdc-drive9")}.ReadFile(context.Background(), ReadFileOptions{
+	_, err := Service{CompanionPath: filepath.Join(t.TempDir(), "missing-ti-drive9")}.ReadFile(context.Background(), ReadFileOptions{
 		Profile: dataProfile(),
 		Path:    "/workspace/README.md",
 	})
 	if err == nil {
 		t.Fatal("expected missing companion error")
 	}
-	if message := apperr.MessageFor(err); !strings.Contains(message, "tdc fs requires the Drive9 companion binary") {
+	if message := apperr.MessageFor(err); !strings.Contains(message, "ti fs requires the Drive9 companion binary") {
 		t.Fatalf("unexpected error: %q", message)
 	}
 }
 
 func TestDrive9EndpointFailurePreventsCompanionExecution(t *testing.T) {
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	resolver := endpoints.Resolver{FSManifest: &endpoints.FSRegionManifest{Regions: []endpoints.FSRegionManifestEntry{
 		{
 			RegionCode:    "aws-us-west-2",
@@ -459,7 +459,7 @@ func TestDrive9EndpointFailurePreventsCompanionExecution(t *testing.T) {
 func TestDrive9MountLocatorRoutesDrainAndUnmountWithoutCredentials(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	service := testCompanionService(home, companion)
 	mountPath := filepath.Join(t.TempDir(), "workspace")
 	profile := dataProfile()
@@ -517,7 +517,7 @@ func TestDrive9MountLocatorRoutesDrainAndUnmountWithoutCredentials(t *testing.T)
 func TestDrive9FailedUnmountPreservesMountLocator(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TDC_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	service := testCompanionService(home, companion)
 	mountPath := filepath.Join(t.TempDir(), "workspace")
 	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
@@ -529,7 +529,7 @@ func TestDrive9FailedUnmountPreservesMountLocator(t *testing.T) {
 		t.Fatalf("MountFileSystem failed: %v", err)
 	}
 
-	service.CompanionPath = filepath.Join(t.TempDir(), "missing-tdc-drive9")
+	service.CompanionPath = filepath.Join(t.TempDir(), "missing-ti-drive9")
 	if _, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
 		Profile:   &config.Profile{Name: "default", HomeDir: home},
 		MountPath: mountPath,
@@ -544,7 +544,7 @@ func TestDrive9FailedUnmountPreservesMountLocator(t *testing.T) {
 
 func TestDryRunCreateFileSystemUsesRedactedProvisionShape(t *testing.T) {
 	profile := testProfile()
-	result, err := Service{Resolver: supportedFSManifestResolver("https://fs.test")}.DryRunCreateFileSystem(context.Background(), "tdc fs create-file-system", CreateFileSystemOptions{
+	result, err := Service{Resolver: supportedFSManifestResolver("https://fs.test")}.DryRunCreateFileSystem(context.Background(), "ti fs create-file-system", CreateFileSystemOptions{
 		Profile:        profile,
 		FileSystemName: "workspace",
 		WaitUntilReady: true,
@@ -583,7 +583,7 @@ func TestDryRunDeleteFileSystemReportsRegistryFiles(t *testing.T) {
 	if err := fscred.Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "fs-secret"); err != nil {
 		t.Fatal(err)
 	}
-	result, err := (Service{HomeDir: home, Resolver: supportedFSManifestResolver("https://fs.test")}).DryRunDeleteFileSystem(context.Background(), "tdc fs delete-file-system", DeleteFileSystemOptions{
+	result, err := (Service{HomeDir: home, Resolver: supportedFSManifestResolver("https://fs.test")}).DryRunDeleteFileSystem(context.Background(), "ti fs delete-file-system", DeleteFileSystemOptions{
 		Profile:        profile,
 		FileSystemName: "workspace",
 	})
@@ -667,8 +667,8 @@ func main() {
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{"status": "deleting"})
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "cat":
 		fmt.Fprint(os.Stdout, "file bytes")
-	case len(args) >= 2 && args[0] == "fs" && args[1] == "cp" && os.Getenv("TDC_FAKE_DRIVE9_CP_FAILURE_SEQUENCE") != "":
-		sequencePath := os.Getenv("TDC_FAKE_DRIVE9_CP_FAILURE_SEQUENCE")
+	case len(args) >= 2 && args[0] == "fs" && args[1] == "cp" && os.Getenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE") != "":
+		sequencePath := os.Getenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE")
 		if _, err := os.Stat(sequencePath); os.IsNotExist(err) {
 			_ = os.WriteFile(sequencePath, []byte("attempted"), 0600)
 			fmt.Fprintln(os.Stderr, "fs cp: unexpected EOF")
@@ -677,11 +677,11 @@ func main() {
 		fmt.Fprintln(os.Stderr, "fs cp: remote resource not found")
 		os.Exit(1)
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "stat":
-		if os.Getenv("TDC_FAKE_DRIVE9_STAT_ALWAYS_FAIL") == "1" {
+		if os.Getenv("TI_FAKE_DRIVE9_STAT_ALWAYS_FAIL") == "1" {
 			fmt.Fprintln(os.Stderr, "fs stat: storage backend unavailable; resource is still provisioning")
 			os.Exit(1)
 		}
-		if sequencePath := os.Getenv("TDC_FAKE_DRIVE9_STAT_FAILURE_SEQUENCE"); sequencePath != "" {
+		if sequencePath := os.Getenv("TI_FAKE_DRIVE9_STAT_FAILURE_SEQUENCE"); sequencePath != "" {
 			if _, err := os.Stat(sequencePath); os.IsNotExist(err) {
 				_ = os.WriteFile(sequencePath, []byte("attempted"), 0600)
 				fmt.Fprintln(os.Stderr, "fs stat: storage backend unavailable; resource is still provisioning")
@@ -695,7 +695,7 @@ func main() {
 }
 
 func record(args []string) {
-	path := os.Getenv("TDC_FAKE_DRIVE9_RECORD")
+	path := os.Getenv("TI_FAKE_DRIVE9_RECORD")
 	if path == "" {
 		return
 	}
@@ -716,7 +716,7 @@ func record(args []string) {
 	if err := os.WriteFile(sourcePath, []byte(source), 0o600); err != nil {
 		t.Fatalf("write fake companion source: %v", err)
 	}
-	binPath = filepath.Join(dir, "tdc-drive9")
+	binPath = filepath.Join(dir, "ti-drive9")
 	if runtime.GOOS == "windows" {
 		binPath += ".exe"
 	}
@@ -788,8 +788,8 @@ func testProfile() *config.Profile {
 		PlacementRegionCode: "aws-us-east-1",
 		CloudProvider:       "aws",
 		RegionCode:          "us-east-1",
-		TDCPublicKey:        "public",
-		TDCPrivateKey:       "private",
+		TiDBCloudPublicKey:  "public",
+		TiDBCloudPrivateKey: "private",
 	}
 }
 
@@ -825,6 +825,29 @@ func supportedFSManifestResolver(baseURL string) endpoints.Resolver {
 				},
 			},
 		},
+	}
+}
+
+func TestScrubTICredEnvRemovesCanonicalLegacyAndCompanionSecrets(t *testing.T) {
+	base := []string{
+		"SAFE=value",
+		"TIDB_CLOUD_PUBLIC_KEY=canonical-public",
+		"TIDB_CLOUD_PRIVATE_KEY=canonical-private",
+		"TI_FS_TOKEN=canonical-fs",
+		"TI_VAULT_TOKEN=canonical-vault",
+		"TI_FS_API_KEY=internal-fs",
+		"TDC_PUBLIC_KEY=legacy-public",
+		"TDC_PRIVATE_KEY=legacy-private",
+		"TDC_FS_TOKEN=legacy-fs",
+		"TDC_VAULT_TOKEN=legacy-vault",
+		"DRIVE9_PUBLIC_KEY=companion-public",
+		"DRIVE9_PRIVATE_KEY=companion-private",
+		"DRIVE9_API_KEY=companion-fs",
+		"DRIVE9_VAULT_TOKEN=companion-vault",
+	}
+	got := scrubTICredEnv(base)
+	if len(got) != 1 || got[0] != "SAFE=value" {
+		t.Fatalf("credential environment was not scrubbed: %#v", got)
 	}
 }
 

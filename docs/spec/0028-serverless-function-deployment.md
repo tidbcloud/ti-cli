@@ -6,7 +6,7 @@ Add an agent-friendly serverless function workflow that can package a local HTTP
 function and deploy it to supported external runtimes such as Vercel Functions
 and AWS Lambda.
 
-tdc should not try to become a serverless platform in this spec. It should be a
+`ti` should not try to become a serverless platform in this spec. It should be a
 predictable packaging and deployment adapter: local source plus an explicit
 manifest becomes a provider-specific deployment, and the CLI reports the
 resulting function URL and metadata in structured output.
@@ -16,16 +16,16 @@ resulting function URL and metadata in structured output.
 Add a new top-level command namespace:
 
 ```bash
-tdc function init-function
-tdc function validate-function
-tdc function package-function
-tdc function deploy-function
-tdc function describe-function
-tdc function list-functions
-tdc function delete-function
-tdc function invoke-function
-tdc function get-function-url
-tdc function logs-function
+ti function init-function
+ti function validate-function
+ti function package-function
+ti function deploy-function
+ti function describe-function
+ti function list-functions
+ti function delete-function
+ti function invoke-function
+ti function get-function-url
+ti function logs-function
 ```
 
 Initial MVP commands may implement only `init-function`, `validate-function`,
@@ -36,12 +36,12 @@ until provider state management is implemented.
 Example:
 
 ```bash
-tdc function init-function --function-name hello --runtime nodejs --target vercel-node
-tdc function validate-function --function-file tdc.function.toml
-tdc function package-function --function-file tdc.function.toml --output-dir .tdc/functions/hello
-tdc function deploy-function --function-file tdc.function.toml --target vercel-node
-tdc function get-function-url --function-name hello --target vercel-node
-tdc function invoke-function --function-url https://example.vercel.app/api/hello
+ti function init-function --function-name hello --runtime nodejs --target vercel-node
+ti function validate-function --function-file ti.function.toml
+ti function package-function --function-file ti.function.toml --output-dir .ti/functions/hello
+ti function deploy-function --function-file ti.function.toml --target vercel-node
+ti function get-function-url --function-name hello --target vercel-node
+ti function invoke-function --function-url https://example.vercel.app/api/hello
 ```
 
 ## Behavior
@@ -74,9 +74,9 @@ export default {
   without calling provider mutation APIs.
 - Read-only commands reject `--dry-run`.
 - Successful structured commands support `--output json|text` and `--query`.
-- Do not prompt except inside existing `tdc configure`. Missing provider CLI
+- Do not prompt except inside existing `ti configure`. Missing provider CLI
   installation or authentication must fail with actionable errors.
-- `tdc function help` and `tdc function deploy-function help` must list each
+- `ti function help` and `ti function deploy-function help` must list each
   supported target and its required external tools, authentication expectation,
   and major cloud resources.
 
@@ -85,7 +85,7 @@ export default {
 Each function is described by a local manifest:
 
 ```toml
-# tdc.function.toml
+# ti.function.toml
 name = "hello"
 runtime = "nodejs"
 entrypoint = "src/hello.ts"
@@ -110,11 +110,11 @@ Supported MVP manifest fields:
 - `[http].path`: HTTP path when the target supports routing.
 - `[http].methods`: allowed methods for generated adapter code when supported.
 - `[env]`: environment variable bindings. Values starting with `secret:` refer
-  to provider-side secrets or tdc-managed secret references and must not be
+  to provider-side secrets or `ti`-managed secret references and must not be
   inlined into package artifacts.
 
 Provider credentials are not stored in the function manifest, local deployment
-metadata, or `~/.tdc/credentials`. The MVP delegates provider authentication to
+metadata, or `~/.ti/credentials`. The MVP delegates provider authentication to
 official provider CLIs and their standard auth mechanisms.
 
 Provider authentication inputs:
@@ -123,7 +123,7 @@ Provider authentication inputs:
   - `vercel` CLI must be installed.
   - Local interactive users authenticate with `vercel login`.
   - CI users set `VERCEL_TOKEN` through the CI secret store.
-  - tdc verifies non-mutating availability/authentication through `vercel
+  - `ti` verifies non-mutating availability/authentication through `vercel
     whoami` or an equivalent Vercel CLI command.
 - AWS:
   - AWS CLI v2 must be installed.
@@ -131,13 +131,13 @@ Provider authentication inputs:
     `aws configure`, `aws sso login`, or `AWS_PROFILE`.
   - CI users use standard AWS environment variables, OIDC role assumption, or
     another AWS CLI-supported credential source.
-  - tdc verifies non-mutating availability/authentication through `aws sts
+  - `ti` verifies non-mutating availability/authentication through `aws sts
     get-caller-identity`.
   - `aws-lambda-container` additionally requires Docker or a compatible OCI
     builder because it builds and pushes a container image.
 
-Provider deployment defaults are non-sensitive and live in `~/.tdc/config`
-under the active profile. Keep tdc-wide, Vercel-specific, and AWS-specific
+Provider deployment defaults are non-sensitive and live in `~/.ti/config`
+under the active profile. Keep `ti`-wide, Vercel-specific, and AWS-specific
 settings visually separated in examples:
 
 ```toml
@@ -149,26 +149,26 @@ function_vercel_org_id = "team_..."
 
 function_aws_profile = "default"
 function_aws_region_code = "us-east-1"
-function_aws_lambda_role_arn = "arn:aws:iam::123456789012:role/tdc-lambda-role"
-function_aws_ecr_repository = "tdc-functions"
+function_aws_lambda_role_arn = "arn:aws:iam::123456789012:role/ti-lambda-role"
+function_aws_ecr_repository = "ti-functions"
 ```
 
 `function_default_target` is the default deployment target, not a provider
 credential. Target selection precedence is:
 
 1. `--target`
-2. `target` in `tdc.function.toml`
-3. `function_default_target` in `~/.tdc/config`
+2. `target` in `ti.function.toml`
+3. `function_default_target` in `~/.ti/config`
 
 If none of those values is present, deployment and packaging commands fail and
 ask the user to choose a target explicitly. Do not store both
 `function_provider` and `function_default_target`; the provider is derived from
 the target prefix.
 
-Local deployment metadata lives under `~/.tdc/functions/`:
+Local deployment metadata lives under `~/.ti/functions/`:
 
 ```text
-~/.tdc/functions/<profile>/<function-name>/<target>/deployment.json
+~/.ti/functions/<profile>/<function-name>/<target>/deployment.json
 ```
 
 This metadata may store provider deployment IDs, function URLs, target, region,
@@ -195,7 +195,7 @@ Future targets:
 Do not claim one source file is fully portable across all targets. The manifest
 and validation must make runtime/target constraints explicit.
 
-Help text for `tdc function` must include a compact target table equivalent to:
+Help text for `ti function` must include a compact target table equivalent to:
 
 ```text
 Targets:
@@ -234,19 +234,19 @@ URL: https://example.vercel.app/api/hello
 Example validation error:
 
 ```text
-tdc [ERROR]: target vercel-edge does not support runtime nodejs with Node built-in module "fs"; use vercel-node or remove the dependency
+ti [ERROR]: target vercel-edge does not support runtime nodejs with Node built-in module "fs"; use vercel-node or remove the dependency
 ```
 
 Example missing credentials error:
 
 ```text
-tdc [ERROR]: authentication required: Vercel CLI is not authenticated; run `vercel login` or set VERCEL_TOKEN
+ti [ERROR]: authentication required: Vercel CLI is not authenticated; run `vercel login` or set VERCEL_TOKEN
 ```
 
 Example missing external dependency error:
 
 ```text
-tdc [ERROR]: dependency required: target aws-lambda-container requires Docker; install Docker or choose --target aws-lambda-zip
+ti [ERROR]: dependency required: target aws-lambda-container requires Docker; install Docker or choose --target aws-lambda-zip
 ```
 
 ## After This Spec
@@ -254,22 +254,22 @@ tdc [ERROR]: dependency required: target aws-lambda-container requires Docker; i
 Users can create and deploy a function from a local project:
 
 ```bash
-tdc function init-function --function-name hello --runtime nodejs --target vercel-node
-tdc function validate-function
-tdc function deploy-function
-tdc function get-function-url --function-name hello
-tdc function invoke-function --function-name hello --method GET
+ti function init-function --function-name hello --runtime nodejs --target vercel-node
+ti function validate-function
+ti function deploy-function
+ti function get-function-url --function-name hello
+ti function invoke-function --function-name hello --method GET
 ```
 
 CI can package and deploy non-interactively:
 
 ```bash
-tdc function validate-function --function-file tdc.function.toml
-tdc function package-function --function-file tdc.function.toml --output-dir .tdc/build/function
-tdc function deploy-function --function-file tdc.function.toml --target aws-lambda-zip --dry-run
-tdc function deploy-function --function-file tdc.function.toml --target aws-lambda-zip
-tdc function deploy-function --function-file tdc.function.toml --target aws-lambda-container --dry-run
-tdc function deploy-function --function-file tdc.function.toml --target aws-lambda-container
+ti function validate-function --function-file ti.function.toml
+ti function package-function --function-file ti.function.toml --output-dir .ti/build/function
+ti function deploy-function --function-file ti.function.toml --target aws-lambda-zip --dry-run
+ti function deploy-function --function-file ti.function.toml --target aws-lambda-zip
+ti function deploy-function --function-file ti.function.toml --target aws-lambda-container --dry-run
+ti function deploy-function --function-file ti.function.toml --target aws-lambda-container
 ```
 
 ## Implementation Design
@@ -294,10 +294,10 @@ type Provider interface {
 - `internal/function/provider/aws` shells out to AWS CLI v2 and parses stable
   machine-readable JSON output.
 - `internal/function/state` stores local deployment metadata under
-  `~/.tdc/functions/`.
-- `internal/cli` registers `tdc function ...` commands and keeps handlers thin.
+  `~/.ti/functions/`.
+- `internal/cli` registers `ti function ...` commands and keeps handlers thin.
 - The first implementation must use official provider CLIs for authentication
-  and provider operations. Do not implement provider login flows in tdc. Avoid
+  and provider operations. Do not implement provider login flows in `ti`. Avoid
   scraping human output; request JSON output from provider CLIs whenever
   supported.
 
@@ -310,7 +310,7 @@ Packaging strategy:
   Function URL.
 - `aws-lambda-container` builds an OCI image, pushes it to ECR, creates or
   updates a Lambda function, and optionally creates a Lambda Function URL.
-- All packaging must happen in a deterministic output directory under `.tdc/`
+- All packaging must happen in a deterministic output directory under `.ti/`
   or a user-specified `--output-dir`.
 - Generated adapters should be small and explicit. Do not rewrite user source
   files in place.
@@ -319,19 +319,19 @@ Packaging strategy:
 
 Vercel deploy flow, high level:
 
-1. Read `tdc.function.toml`.
+1. Read `ti.function.toml`.
 2. Validate target/runtime compatibility.
 3. Build provider output for Vercel.
 4. Verify `vercel` is installed.
 5. Verify `vercel` is authenticated through `vercel whoami` or equivalent. CI
-   may provide `VERCEL_TOKEN`; tdc does not store it.
+   may provide `VERCEL_TOKEN`; `ti` does not store it.
 6. Run `vercel deploy` with non-interactive flags and machine-readable output
    where available.
 7. Record deployment URL and metadata.
 
 AWS Lambda ZIP deploy flow, high level:
 
-1. Read `tdc.function.toml`.
+1. Read `ti.function.toml`.
 2. Validate AWS CLI, AWS credentials, AWS region, Lambda role ARN, runtime, and
    handler settings.
 3. Build runtime-specific ZIP artifact.
@@ -342,7 +342,7 @@ AWS Lambda ZIP deploy flow, high level:
 
 AWS Lambda container deploy flow, high level:
 
-1. Read `tdc.function.toml`.
+1. Read `ti.function.toml`.
 2. Validate AWS CLI, Docker/OCI builder, AWS credentials, AWS region, Lambda
    role ARN, and ECR repository settings.
 3. Build OCI image.
@@ -380,37 +380,39 @@ Platform notes:
 - Packaging should work on macOS and Linux first.
 - Windows support is desired but may be limited by Docker and shell behavior in
   the first implementation.
-- Do not introduce cgo requirements into the tdc binary.
+- Do not introduce cgo requirements into the `ti` binary.
 
 ## Dependencies
 
 - `0001-cli-foundation.md` for command patterns.
 - `0002-local-config-and-credentials.md` for profile and local state rules.
 - `0003-output-error-query-dry-run.md` for output, query, and dry-run behavior.
+- `0026-ti-cli-rename-and-migration.md` for executable, state path, and
+  environment naming.
 - `0014-tdc-fs-unix-command-aliases.md` is unrelated but should remain
   unaffected.
 
 ## Acceptance Criteria
 
-- `tdc function init-function` creates a minimal `tdc.function.toml` and sample
+- `ti function init-function` creates a minimal `ti.function.toml` and sample
   source file without overwriting existing files unless `--overwrite` is set.
-- `tdc function validate-function` rejects invalid target/runtime combinations
+- `ti function validate-function` rejects invalid target/runtime combinations
   before any provider mutation.
-- `tdc function help` and `tdc function deploy-function help` show the
+- `ti function help` and `ti function deploy-function help` show the
   supported target table with required external tools and authentication notes.
-- `tdc function package-function` writes deterministic provider output and
+- `ti function package-function` writes deterministic provider output and
   reports a source digest.
-- `tdc function deploy-function --dry-run` validates inputs and planned provider
+- `ti function deploy-function --dry-run` validates inputs and planned provider
   operations without mutating remote state.
-- `tdc function deploy-function --target vercel-node` deploys a simple HTTP
+- `ti function deploy-function --target vercel-node` deploys a simple HTTP
   function and returns a URL.
-- `tdc function deploy-function --target aws-lambda-zip` deploys a simple HTTP
+- `ti function deploy-function --target aws-lambda-zip` deploys a simple HTTP
   function to Lambda ZIP and returns a Function URL when configured.
-- `tdc function deploy-function --target aws-lambda-container` deploys a simple
+- `ti function deploy-function --target aws-lambda-container` deploys a simple
   HTTP function to Lambda container and returns a Function URL when configured.
-- `tdc function invoke-function` can call the returned URL and print status,
+- `ti function invoke-function` can call the returned URL and print status,
   headers, and body according to output mode.
-- Local deployment metadata is stored under `~/.tdc/functions/` without secrets.
+- Local deployment metadata is stored under `~/.ti/functions/` without secrets.
 - `make test` covers manifest validation, packaging decisions, state storage,
   and dry-run behavior without live provider credentials.
 - Live provider tests, if added, are opt-in and isolated behind explicit

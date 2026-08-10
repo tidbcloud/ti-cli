@@ -19,17 +19,18 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/tidbcloud/tdc/internal/config/store"
-	"github.com/tidbcloud/tdc/internal/settings"
-	"github.com/tidbcloud/tdc/internal/version"
+	"github.com/tidbcloud/ti-cli/internal/config/envcompat"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/settings"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
 const (
-	EnvironmentVariable      = "TDC_TELEMETRY"
-	TagEnvironmentVariable   = "TDC_TELEMETRY_TAG"
-	ExtraEnvironmentVariable = "TDC_TELEMETRY_EXTRA"
+	EnvironmentVariable      = "TI_TELEMETRY"
+	TagEnvironmentVariable   = "TI_TELEMETRY_TAG"
+	ExtraEnvironmentVariable = "TI_TELEMETRY_EXTRA"
 	installationIDFile       = ".telemetry-installation-id"
-	eventName                = "tdc.command.finished"
+	eventName                = "ti.command.finished"
 	schemaVersion            = 2
 	deliveryTimeout          = 3 * time.Second
 	maxTagBytes              = 128
@@ -37,7 +38,7 @@ const (
 	maxExtraDepth            = 8
 )
 
-var installationIDPattern = regexp.MustCompile(`^tdc_[A-Za-z0-9_-]{22}$`)
+var installationIDPattern = regexp.MustCompile(`^(?:ti|tdc)_[A-Za-z0-9_-]{22}$`)
 
 type Config struct {
 	Eligible    bool
@@ -102,7 +103,7 @@ type wireEvent struct {
 }
 
 func InstallationIDPath(homeDir string) string {
-	return filepath.Join(homeDir, store.TDCDirName, installationIDFile)
+	return filepath.Join(homeDir, store.TIDirName, installationIDFile)
 }
 
 func Start(cfg Config) *Session {
@@ -117,11 +118,21 @@ func Start(cfg Config) *Session {
 	if !enabled {
 		return nil
 	}
-	tag, tagOK := normalizeTag(envValue(cfg.Environment, TagEnvironmentVariable))
+	tagValue, tagExists, _, err := envcompat.ResolveNames(cfg.Environment, TagEnvironmentVariable, "TDC_TELEMETRY_TAG")
+	if err != nil {
+		debug(cfg.Debug, cfg.DebugWriter, "telemetry disabled because environment metadata conflicts")
+		return nil
+	}
+	tag, tagOK := normalizeTag(tagValue, tagExists)
 	if !tagOK {
 		debug(cfg.Debug, cfg.DebugWriter, "telemetry tag was omitted because it is invalid")
 	}
-	extra, extraOK := normalizeExtra(envValue(cfg.Environment, ExtraEnvironmentVariable))
+	extraValue, extraExists, _, err := envcompat.ResolveNames(cfg.Environment, ExtraEnvironmentVariable, "TDC_TELEMETRY_EXTRA")
+	if err != nil {
+		debug(cfg.Debug, cfg.DebugWriter, "telemetry disabled because environment metadata conflicts")
+		return nil
+	}
+	extra, extraOK := normalizeExtra(extraValue, extraExists)
 	if !extraOK {
 		debug(cfg.Debug, cfg.DebugWriter, "telemetry extra metadata was omitted because it is invalid")
 	}
@@ -219,7 +230,7 @@ func (s *Session) Finish(input EventInput) {
 		return
 	}
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "tdc/"+normalizedVersion(s.info.Version))
+	request.Header.Set("User-Agent", "ti/"+normalizedVersion(s.info.Version))
 	response, err := s.client.Do(request)
 	if err != nil {
 		debug(s.debug, s.debugWriter, "telemetry delivery failed; the command result was not affected")
@@ -304,7 +315,11 @@ var prohibitedMetadataKeys = map[string]struct{}{
 }
 
 func resolveEnabled(cfg Config) (bool, error) {
-	if raw, exists := envValue(cfg.Environment, EnvironmentVariable); exists {
+	raw, exists, _, err := envcompat.ResolveNames(cfg.Environment, EnvironmentVariable, "TDC_TELEMETRY")
+	if err != nil {
+		return false, err
+	}
+	if exists {
 		enabled, valid := parseOverride(raw)
 		if !valid {
 			return false, fmt.Errorf("invalid telemetry override")
@@ -336,7 +351,7 @@ func loadOrCreateInstallationID(homeDir string) (string, error) {
 	if err != nil || exists {
 		return id, err
 	}
-	id, err = randomIdentifier("tdc_")
+	id, err = randomIdentifier("ti_")
 	if err != nil {
 		return "", err
 	}
@@ -496,6 +511,6 @@ func runtimeValue(value, fallback string) string {
 
 func debug(enabled bool, writer io.Writer, message string) {
 	if enabled && writer != nil {
-		_, _ = fmt.Fprintln(writer, "tdc [DEBUG]: "+message)
+		_, _ = fmt.Fprintln(writer, "ti [DEBUG]: "+message)
 	}
 }

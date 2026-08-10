@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 type testHuman struct {

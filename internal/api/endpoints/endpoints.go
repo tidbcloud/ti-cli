@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config/region"
 )
 
 type Service string
@@ -33,7 +33,7 @@ const (
 	DefaultFSMode         = "tidb_cloud_native"
 )
 
-var errFSManifestUnavailable = errors.New("tdc fs region manifest unavailable")
+var errFSManifestUnavailable = errors.New("ti fs region manifest unavailable")
 
 const (
 	fsManifestFetchAttempts = 3
@@ -78,14 +78,14 @@ func NewResolver() Resolver {
 		FSManifestURL:  DefaultFSManifestURL,
 		FSMode:         DefaultFSMode,
 	}
-	if os.Getenv("TDC_ALLOW_TEST_ENDPOINTS") == "1" {
-		if baseURL := strings.TrimSpace(os.Getenv("TDC_TEST_STARTER_BASE_URL")); baseURL != "" {
+	if os.Getenv("TI_ALLOW_TEST_ENDPOINTS") == "1" {
+		if baseURL := strings.TrimSpace(os.Getenv("TI_TEST_STARTER_BASE_URL")); baseURL != "" {
 			resolver.StarterBaseURL = baseURL
 		}
-		if baseURL := strings.TrimSpace(os.Getenv("TDC_TEST_IAM_BASE_URL")); baseURL != "" {
+		if baseURL := strings.TrimSpace(os.Getenv("TI_TEST_IAM_BASE_URL")); baseURL != "" {
 			resolver.IAMBaseURL = baseURL
 		}
-		if manifestURL := strings.TrimSpace(os.Getenv("TDC_TEST_FS_MANIFEST_URL")); manifestURL != "" {
+		if manifestURL := strings.TrimSpace(os.Getenv("TI_TEST_FS_MANIFEST_URL")); manifestURL != "" {
 			resolver.FSManifestURL = manifestURL
 		}
 	}
@@ -262,7 +262,7 @@ func fetchFSManifest(ctx context.Context, manifestURL string, client *http.Clien
 func fetchFSManifestOnce(ctx context.Context, manifestURL string, client *http.Client) (*FSRegionManifest, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
-		return nil, false, apperr.Wrap("api.fs_manifest_request", "api", 1, "build tdc fs region manifest request", err)
+		return nil, false, apperr.Wrap("api.fs_manifest_request", "api", 1, "build ti fs region manifest request", err)
 	}
 	res, err := client.Do(req)
 	if err != nil {
@@ -274,7 +274,7 @@ func fetchFSManifestOnce(ctx context.Context, manifestURL string, client *http.C
 	}
 	var manifest FSRegionManifest
 	if err := json.NewDecoder(res.Body).Decode(&manifest); err != nil {
-		return nil, true, apperr.Wrap("api.fs_manifest_decode", "api", 1, "decode tdc fs region manifest", err)
+		return nil, true, apperr.Wrap("api.fs_manifest_decode", "api", 1, "decode ti fs region manifest", err)
 	}
 	if err := validateFSManifest(&manifest); err != nil {
 		return nil, false, err
@@ -300,10 +300,10 @@ func loadCachedFSManifest(manifestURL string) (*FSRegionManifest, error) {
 		return nil, err
 	}
 	if cached.ManifestURL != manifestURL {
-		return nil, fmt.Errorf("cached tdc fs manifest belongs to a different URL")
+		return nil, fmt.Errorf("cached ti fs manifest belongs to a different URL")
 	}
 	if cached.FetchedAt.IsZero() || time.Since(cached.FetchedAt) > fsManifestCacheMaxAge {
-		return nil, fmt.Errorf("cached tdc fs manifest is expired")
+		return nil, fmt.Errorf("cached ti fs manifest is expired")
 	}
 	manifest := cached.Manifest
 	if err := validateFSManifest(&manifest); err != nil {
@@ -338,19 +338,19 @@ func storeCachedFSManifest(manifestURL string, manifest *FSRegionManifest) {
 func fsManifestCachePath(manifestURL string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil || strings.TrimSpace(home) == "" {
-		return "", fmt.Errorf("resolve tdc fs manifest cache home: %w", err)
+		return "", fmt.Errorf("resolve ti fs manifest cache home: %w", err)
 	}
 	sum := sha256.Sum256([]byte(manifestURL))
 	name := fmt.Sprintf("fs-region-manifest-%x.json", sum[:8])
-	return filepath.Join(home, ".tdc", "cache", name), nil
+	return filepath.Join(home, ".ti", "cache", name), nil
 }
 
 func validateFSManifest(manifest *FSRegionManifest) error {
 	if manifest == nil {
-		return apperr.New("api.fs_manifest_invalid", "api", 1, "tdc fs region manifest is required")
+		return apperr.New("api.fs_manifest_invalid", "api", 1, "ti fs region manifest is required")
 	}
 	if len(manifest.Regions) == 0 {
-		return apperr.New("api.fs_manifest_invalid", "api", 1, "tdc fs region manifest has no regions")
+		return apperr.New("api.fs_manifest_invalid", "api", 1, "ti fs region manifest has no regions")
 	}
 	seen := map[string]int{}
 	for i := range manifest.Regions {
@@ -361,17 +361,17 @@ func validateFSManifest(manifest *FSRegionManifest) error {
 		entry.CloudProvider = strings.TrimSpace(entry.CloudProvider)
 		entry.TiDBRegion = strings.TrimSpace(entry.TiDBRegion)
 		if entry.RegionCode == "" {
-			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("tdc fs region manifest entry %d missing region_code", i))
+			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("ti fs region manifest entry %d missing region_code", i))
 		}
 		if entry.Mode == "" {
-			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("tdc fs region manifest entry %d missing mode", i))
+			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("ti fs region manifest entry %d missing mode", i))
 		}
 		if entry.ServerURL == "" {
-			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("tdc fs region manifest entry %d missing server_url", i))
+			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("ti fs region manifest entry %d missing server_url", i))
 		}
 		key := entry.RegionCode + "\x00" + entry.Mode
 		if first, ok := seen[key]; ok {
-			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("tdc fs region manifest entries %d and %d duplicate region_code %q mode %q", first, i, entry.RegionCode, entry.Mode))
+			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("ti fs region manifest entries %d and %d duplicate region_code %q mode %q", first, i, entry.RegionCode, entry.Mode))
 		}
 		seen[key] = i
 	}
@@ -379,10 +379,10 @@ func validateFSManifest(manifest *FSRegionManifest) error {
 		manifest.Default.RegionCode = strings.TrimSpace(manifest.Default.RegionCode)
 		manifest.Default.Mode = strings.TrimSpace(manifest.Default.Mode)
 		if manifest.Default.RegionCode == "" || manifest.Default.Mode == "" {
-			return apperr.New("api.fs_manifest_invalid", "api", 1, "tdc fs region manifest default must include region_code and mode")
+			return apperr.New("api.fs_manifest_invalid", "api", 1, "ti fs region manifest default must include region_code and mode")
 		}
 		if _, ok := seen[manifest.Default.RegionCode+"\x00"+manifest.Default.Mode]; !ok {
-			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("tdc fs region manifest default %q/%q not found in regions", manifest.Default.RegionCode, manifest.Default.Mode))
+			return apperr.New("api.fs_manifest_invalid", "api", 1, fmt.Sprintf("ti fs region manifest default %q/%q not found in regions", manifest.Default.RegionCode, manifest.Default.Mode))
 		}
 	}
 	return nil
@@ -408,14 +408,14 @@ func selectFSManifestEntry(entries []FSRegionManifestEntry, provider, regionCode
 			"api.fs_endpoint_unsupported",
 			"config",
 			2,
-			fmt.Sprintf("tdc fs is not available for %s/%s in mode %s; supported tdc fs regions: %s", provider, regionCode, mode, supportedFSRegions(entries, mode)),
+			fmt.Sprintf("ti fs is not available for %s/%s in mode %s; supported ti fs regions: %s", provider, regionCode, mode, supportedFSRegions(entries, mode)),
 		)
 	default:
 		return FSRegionManifestEntry{}, apperr.New(
 			"api.fs_endpoint_ambiguous",
 			"api",
 			1,
-			fmt.Sprintf("tdc fs region manifest has multiple endpoints for %s/%s in mode %s", provider, regionCode, mode),
+			fmt.Sprintf("ti fs region manifest has multiple endpoints for %s/%s in mode %s", provider, regionCode, mode),
 		)
 	}
 }

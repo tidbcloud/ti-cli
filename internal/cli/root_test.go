@@ -14,14 +14,14 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config/store"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	"github.com/tidbcloud/tdc/internal/oplog"
-	"github.com/tidbcloud/tdc/internal/settings"
-	"github.com/tidbcloud/tdc/internal/telemetry"
-	"github.com/tidbcloud/tdc/internal/version"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/oplog"
+	"github.com/tidbcloud/ti-cli/internal/settings"
+	"github.com/tidbcloud/ti-cli/internal/telemetry"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
 func TestHelpCommands(t *testing.T) {
@@ -86,8 +86,8 @@ func TestRootRequiresCommand(t *testing.T) {
 	for _, want := range []string{
 		"the following arguments are required: command",
 		"The TiDB Cloud Command Line Interface is a unified tool",
-		"usage: tdc <command> [<subcommand>] [parameters]",
-		"tdc <command> <subcommand> help",
+		"usage: ti <command> [<subcommand>] [parameters]",
+		"ti <command> <subcommand> help",
 	} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("expected root usage error to contain %q, got:\n%s", want, message)
@@ -157,15 +157,15 @@ func TestShortHelpFlagIsRejected(t *testing.T) {
 func TestCommandOperationLogRecordsSafeSummary(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_LOGGING", "on")
+	t.Setenv("TI_LOGGING", "on")
 	configureIAMForTest(t)
 
 	_, _, err := executeForTest(
 		"configure",
 		"--profile", "ci",
 		"--region-code", "aws-us-east-1",
-		"--tdc-public-key", "public-secret",
-		"--tdc-private-key", "private-secret",
+		"--tidb-cloud-public-key", "public-secret",
+		"--tidb-cloud-private-key", "private-secret",
 		"--non-interactive",
 	)
 	if err != nil {
@@ -189,10 +189,10 @@ func TestCommandOperationLogRecordsSafeSummary(t *testing.T) {
 			event = candidate
 		}
 	}
-	if event.Type != "command" || event.Command != "tdc configure" || event.Profile != "ci" || event.RegionCode != "aws-us-east-1" {
+	if event.Type != "command" || event.Command != "ti configure" || event.Profile != "ci" || event.RegionCode != "aws-us-east-1" {
 		t.Fatalf("unexpected command event: %#v", event)
 	}
-	if !containsString(event.FlagNames, "tdc-private-key") || !containsString(event.FlagNames, "tdc-public-key") {
+	if !containsString(event.FlagNames, "tidb-cloud-private-key") || !containsString(event.FlagNames, "tidb-cloud-public-key") {
 		t.Fatalf("expected flag names only, got %#v", event.FlagNames)
 	}
 }
@@ -200,7 +200,7 @@ func TestCommandOperationLogRecordsSafeSummary(t *testing.T) {
 func TestCommandOperationLogCanBeDisabled(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_LOGGING", "off")
+	t.Setenv("TI_LOGGING", "off")
 
 	_, _, err := executeForTest("help")
 	if err != nil {
@@ -214,7 +214,7 @@ func TestCommandOperationLogCanBeDisabled(t *testing.T) {
 func TestMalformedGlobalSettingsDisableLoggingWithRedactedDebug(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_LOGGING", "on")
+	t.Setenv("TI_LOGGING", "on")
 	if err := os.MkdirAll(filepath.Dir(settings.Path(home)), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -273,12 +273,12 @@ func TestIsUpdateInvocation(t *testing.T) {
 	}
 }
 
-func TestUpdateInvocationsDoNotReadOrWriteTDCHome(t *testing.T) {
+func TestUpdateInvocationsDoNotReadOrWriteTIHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_LOGGING", "on")
-	tdcDir := filepath.Join(home, ".tdc")
-	if err := os.MkdirAll(tdcDir, 0o700); err != nil {
+	t.Setenv("TI_LOGGING", "on")
+	tiDir := filepath.Join(home, ".ti")
+	if err := os.MkdirAll(tiDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	files := map[string][]byte{
@@ -296,7 +296,7 @@ func TestUpdateInvocationsDoNotReadOrWriteTDCHome(t *testing.T) {
 		_, _ = w.Write([]byte(`{"tag_name":"v0.1.0","html_url":"https://example.test/v0.1.0","assets":[]}`))
 	}))
 	defer server.Close()
-	t.Setenv("TDC_RELEASE_API_BASE_URL", server.URL)
+	t.Setenv("TI_RELEASE_API_BASE_URL", server.URL)
 
 	for _, args := range [][]string{
 		{"update", "--check", "--debug"},
@@ -330,8 +330,8 @@ func TestUpdateInvocationsDoNotReadOrWriteTDCHome(t *testing.T) {
 func TestTelemetryExclusionsDoNotReadStateOrSend(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_LOGGING", "off")
-	for _, key := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "TF_BUILD", "JENKINS_URL", "TDC_TELEMETRY"} {
+	t.Setenv("TI_LOGGING", "off")
+	for _, key := range []string{"CI", "GITHUB_ACTIONS", "GITLAB_CI", "BUILDKITE", "CIRCLECI", "TF_BUILD", "JENKINS_URL", "TI_TELEMETRY"} {
 		t.Setenv(key, "")
 	}
 	legacyConfig := "[logging]\nenabled = false\n"
@@ -352,7 +352,7 @@ func TestTelemetryExclusionsDoNotReadStateOrSend(t *testing.T) {
 		_, _ = w.Write([]byte(`{"tag_name":"v0.2.0","html_url":"https://example.test/v0.2.0","assets":[]}`))
 	}))
 	defer releaseServer.Close()
-	t.Setenv("TDC_RELEASE_API_BASE_URL", releaseServer.URL)
+	t.Setenv("TI_RELEASE_API_BASE_URL", releaseServer.URL)
 	info := testVersion()
 	info.Version = "0.2.0"
 	info.InstallSource = "archive"
@@ -406,10 +406,10 @@ func TestTelemetryExclusionsDoNotReadStateOrSend(t *testing.T) {
 func TestTelemetrySendsCanonicalSafeCommandEvent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_LOGGING", "off")
-	t.Setenv("TDC_TELEMETRY", "on")
-	t.Setenv("TDC_TELEMETRY_TAG", "e2b-preview")
-	t.Setenv("TDC_TELEMETRY_EXTRA", `{"campaign":"launch","runtime":"e2b"}`)
+	t.Setenv("TI_LOGGING", "off")
+	t.Setenv("TI_TELEMETRY", "on")
+	t.Setenv("TI_TELEMETRY_TAG", "e2b-preview")
+	t.Setenv("TI_TELEMETRY_EXTRA", `{"campaign":"launch","runtime":"e2b"}`)
 	withConfigEnv(t)
 
 	requests := make(chan []byte, 1)
@@ -468,7 +468,7 @@ func TestTelemetrySendsCanonicalSafeCommandEvent(t *testing.T) {
 		t.Fatalf("event count = %d", len(payload.Events))
 	}
 	event := payload.Events[0]
-	if event.CommandPath != "tdc db create-db-cluster" || event.ExitCode != 0 || event.ErrorCode != "" || event.CloudProvider != "aws" || event.RegionCode != "aws-us-east-1" || event.ProfileSource != "explicit" || event.Tag != "e2b-preview" || string(event.Extra) != `{"campaign":"launch","runtime":"e2b"}` {
+	if event.CommandPath != "ti db create-db-cluster" || event.ExitCode != 0 || event.ErrorCode != "" || event.CloudProvider != "aws" || event.RegionCode != "aws-us-east-1" || event.ProfileSource != "explicit" || event.Tag != "e2b-preview" || string(event.Extra) != `{"campaign":"launch","runtime":"e2b"}` {
 		t.Fatalf("unexpected telemetry event: %#v", event)
 	}
 	for _, want := range []string{"db-cluster-name", "dry-run", "profile", "project-id"} {
@@ -481,8 +481,8 @@ func TestTelemetrySendsCanonicalSafeCommandEvent(t *testing.T) {
 func TestTelemetryCapturesResolvedValidationError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_LOGGING", "off")
-	t.Setenv("TDC_TELEMETRY", "on")
+	t.Setenv("TI_LOGGING", "off")
+	t.Setenv("TI_TELEMETRY", "on")
 	requests := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -513,7 +513,7 @@ func TestTelemetryCapturesResolvedValidationError(t *testing.T) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if got := payload.Events[0]; got.CommandPath != "tdc db describe-db-cluster" || got.ExitCode != 2 || got.ErrorCode == "" {
+	if got := payload.Events[0]; got.CommandPath != "ti db describe-db-cluster" || got.ExitCode != 2 || got.ErrorCode == "" {
 		t.Fatalf("unexpected validation event: %#v", got)
 	}
 }
@@ -524,10 +524,10 @@ func TestResolvedTelemetryCommandUsesCanonicalLeaf(t *testing.T) {
 		args []string
 		want string
 	}{
-		{args: []string{"db", "create-db-cluster"}, want: "tdc db create-db-cluster"},
-		{args: []string{"--profile", "stage", "db", "create-db-cluster"}, want: "tdc db create-db-cluster"},
-		{args: []string{"fs", "cp"}, want: "tdc fs copy-file"},
-		{args: []string{"configure"}, want: "tdc configure"},
+		{args: []string{"db", "create-db-cluster"}, want: "ti db create-db-cluster"},
+		{args: []string{"--profile", "stage", "db", "create-db-cluster"}, want: "ti db create-db-cluster"},
+		{args: []string{"fs", "cp"}, want: "ti fs copy-file"},
+		{args: []string{"configure"}, want: "ti configure"},
 		{args: []string{"db"}},
 		{args: []string{"db", "help"}},
 		{args: []string{"db", "missing"}},
@@ -557,14 +557,14 @@ func TestNoTelemetryManagementCommandIsRegistered(t *testing.T) {
 func TestTelemetryFailureDoesNotChangeCommandResult(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_LOGGING", "off")
+	t.Setenv("TI_LOGGING", "off")
 	withConfigEnv(t)
 	args := []string{"db", "create-db-cluster", "--db-cluster-name", "demo", "--project-id", "project-1", "--dry-run"}
 
-	t.Setenv("TDC_TELEMETRY", "off")
+	t.Setenv("TI_TELEMETRY", "off")
 	wantStdout, wantStderr, wantErr := executeForTestWithInfo(testVersion(), args...)
 
-	t.Setenv("TDC_TELEMETRY", "on")
+	t.Setenv("TI_TELEMETRY", "on")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte("backend-sensitive-message"))
@@ -595,14 +595,14 @@ func TestTelemetryFailureDoesNotChangeCommandResult(t *testing.T) {
 func TestConfigureRejectsReservedLoggingProfileBeforeWrites(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_LOGGING", "off")
+	t.Setenv("TI_LOGGING", "off")
 
 	_, _, err := executeForTest(
 		"configure",
 		"--profile", "logging",
 		"--region-code", "aws-us-east-1",
-		"--tdc-public-key", "public",
-		"--tdc-private-key", "private",
+		"--tidb-cloud-public-key", "public",
+		"--tidb-cloud-private-key", "private",
 		"--non-interactive",
 	)
 	if err == nil {
@@ -639,7 +639,7 @@ func TestHelpUsageShowsRequiredFirstAndOptionalBracketed(t *testing.T) {
 	if strings.Contains(stdout, "[flags]") {
 		t.Fatalf("help output should not use generic [flags] usage:\n%s", stdout)
 	}
-	if want := "Usage:\n  tdc configure\n    [--help]\n    [--non-interactive]\n    [--region-code <string>]"; !strings.Contains(stdout, want) {
+	if want := "Usage:\n  ti configure\n    [--help]\n    [--non-interactive]\n    [--region-code <string>]"; !strings.Contains(stdout, want) {
 		t.Fatalf("expected optional flags to be bracketed in configure usage, got:\n%s", stdout)
 	}
 
@@ -743,12 +743,12 @@ func TestServiceCommandsDeclarePermissions(t *testing.T) {
 			return
 		}
 		path := cmd.CommandPath()
-		if !strings.HasPrefix(path, "tdc db ") &&
-			!strings.HasPrefix(path, "tdc fs ") &&
-			!strings.HasPrefix(path, "tdc fs-git ") &&
-			!strings.HasPrefix(path, "tdc fs-journal ") &&
-			!strings.HasPrefix(path, "tdc fs-vault ") &&
-			!strings.HasPrefix(path, "tdc organization ") {
+		if !strings.HasPrefix(path, "ti db ") &&
+			!strings.HasPrefix(path, "ti fs ") &&
+			!strings.HasPrefix(path, "ti fs-git ") &&
+			!strings.HasPrefix(path, "ti fs-journal ") &&
+			!strings.HasPrefix(path, "ti fs-vault ") &&
+			!strings.HasPrefix(path, "ti organization ") {
 			return
 		}
 		if _, err := authz.ForCommand(path); err != nil {
@@ -803,7 +803,7 @@ func TestFSUnixAliasesResolveToCanonicalCommands(t *testing.T) {
 				t.Fatalf("expected alias %s to resolve to %s, got %s", tt.alias, tt.canonical, resolved.Name())
 			}
 			path := resolved.CommandPath()
-			if want := "tdc fs " + tt.canonical; path != want {
+			if want := "ti fs " + tt.canonical; path != want {
 				t.Fatalf("expected canonical path %q, got %q", want, path)
 			}
 			if _, err := authz.ForCommand(path); err != nil {
@@ -824,19 +824,19 @@ func TestFSUnixAliasesResolveToCanonicalCommands(t *testing.T) {
 func TestFSAdjunctCommandsRequireConfiguredFSResource(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_REGION_CODE", "")
-	t.Setenv("TDC_PUBLIC_KEY", "")
-	t.Setenv("TDC_PRIVATE_KEY", "")
+	t.Setenv("TI_REGION_CODE", "")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
 	writeCompleteProfile(t, home, "default")
 
 	_, _, err := executeForTest("fs-vault", "list-secrets")
 	if err == nil {
-		t.Fatal("expected missing tdc fs resource to fail")
+		t.Fatal("expected missing ti fs resource to fail")
 	}
 	if got := apperr.ExitCodeFor(err); got != 2 {
 		t.Fatalf("expected config exit code 2, got %d", got)
 	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "file system name is required") || !strings.Contains(got, "TDC_FS_FILE_SYSTEM_NAME") {
+	if got := apperr.MessageFor(err); !strings.Contains(got, "file system name is required") || !strings.Contains(got, "TI_FS_FILE_SYSTEM_NAME") {
 		t.Fatalf("unexpected message %q", got)
 	}
 }
@@ -844,17 +844,17 @@ func TestFSAdjunctCommandsRequireConfiguredFSResource(t *testing.T) {
 func TestFSOperationalCommandsExposeResourceSelector(t *testing.T) {
 	root := NewRootCommand(testVersion())
 	excluded := map[string]bool{
-		"tdc fs list-file-systems":   true,
-		"tdc fs drain-file-system":   true,
-		"tdc fs unmount-file-system": true,
-		"tdc fs-vault unmount-vault": true,
+		"ti fs list-file-systems":   true,
+		"ti fs drain-file-system":   true,
+		"ti fs unmount-file-system": true,
+		"ti fs-vault unmount-vault": true,
 	}
 	visitCommands(root, func(cmd *cobra.Command) {
 		if cmd.Name() == "help" || cmd.HasSubCommands() || excluded[cmd.CommandPath()] {
 			return
 		}
 		path := cmd.CommandPath()
-		if !strings.HasPrefix(path, "tdc fs ") && !strings.HasPrefix(path, "tdc fs-git ") && !strings.HasPrefix(path, "tdc fs-journal ") && !strings.HasPrefix(path, "tdc fs-vault ") {
+		if !strings.HasPrefix(path, "ti fs ") && !strings.HasPrefix(path, "ti fs-git ") && !strings.HasPrefix(path, "ti fs-journal ") && !strings.HasPrefix(path, "ti fs-vault ") {
 			return
 		}
 		if cmd.Flags().Lookup("file-system-name") == nil {
@@ -866,19 +866,19 @@ func TestFSOperationalCommandsExposeResourceSelector(t *testing.T) {
 func TestFSRemoteCommandsExposeTokenFlag(t *testing.T) {
 	root := NewRootCommand(testVersion())
 	excluded := map[string]bool{
-		"tdc fs create-file-system":   true,
-		"tdc fs list-file-systems":    true,
-		"tdc fs describe-file-system": true,
-		"tdc fs drain-file-system":    true,
-		"tdc fs unmount-file-system":  true,
-		"tdc fs-vault unmount-vault":  true,
+		"ti fs create-file-system":   true,
+		"ti fs list-file-systems":    true,
+		"ti fs describe-file-system": true,
+		"ti fs drain-file-system":    true,
+		"ti fs unmount-file-system":  true,
+		"ti fs-vault unmount-vault":  true,
 	}
 	visitCommands(root, func(cmd *cobra.Command) {
 		if cmd.Name() == "help" || cmd.HasSubCommands() || excluded[cmd.CommandPath()] {
 			return
 		}
 		path := cmd.CommandPath()
-		if !strings.HasPrefix(path, "tdc fs ") && !strings.HasPrefix(path, "tdc fs-git ") && !strings.HasPrefix(path, "tdc fs-journal ") && !strings.HasPrefix(path, "tdc fs-vault ") {
+		if !strings.HasPrefix(path, "ti fs ") && !strings.HasPrefix(path, "ti fs-git ") && !strings.HasPrefix(path, "ti fs-journal ") && !strings.HasPrefix(path, "ti fs-vault ") {
 			return
 		}
 		if cmd.Flags().Lookup("fs-token") == nil {
@@ -890,23 +890,23 @@ func TestFSRemoteCommandsExposeTokenFlag(t *testing.T) {
 func TestFSRegistryDryRunDoesNotMigrateLegacyState(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_REGION_CODE", "")
-	t.Setenv("TDC_PUBLIC_KEY", "")
-	t.Setenv("TDC_PRIVATE_KEY", "")
+	t.Setenv("TI_REGION_CODE", "")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
 	if err := store.WriteProfile(home, "default", store.ConfigProfile{
 		RegionCode:      "aws-us-east-1",
 		FSResourceName:  "workspace",
 		FSTenantID:      "tenant-1",
 		FSCloudProvider: "aws",
 		FSRegionCode:    "aws-us-east-1",
-	}, store.CredentialsProfile{TDCPublicKey: "public", TDCPrivateKey: "private", FSAPIKey: "key-1"}); err != nil {
+	}, store.CredentialsProfile{TiDBCloudPublicKey: "public", TiDBCloudPrivateKey: "private", FSAPIKey: "key-1"}); err != nil {
 		t.Fatal(err)
 	}
 	_, _, err := executeForTest("fs", "copy-file", "--file-system-name", "workspace", "--from-remote", "/source", "--to-remote", "/target", "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, store.TDCDirName, "fs_resources")); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, store.TIDirName, "fs_resources")); !os.IsNotExist(err) {
 		t.Fatalf("dry-run migrated legacy state: %v", err)
 	}
 }
@@ -935,17 +935,17 @@ func TestUpdateCheckUsesReleaseMetadata(t *testing.T) {
 		}
 		_, _ = w.Write([]byte(`{
 			"tag_name": "v0.1.0",
-			"html_url": "https://github.com/tidbcloud/tdc/releases/tag/v0.1.0",
+			"html_url": "https://github.com/tidbcloud/ti-cli/releases/tag/v0.1.0",
 			"assets": [
 				{
-					"name": "tdc_linux_amd64.tar.gz",
-					"browser_download_url": "https://github.com/tidbcloud/tdc/releases/download/v0.1.0/tdc_linux_amd64.tar.gz"
+					"name": "ti_linux_amd64.tar.gz",
+					"browser_download_url": "https://github.com/tidbcloud/ti-cli/releases/download/v0.1.0/ti_linux_amd64.tar.gz"
 				}
 			]
 		}`))
 	}))
 	defer server.Close()
-	t.Setenv("TDC_RELEASE_API_BASE_URL", server.URL)
+	t.Setenv("TI_RELEASE_API_BASE_URL", server.URL)
 
 	stdout, _, err := executeForTest("update", "--check", "--query", "latest_version")
 	if err != nil {
@@ -980,14 +980,14 @@ func TestCLIUpdateRefusesUnownedLocalBuild(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected local build update to fail")
 	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "not owned by tdc") {
+	if got := apperr.MessageFor(err); !strings.Contains(got, "not owned by ti") {
 		t.Fatalf("unexpected message: %q", got)
 	}
 }
 
 func TestControlPlaneCommandSpecRendersImplementedResult(t *testing.T) {
 	root := newCommand(commandSpec{
-		Use: "tdc",
+		Use: "ti",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return cmd.Help()
 		},
@@ -1023,7 +1023,7 @@ func TestControlPlaneCommandSpecRendersImplementedResult(t *testing.T) {
 }
 
 func TestControlPlaneCommandSpecUsesCustomDryRun(t *testing.T) {
-	root := newCommand(commandSpec{Use: "tdc"}, testVersion())
+	root := newCommand(commandSpec{Use: "ti"}, testVersion())
 	root.PersistentFlags().String("output", "json", "output format")
 	root.PersistentFlags().String("query", "", "JMESPath query applied to JSON output")
 	root.AddCommand(newControlPlaneCommand(controlPlaneCommandSpec{
@@ -1083,7 +1083,7 @@ func TestMutatingControlPlaneDryRunRendersJSON(t *testing.T) {
 	if !got.DryRun || !got.WouldSendRequest {
 		t.Fatalf("unexpected dry-run flags: %+v", got)
 	}
-	if got.Command != "tdc db create-db-cluster" {
+	if got.Command != "ti db create-db-cluster" {
 		t.Fatalf("unexpected command %q", got.Command)
 	}
 	if got.Operation != "create_db_cluster" {
@@ -1098,9 +1098,9 @@ func TestMutatingControlPlaneDryRunRendersJSON(t *testing.T) {
 }
 
 func TestRegionOverrideWinsOverEnvironmentCredentials(t *testing.T) {
-	t.Setenv("TDC_REGION_CODE", "aws-us-east-1")
-	t.Setenv("TDC_PUBLIC_KEY", "test-public")
-	t.Setenv("TDC_PRIVATE_KEY", "test-private")
+	t.Setenv("TI_REGION_CODE", "aws-us-east-1")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "test-public")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "test-private")
 
 	stdout, _, err := executeForTest("--region", "aws-ap-southeast-1", "db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run")
 	if err != nil {
@@ -1112,9 +1112,9 @@ func TestRegionOverrideWinsOverEnvironmentCredentials(t *testing.T) {
 }
 
 func TestRegionOverrideAllowsEnvironmentCredentialsWithoutEnvRegion(t *testing.T) {
-	t.Setenv("TDC_REGION_CODE", "")
-	t.Setenv("TDC_PUBLIC_KEY", "test-public")
-	t.Setenv("TDC_PRIVATE_KEY", "test-private")
+	t.Setenv("TI_REGION_CODE", "")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "test-public")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "test-private")
 
 	stdout, _, err := executeForTest("--region", "ali-ap-southeast-1", "db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run")
 	if err != nil {
@@ -1128,9 +1128,9 @@ func TestRegionOverrideAllowsEnvironmentCredentialsWithoutEnvRegion(t *testing.T
 func TestCreateClusterUsesConfiguredDefaultProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_REGION_CODE", "")
-	t.Setenv("TDC_PUBLIC_KEY", "")
-	t.Setenv("TDC_PRIVATE_KEY", "")
+	t.Setenv("TI_REGION_CODE", "")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
 	writeCompleteProfile(t, home, "default")
 
 	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run")
@@ -1145,14 +1145,14 @@ func TestCreateClusterUsesConfiguredDefaultProject(t *testing.T) {
 func TestCreateClusterAllowsMissingConfiguredProject(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_REGION_CODE", "")
-	t.Setenv("TDC_PUBLIC_KEY", "")
-	t.Setenv("TDC_PRIVATE_KEY", "")
+	t.Setenv("TI_REGION_CODE", "")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
 	if err := store.WriteProfile(home, "default", store.ConfigProfile{
 		RegionCode: "aws-us-east-1",
 	}, store.CredentialsProfile{
-		TDCPublicKey:  "test-public",
-		TDCPrivateKey: "test-private",
+		TiDBCloudPublicKey:  "test-public",
+		TiDBCloudPrivateKey: "test-private",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -1169,9 +1169,9 @@ func TestCreateClusterAllowsMissingConfiguredProject(t *testing.T) {
 func TestCreateClusterExplicitEmptyProjectDoesNotFallback(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_REGION_CODE", "")
-	t.Setenv("TDC_PUBLIC_KEY", "")
-	t.Setenv("TDC_PRIVATE_KEY", "")
+	t.Setenv("TI_REGION_CODE", "")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
 	writeCompleteProfile(t, home, "default")
 
 	_, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "", "--dry-run")
@@ -1180,23 +1180,23 @@ func TestCreateClusterExplicitEmptyProjectDoesNotFallback(t *testing.T) {
 	}
 }
 
-func TestConfigureUsesTDCProfileNamespace(t *testing.T) {
+func TestConfigureUsesTIProfileNamespace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_PROFILE", "stage")
+	t.Setenv("TI_PROFILE", "stage")
 	configureIAMForTest(t)
 
 	stdout, _, err := executeForTest(
 		"configure", "--non-interactive",
 		"--region-code", "aws-us-east-1",
-		"--tdc-public-key", "public",
-		"--tdc-private-key", "private",
+		"--tidb-cloud-public-key", "public",
+		"--tidb-cloud-private-key", "private",
 	)
 	if err != nil {
 		t.Fatalf("configure failed: %v", err)
 	}
 	if !strings.Contains(stdout, `"profile": "stage"`) {
-		t.Fatalf("configure did not select TDC_PROFILE:\n%s", stdout)
+		t.Fatalf("configure did not select TI_PROFILE:\n%s", stdout)
 	}
 	doc, err := store.ReadConfig(home)
 	if err != nil {
@@ -1212,13 +1212,13 @@ func TestConfigureUsesTDCProfileNamespace(t *testing.T) {
 
 func TestConfigureDoesNotDisplayTelemetryNotice(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("TDC_TELEMETRY", "off")
+	t.Setenv("TI_TELEMETRY", "off")
 	configureIAMForTest(t)
 	_, stderr, err := executeForTest(
 		"configure", "--non-interactive",
 		"--region-code", "aws-us-east-1",
-		"--tdc-public-key", "public",
-		"--tdc-private-key", "private",
+		"--tidb-cloud-public-key", "public",
+		"--tidb-cloud-private-key", "private",
 	)
 	if err != nil {
 		t.Fatalf("configure failed: %v", err)
@@ -1248,7 +1248,7 @@ func TestMutatingControlPlaneDryRunSupportsTextOutput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected dry-run to succeed, got %v", err)
 	}
-	if !strings.Contains(stdout, "Dry run: tdc db create-db-cluster") {
+	if !strings.Contains(stdout, "Dry run: ti db create-db-cluster") {
 		t.Fatalf("unexpected text output:\n%s", stdout)
 	}
 }
@@ -1260,7 +1260,7 @@ func TestQueryAppliesToDryRunResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected query to succeed, got %v", err)
 	}
-	if got := stdout; got != "\"tdc db create-db-cluster\"\n" {
+	if got := stdout; got != "\"ti db create-db-cluster\"\n" {
 		t.Fatalf("unexpected query output %q", got)
 	}
 }
@@ -1282,9 +1282,9 @@ func TestInvalidQueryFails(t *testing.T) {
 
 func TestDryRunRequiresConfigAndCredentials(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	t.Setenv("TDC_REGION_CODE", "")
-	t.Setenv("TDC_PUBLIC_KEY", "")
-	t.Setenv("TDC_PRIVATE_KEY", "")
+	t.Setenv("TI_REGION_CODE", "")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
 	writeConfigOnlyProfile(t, "default")
 
 	_, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run")
@@ -1299,13 +1299,13 @@ func TestDryRunRequiresConfigAndCredentials(t *testing.T) {
 	}
 }
 
-func TestTDCProfileEnvironmentSelectsFileProfile(t *testing.T) {
+func TestTIProfileEnvironmentSelectsFileProfile(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	t.Setenv("TDC_PROFILE", "stage")
-	t.Setenv("TDC_REGION_CODE", "")
-	t.Setenv("TDC_PUBLIC_KEY", "")
-	t.Setenv("TDC_PRIVATE_KEY", "")
+	t.Setenv("TI_PROFILE", "stage")
+	t.Setenv("TI_REGION_CODE", "")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
 	writeCompleteProfile(t, home, "stage")
 
 	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run")
@@ -1313,12 +1313,12 @@ func TestTDCProfileEnvironmentSelectsFileProfile(t *testing.T) {
 		t.Fatalf("expected dry-run to succeed, got %v", err)
 	}
 	if !strings.Contains(stdout, `profile \"stage\" loaded`) {
-		t.Fatalf("expected TDC_PROFILE to select stage profile, got:\n%s", stdout)
+		t.Fatalf("expected TI_PROFILE to select stage profile, got:\n%s", stdout)
 	}
 }
 
 func TestExplicitEmptyProfileFails(t *testing.T) {
-	t.Setenv("TDC_PROFILE", "stage")
+	t.Setenv("TI_PROFILE", "stage")
 
 	_, _, err := executeForTest("db", "list-db-clusters", "--profile", "")
 	if err == nil {
@@ -1347,9 +1347,9 @@ func TestDryRunRejectedOnReadOnlyCommand(t *testing.T) {
 
 func withConfigEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("TDC_REGION_CODE", "aws-us-east-1")
-	t.Setenv("TDC_PUBLIC_KEY", "test-public")
-	t.Setenv("TDC_PRIVATE_KEY", "test-private")
+	t.Setenv("TI_REGION_CODE", "aws-us-east-1")
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "test-public")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "test-private")
 }
 
 func writeCompleteProfile(t *testing.T, home, profileName string) {
@@ -1358,8 +1358,8 @@ func writeCompleteProfile(t *testing.T, home, profileName string) {
 		RegionCode: "aws-us-east-1",
 		ProjectID:  "virtual-test",
 	}, store.CredentialsProfile{
-		TDCPublicKey:  "test-public",
-		TDCPrivateKey: "test-private",
+		TiDBCloudPublicKey:  "test-public",
+		TiDBCloudPrivateKey: "test-private",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1382,10 +1382,49 @@ func executeForTest(args ...string) (string, string, error) {
 	return executeForTestWithInfo(testVersion(), args...)
 }
 
+func TestExecuteWithHomeMigrationMigratesBeforeLogging(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("TI_LOGGING", "off")
+	legacyRoot := filepath.Join(home, ".tdc")
+	if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyRoot, "config"), []byte("[default]\nregion_code='aws-us-east-1'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	root := NewRootCommand(testVersion())
+	if err := Execute(context.Background(), root, testVersion(), []string{"help"}, &stdout, &stderr, WithHomeMigration()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".ti", "config")); err != nil {
+		t.Fatalf("migration did not publish config: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(legacyRoot, "config")); err != nil {
+		t.Fatalf("migration modified legacy config: %v", err)
+	}
+}
+
+func TestExecuteUpdateHelpBypassesHomeMigration(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, name := range []string{".tdc", ".ti"} {
+		if err := os.MkdirAll(filepath.Join(home, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var stdout, stderr bytes.Buffer
+	root := NewRootCommand(testVersion())
+	if err := Execute(context.Background(), root, testVersion(), []string{"update", "help"}, &stdout, &stderr, WithHomeMigration()); err != nil {
+		t.Fatalf("update help unexpectedly inspected home state: %v", err)
+	}
+}
+
 func executeForTestWithInfo(info version.Info, args ...string) (string, string, error) {
-	if _, ok := os.LookupEnv("TDC_LOGGING"); !ok {
-		_ = os.Setenv("TDC_LOGGING", "off")
-		defer os.Unsetenv("TDC_LOGGING")
+	if _, ok := os.LookupEnv("TI_LOGGING"); !ok {
+		_ = os.Setenv("TI_LOGGING", "off")
+		defer os.Unsetenv("TI_LOGGING")
 	}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -1404,8 +1443,8 @@ func configureIAMForTest(t *testing.T) {
 		_, _ = w.Write([]byte(`{"projects":[{"id":"virtual-test","type":"tidbx_virtual"}]}`))
 	}))
 	t.Cleanup(server.Close)
-	t.Setenv("TDC_ALLOW_TEST_ENDPOINTS", "1")
-	t.Setenv("TDC_TEST_IAM_BASE_URL", server.URL)
+	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "1")
+	t.Setenv("TI_TEST_IAM_BASE_URL", server.URL)
 }
 
 func testVersion() version.Info {

@@ -263,8 +263,8 @@ func validContentType(raw string) bool {
 }
 
 func validUserAgent(value string) bool {
-	return strings.HasPrefix(value, "tdc/") &&
-		len(value) > len("tdc/") &&
+	return strings.HasPrefix(value, "ti/") &&
+		len(value) > len("ti/") &&
 		len(value) <= 128 &&
 		!strings.ContainsAny(value, "\r\n\t ")
 }

@@ -1,58 +1,58 @@
-# tdc
+# ti
 
-tdc ([TiDB Cloud](https://tidbcloud.com) CLI) is a unified tool to manage your TiDB Cloud Filesystem (FS) and Starter services.
+ti ([TiDB Cloud](https://tidbcloud.com) CLI) is a unified tool to manage your TiDB Cloud Filesystem (FS) and Starter services.
 
 - TiDB Cloud Filesystem is a serverless distributed file system designed specifically for AI coding agent workloads.
 - TiDB Cloud Starter provides serverless distributed database clusters that are fully compatible with MySQL.
 
-> `tdc` is currently in preview. Subcommands labeled as preview are subject to change without prior notice.
+> `ti` is currently in preview. Subcommands labeled as preview are subject to change without prior notice.
 
 ## 3-Command Superpower for Your Agent
 
 ### Always-On File System for Sandboxes — Zero Infrastructure Required
 
-With `tdc`, an agent can persist state between sessions, share files across sandboxes, snapshot its workspace before attempting a risky operation, and roll back on failure — all through a CLI with POSIX compatibility.
+With `ti`, an agent can persist state between sessions, share files across sandboxes, snapshot its workspace before attempting a risky operation, and roll back on failure — all through a CLI with POSIX compatibility.
 
 1. Create a file system and obtain the file system token (performed once, outside the sandbox).
 
 ```shell
-export TDC_FS_TOKEN="$(tdc fs create-file-system --file-system-name agent-workspace --region <REGION_CODE> --wait --query fs_token --output text)"
+export TI_FS_TOKEN="$(ti fs create-file-system --file-system-name agent-workspace --region <REGION_CODE> --wait --query fs_token --output text)"
 ```
 
 2. Mount the filesystem to a local path and use it as a normal POSIX-compliant filesystem (performed within the sandbox)
 
 ```shell
-export TDC_FS_TOKEN="<FS_TOKEN>"
-tdc fs mount-file-system --file-system-name agent-workspace --mount-path /path-to-workspace --region <REGION_CODE>
+export TI_FS_TOKEN="<FS_TOKEN>"
+ti fs mount-file-system --file-system-name agent-workspace --mount-path /path-to-workspace --region <REGION_CODE>
 echo "Hello Sandbox Workspace!" >> /path-to-workspace/hello.txt
 ```
 
 3. Unmount the file system to release the workspace before passing it to another sandbox (performed within the sandbox).
 
 ```shell
-tdc fs unmount-file-system --mount-path /path-to-workspace --region <REGION_CODE>
+ti fs unmount-file-system --mount-path /path-to-workspace --region <REGION_CODE>
 ```
 
 ### Always-On MySQL — Zero Infrastructure Required
 
-With `tdc`, an agent can go from zero to live HTAP SQL (Hybrid Transaction / Analytical Processing) in three commands:
+With `ti`, an agent can go from zero to live HTAP SQL (Hybrid Transaction / Analytical Processing) in three commands:
 
 1. Provision a serverless MySQL-compatible cluster, wait until it is active, and capture its ID
 
 ```shell
-export CLUSTER_ID="$(tdc db create-db-cluster --db-cluster-name my-app-db --wait --query id --output text)"
+export CLUSTER_ID="$(ti db create-db-cluster --db-cluster-name my-app-db --wait --query id --output text)"
 ```
 
 2. Create the SQL users it needs to connect
 
 ```shell
-tdc db create-db-sql-users --db-cluster-id "$CLUSTER_ID"
+ti db create-db-sql-users --db-cluster-id "$CLUSTER_ID"
 ```
 
 3. Retrieve the database connection string for your agent and share it across sandboxes as needed
 
 ```shell
-export DATABASE_URL="$(tdc db format-db-connection-string --db-cluster-id "$CLUSTER_ID" --read-write --query connection_string --output text)"
+export DATABASE_URL="$(ti db format-db-connection-string --db-cluster-id "$CLUSTER_ID" --read-write --query connection_string --output text)"
 ```
 
 ## Install
@@ -60,34 +60,42 @@ export DATABASE_URL="$(tdc db format-db-connection-string --db-cluster-id "$CLUS
 macOS and Linux users:
 
 ```bash
-curl -fsSL https://github.com/tidbcloud/tdc/releases/latest/download/install.sh | sh -s -- --yes
+curl -fsSL https://github.com/tidbcloud/ti-cli/releases/latest/download/install.sh | sh -s -- --yes
 ```
 
-After installation, add tdc to the current shell and verify it:
+After installation, add ti to the current shell and verify it:
 
 ```bash
-export PATH="$HOME/.tdc/bin:$PATH"
-tdc --version
+export PATH="$HOME/.ti/bin:$PATH"
+ti --version
 ```
 
-The installer writes `tdc` and `tdc-drive9` to `~/.tdc/bin` without sudo. Add the `export PATH=...` line to your shell profile to make it persistent.
+The installer writes `ti` and `ti-drive9` to `~/.ti/bin` without sudo. Add the `export PATH=...` line to your shell profile to make it persistent.
 
 Windows users:
 
 ```powershell
-$script = "$env:TEMP\install-tdc.ps1"
-iwr https://github.com/tidbcloud/tdc/releases/latest/download/install.ps1 -OutFile $script
+$script = "$env:TEMP\install-ti.ps1"
+iwr https://github.com/tidbcloud/ti-cli/releases/latest/download/install.ps1 -OutFile $script
 powershell -ExecutionPolicy Bypass -File $script -Yes
 ```
 
-After installation, add tdc to the current PowerShell session and verify it:
+After installation, add ti to the current PowerShell session and verify it:
 
 ```powershell
-$env:Path = "$HOME\.tdc\bin;$env:Path"
-tdc --version
+$env:Path = "$HOME\.ti\bin;$env:Path"
+ti --version
 ```
 
-Add `$HOME\.tdc\bin` to your user `PATH` to keep tdc available in new PowerShell sessions.
+Add `$HOME\.ti\bin` to your user `PATH` to keep ti available in new PowerShell sessions.
+
+### Upgrade from tdc v0.1.x
+
+The first `ti` installer or non-update command migrates durable state from `~/.tdc` to `~/.ti` when `~/.ti` does not already exist. It copies profiles, credentials, preferences, telemetry identity, DB SQL credentials, and filesystem registrations; it leaves logs, caches, mount state, and the old Drive9 home behind. The migration never modifies or deletes `~/.tdc`. A hidden owner-only marker under `~/.ti` records that the two directories coexist because migration completed successfully.
+
+Drain and unmount every mount started by `tdc` before installing `ti`. If both directories were created independently, or the migration marker is absent or invalid, migration fails instead of merging or overwriting either directory. Verify `ti` before manually removing the old binaries or state.
+
+Automation should move to `TI_*` and `TIDB_CLOUD_*` environment variables. The v0.2.x release line accepts the corresponding legacy `TDC_*` names when only one form is set; conflicting old and new values fail before any mutation.
 
 ## Quick Start Guide
 
@@ -95,28 +103,28 @@ Add `$HOME\.tdc\bin` to your user `PATH` to keep tdc available in new PowerShell
 
 - Authentication: a TiDB Cloud Public Key and a Private Key from the [TiDB Cloud API Keys](https://tidbcloud.com/org-settings/api-keys) console.
 - Default region: one of aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or ali-ap-southeast-1.
-    - Regions support TiDB Cloud Filesystem: aws-us-east-1, aws-ap-southeast-1.
+    - Regions support TiDB Cloud Filesystem: aws-us-east-1, aws-us-west-2, aws-ap-southeast-1, and ali-ap-southeast-1.
     - Regions support TiDB Cloud Starter: aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or ali-ap-southeast-1.
 
 Set up a default profile with one command:
 
 ```shell
-tdc configure --non-interactive --region-code <TDC_REGION_CODE> --tdc-public-key <TDC_PUBLIC_KEY> --tdc-private-key <TDC_PRIVATE_KEY>
+ti configure --non-interactive --region-code <TI_REGION_CODE> --tidb-cloud-public-key <TIDB_CLOUD_PUBLIC_KEY> --tidb-cloud-private-key <TIDB_CLOUD_PRIVATE_KEY>
 ```
 
 Alternatively, set up a default profile interactively by running the command below. You will be prompted to enter your TiDB Cloud Public Key, Private Key, and the default region:
 
 ```shell
-tdc configure
+ti configure
 ```
 
-`tdc configure` stores non-sensitive profile configuration in `~/.tdc/config` and API credentials in `~/.tdc/credentials`.
+`ti configure` stores non-sensitive profile configuration in `~/.ti/config` and API credentials in `~/.ti/credentials`.
 
 ### Global Settings and Operation Logs
 
-Process-wide preferences are separate from profiles. The optional, hidden `~/.tdc/.preferences` file applies to every profile and is not created on fresh installs or by `tdc configure`. Local operation logs are enabled by default at `~/.tdc/logs/tdc.jsonl`; they contain redacted command and API summaries, not command values or user data.
+Process-wide preferences are separate from profiles. The optional, hidden `~/.ti/.preferences` file applies to every profile and is not created on fresh installs or by `ti configure`. Local operation logs are enabled by default at `~/.ti/logs/ti.jsonl`; they contain redacted command and API summaries, not command values or user data.
 
-To disable operation logging persistently, create `~/.tdc/.preferences`:
+To disable operation logging persistently, create `~/.ti/.preferences`:
 
 ```toml
 schema_version = 1
@@ -127,13 +135,13 @@ max_file_mb = 10
 max_files = 5
 ```
 
-Use `TDC_LOGGING=off` to disable logging for one process. Accepted values are `on`, `true`, `1`, `yes`, `off`, `false`, `0`, and `no`. An existing `[logging]` section in `~/.tdc/config` is migrated automatically to `~/.tdc/.preferences`; profiles and credentials are preserved. `tdc update` does not read or write settings, profiles, credentials, operation logs, or other `~/.tdc/` state.
+Use `TI_LOGGING=off` to disable logging for one process. Accepted values are `on`, `true`, `1`, `yes`, `off`, `false`, `0`, and `no`. An existing `[logging]` section in `~/.ti/config` is migrated automatically to `~/.ti/.preferences`; profiles and credentials are preserved. `ti update` does not read or write settings, profiles, credentials, operation logs, or other `~/.ti/` state.
 
 ### Anonymous Telemetry
 
-Release builds collect minimal command usage and reliability telemetry through the tdc-owned ingestion service. Events contain canonical command and explicitly supplied flag names, stable exit and error codes, duration, region, tdc version, OS, architecture, install source, and a random installation ID. They never contain flag values, credentials, tokens, SQL text, paths, file contents, command output, API payloads, profile names, or cloud resource IDs.
+Release builds collect minimal command usage and reliability telemetry through the ti-owned ingestion service. Events contain canonical command and explicitly supplied flag names, stable exit and error codes, duration, region, ti version, OS, architecture, install source, and a random installation ID. They never contain flag values, credentials, tokens, SQL text, paths, file contents, command output, API payloads, profile names, or cloud resource IDs.
 
-Telemetry is disabled by default for development builds and recognized CI environments. To disable it persistently for release builds, create or edit `~/.tdc/.preferences`:
+Telemetry is disabled by default for development builds and recognized CI environments. To disable it persistently for release builds, create or edit `~/.ti/.preferences`:
 
 ```toml
 schema_version = 1
@@ -142,133 +150,133 @@ schema_version = 1
 enabled = false
 ```
 
-Use `TDC_TELEMETRY=off` to disable telemetry for one process, or `TDC_TELEMETRY=on` to explicitly enable it for an eligible release or development invocation whose build contains the product endpoint. Accepted values are `on`, `true`, `1`, `off`, `false`, `0`. Help, version, commandless usage, and every `tdc update` mode never send telemetry. The pseudonymous ID is stored with owner-only permissions at `~/.tdc/.telemetry-installation-id`; deleting that file resets the identity without changing the preference.
+Use `TI_TELEMETRY=off` to disable telemetry for one process, or `TI_TELEMETRY=on` to explicitly enable it for an eligible release or development invocation whose build contains the product endpoint. Accepted values are `on`, `true`, `1`, `off`, `false`, `0`. Help, version, commandless usage, and every `ti update` mode never send telemetry. The pseudonymous ID is stored with owner-only permissions at `~/.ti/.telemetry-installation-id`; deleting that file resets the identity without changing the preference.
 
-An integration can add optional process-scoped attribution without changing a profile or command: `TDC_TELEMETRY_TAG` is a UTF-8 string limited to 128 bytes, and `TDC_TELEMETRY_EXTRA` is one complete JSON value limited to 2 KiB after compaction. Invalid, prohibited, or oversized extra metadata is omitted; the command still runs normally. Never include credentials, tokens, SQL, paths, personal data, profile names, or cloud resource IDs in either value.
+An integration can add optional process-scoped attribution without changing a profile or command: `TI_TELEMETRY_TAG` is a UTF-8 string limited to 128 bytes, and `TI_TELEMETRY_EXTRA` is one complete JSON value limited to 2 KiB after compaction. Invalid, prohibited, or oversized extra metadata is omitted; the command still runs normally. Never include credentials, tokens, SQL, paths, personal data, profile names, or cloud resource IDs in either value.
 
 ### TiDB Cloud Filesystem
 
 ```shell
 mkdir ~/my-workspace
-tdc fs create-file-system --file-system-name my-workspace --wait
-tdc fs mount-file-system --file-system-name my-workspace --mount-path ~/my-workspace
+ti fs create-file-system --file-system-name my-workspace --wait
+ti fs mount-file-system --file-system-name my-workspace --mount-path ~/my-workspace
 ```
 
 Automatic mounting uses FUSE on Linux and WebDAV on macOS and Windows. macOS users can install macFUSE and explicitly add `--driver fuse` for the full FUSE experience.
 
-One profile can manage multiple file systems. tdc never infers which resource a command targets, so provide `--file-system-name` for one-off commands or set `TDC_FS_FILE_SYSTEM_NAME` for repeated commands:
+One profile can manage multiple file systems. ti never infers which resource a command targets, so provide `--file-system-name` for one-off commands or set `TI_FS_FILE_SYSTEM_NAME` for repeated commands:
 
 ```shell
-tdc fs create-file-system --file-system-name scratch
-tdc fs list-file-systems
-tdc fs describe-file-system --file-system-name scratch
-export TDC_FS_FILE_SYSTEM_NAME=scratch
-tdc fs list-files
+ti fs create-file-system --file-system-name scratch
+ti fs list-file-systems
+ti fs describe-file-system --file-system-name scratch
+export TI_FS_FILE_SYSTEM_NAME=scratch
+ti fs list-files
 ```
 
 `create-file-system` returns an file system token (`fs_token`) in its JSON result. This is the file system owner credential and should be handled as a secret. A configured machine can provision a file system and capture the token without printing the full result:
 
 ```shell
-export TDC_FS_TOKEN="$(tdc fs create-file-system --file-system-name agent-workspace --wait --query fs_token --output text)"
+export TI_FS_TOKEN="$(ti fs create-file-system --file-system-name agent-workspace --wait --query fs_token --output text)"
 ```
 
-An agent sandbox can then use that existing file system without running `tdc configure` or providing TiDB Cloud API keys:
+An agent sandbox can then use that existing file system without running `ti configure` or providing TiDB Cloud API keys:
 
 ```shell
-export TDC_FS_TOKEN="<FS_TOKEN>"
-tdc fs mount-file-system --file-system-name agent-workspace --mount-path /path_to_workspace --region aws-us-east-1
+export TI_FS_TOKEN="<FS_TOKEN>"
+ti fs mount-file-system --file-system-name agent-workspace --mount-path /path_to_workspace --region aws-us-east-1
 ```
 
 ### TiDB Cloud Starter
 
-`tdc db` manages TiDB Cloud Starter clusters only. Cluster lists include only verified Starter clusters in the effective region and omit Essential, other service plans, cross-region resources, and resources whose region cannot be verified. Use global `--region`, for example `tdc --region aws-us-west-2 db list-db-clusters`, to inspect another region without changing the stored profile. Every cluster, branch, SQL-user, connection-string, and SQL command verifies the cluster service plan before continuing. If TiDB Cloud does not return enough plan metadata to prove that a cluster is Starter, `tdc` fails without issuing the requested mutation.
+`ti db` manages TiDB Cloud Starter clusters only. Cluster lists include only verified Starter clusters in the effective region and omit Essential, other service plans, cross-region resources, and resources whose region cannot be verified. Use global `--region`, for example `ti --region aws-us-west-2 db list-db-clusters`, to inspect another region without changing the stored profile. Every cluster, branch, SQL-user, connection-string, and SQL command verifies the cluster service plan before continuing. If TiDB Cloud does not return enough plan metadata to prove that a cluster is Starter, `ti` fails without issuing the requested mutation.
 
-`tdc configure` discovers the account's virtual project and saves its ID in the selected profile. Cluster creation uses an explicit `--project-id` first, then that saved project ID. If neither is available, `tdc` omits the project label and lets TiDB Cloud select the account's default project.
+`ti configure` discovers the account's virtual project and saves its ID in the selected profile. Cluster creation uses an explicit `--project-id` first, then that saved project ID. If neither is available, `ti` omits the project label and lets TiDB Cloud select the account's default project.
 
 ```shell
-tdc db create-db-cluster --db-cluster-name my-distributed-mysql --wait
+ti db create-db-cluster --db-cluster-name my-distributed-mysql --wait
 ```
 
 ## Get Help
 
-- `tdc`
-- `tdc help`
-- `tdc <command> help`
-- `tdc <command> <subcommand> help`
+- `ti`
+- `ti help`
+- `ti <command> help`
+- `ti <command> <subcommand> help`
 
 <details>
 <summary>All commands</summary>
 
 ```text
-tdc configure
-tdc update
-tdc organization list-projects
+ti configure
+ti update
+ti organization list-projects
 
-tdc db create-db-cluster
-tdc db list-db-clusters
-tdc db describe-db-cluster
-tdc db update-db-cluster
-tdc db delete-db-cluster
-tdc db create-db-cluster-branch
-tdc db list-db-cluster-branches
-tdc db describe-db-cluster-branch
-tdc db delete-db-cluster-branch
-tdc db create-db-sql-users
-tdc db format-db-connection-string
-tdc db execute-sql-statement
+ti db create-db-cluster
+ti db list-db-clusters
+ti db describe-db-cluster
+ti db update-db-cluster
+ti db delete-db-cluster
+ti db create-db-cluster-branch
+ti db list-db-cluster-branches
+ti db describe-db-cluster-branch
+ti db delete-db-cluster-branch
+ti db create-db-sql-users
+ti db format-db-connection-string
+ti db execute-sql-statement
 
-tdc fs create-file-system
-tdc fs delete-file-system
-tdc fs list-file-systems
-tdc fs describe-file-system
-tdc fs check-file-system
-tdc fs copy-file
-tdc fs read-file
-tdc fs list-files
-tdc fs describe-file
-tdc fs move-file
-tdc fs delete-file
-tdc fs create-directory
-tdc fs chmod-file
-tdc fs create-symlink
-tdc fs create-hardlink
-tdc fs search-file-content
-tdc fs find-files
-tdc fs create-layer
-tdc fs list-layers
-tdc fs describe-layer
-tdc fs diff-layer
-tdc fs create-layer-checkpoint
-tdc fs rollback-layer
-tdc fs commit-layer
-tdc fs pack-file-system
-tdc fs unpack-file-system
-tdc fs mount-file-system
-tdc fs drain-file-system
-tdc fs unmount-file-system
+ti fs create-file-system
+ti fs delete-file-system
+ti fs list-file-systems
+ti fs describe-file-system
+ti fs check-file-system
+ti fs copy-file
+ti fs read-file
+ti fs list-files
+ti fs describe-file
+ti fs move-file
+ti fs delete-file
+ti fs create-directory
+ti fs chmod-file
+ti fs create-symlink
+ti fs create-hardlink
+ti fs search-file-content
+ti fs find-files
+ti fs create-layer
+ti fs list-layers
+ti fs describe-layer
+ti fs diff-layer
+ti fs create-layer-checkpoint
+ti fs rollback-layer
+ti fs commit-layer
+ti fs pack-file-system
+ti fs unpack-file-system
+ti fs mount-file-system
+ti fs drain-file-system
+ti fs unmount-file-system
 
-tdc fs-git clone-git-workspace
-tdc fs-git hydrate-git-workspace
-tdc fs-git add-git-worktree
-tdc fs-git remove-git-worktree
+ti fs-git clone-git-workspace
+ti fs-git hydrate-git-workspace
+ti fs-git add-git-worktree
+ti fs-git remove-git-worktree
 
-tdc fs-journal create-journal
-tdc fs-journal append-journal-entries
-tdc fs-journal read-journal-entries
-tdc fs-journal search-journal-entries
-tdc fs-journal verify-journal
+ti fs-journal create-journal
+ti fs-journal append-journal-entries
+ti fs-journal read-journal-entries
+ti fs-journal search-journal-entries
+ti fs-journal verify-journal
 
-tdc fs-vault create-secret
-tdc fs-vault replace-secret
-tdc fs-vault read-secret
-tdc fs-vault list-secrets
-tdc fs-vault delete-secret
-tdc fs-vault create-grant
-tdc fs-vault delete-grant
-tdc fs-vault list-audit-events
-tdc fs-vault run-with-secret
-tdc fs-vault mount-vault
-tdc fs-vault unmount-vault
+ti fs-vault create-secret
+ti fs-vault replace-secret
+ti fs-vault read-secret
+ti fs-vault list-secrets
+ti fs-vault delete-secret
+ti fs-vault create-grant
+ti fs-vault delete-grant
+ti fs-vault list-audit-events
+ti fs-vault run-with-secret
+ti fs-vault mount-vault
+ti fs-vault unmount-vault
 ```
 
 Filesystem aliases are `cp`, `cat`, `ls`, `stat`, `mv`, `rm`, `mkdir`, `chmod`, `symlink`, `hardlink`, `grep`, `find`, `mount`, `drain`, and `umount`. Aliases keep the canonical command's long flags.
@@ -278,17 +286,17 @@ Filesystem aliases are `cp`, `cat`, `ls`, `stat`, `mv`, `rm`, `mkdir`, `chmod`, 
 ## Update
 
 ```bash
-tdc update --check
-tdc update --dry-run
-tdc update
-tdc update --target-version v0.1.1
+ti update --check
+ti update --dry-run
+ti update
+ti update --target-version v0.1.1
 ```
 
-`tdc update` downloads and verifies both `tdc` and its `tdc-drive9` companion before replacing either binary in the user-writable install directory. It never requests sudo. Legacy installations under `/usr/local/bin` must run the installer once to migrate to `~/.tdc/bin`.
+`ti update` downloads and verifies both `ti` and its `ti-drive9` companion before replacing either binary in the user-writable install directory. It never requests sudo. The old `tdc update` command cannot migrate to a differently named executable; install `ti` once with the new installer instead.
 
 ## Documentation
 
-- [Preview Documentation](docs/pingcap-docs/docs/ai/tdc/tdc-overview.md)
+- [Preview Documentation](docs/pingcap-docs/docs/ai/ti/ti-overview.md)
 
 ## Build From Source
 
@@ -307,7 +315,7 @@ make build
 The binary is written to:
 
 ```text
-bin/tdc
+bin/ti
 ```
 
 Build the independently deployed telemetry ingestion service:
@@ -316,7 +324,7 @@ Build the independently deployed telemetry ingestion service:
 make build-telemetry-backend
 ```
 
-The backend binary is written to `bin/tdc-telemetry-backend`. Its API, privacy contract, TiDB/PostHog batching behavior, and Docker deployment are documented in [Telemetry Backend Design](docs/telemetry-backend-design.md).
+The backend binary is written to `bin/ti-telemetry-backend`. Its API, privacy contract, TiDB/PostHog batching behavior, and Docker deployment are documented in [Telemetry Backend Design](docs/telemetry-backend-design.md).
 
 ## Test
 

@@ -11,10 +11,11 @@ import (
 	"time"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/region"
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/config/envcompat"
+	"github.com/tidbcloud/ti-cli/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 const (
@@ -81,10 +82,10 @@ func Store(homeDir string, profile *config.Profile, resourceName, tenantID, clou
 		return apperr.New("fs.missing_file_system_name", "usage", 2, "--file-system-name is required")
 	}
 	if strings.TrimSpace(apiKey) == "" {
-		return apperr.New("fs.missing_api_key", "api", 1, "tdc fs provision response did not include an api_key")
+		return apperr.New("fs.missing_api_key", "api", 1, "ti fs provision response did not include an api_key")
 	}
 	if strings.TrimSpace(tenantID) == "" {
-		return apperr.New("fs.missing_tenant_id", "api", 1, "tdc fs provision response did not include a tenant_id")
+		return apperr.New("fs.missing_tenant_id", "api", 1, "ti fs provision response did not include a tenant_id")
 	}
 	canonicalCode, resolvedProvider, err := canonicalPlacement(profile, cloudProvider, regionCode)
 	if err != nil {
@@ -92,7 +93,7 @@ func Store(homeDir string, profile *config.Profile, resourceName, tenantID, clou
 	}
 	if existing, err := Get(homeDir, profile.Name, resourceName); err == nil {
 		if existing.TenantID != strings.TrimSpace(tenantID) || existing.APIKey != strings.TrimSpace(apiKey) {
-			return resourceError("fs.resource_name_conflict", profile.Name, resourceName, "a different local tdc fs resource already uses this name")
+			return resourceError("fs.resource_name_conflict", profile.Name, resourceName, "a different local ti fs resource already uses this name")
 		}
 		return nil
 	} else if apperr.CodeFor(err) != "fs.resource_not_found" {
@@ -110,7 +111,7 @@ func Store(homeDir string, profile *config.Profile, resourceName, tenantID, clou
 		return err
 	}
 	if err := ensureRegistryDirs(homeDir, profile.Name, resourceName); err != nil {
-		return fmt.Errorf("create tdc fs resource directory: %w", err)
+		return fmt.Errorf("create ti fs resource directory: %w", err)
 	}
 	if err := writeTOML(filepath.Join(dir, configFileName), resource, 0o644); err != nil {
 		return err
@@ -129,7 +130,7 @@ func List(homeDir, profileName string) ([]Resource, error) {
 		return []Resource{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("list tdc fs resources for profile %q: %w", normalizedProfile(profileName), err)
+		return nil, fmt.Errorf("list ti fs resources for profile %q: %w", normalizedProfile(profileName), err)
 	}
 	resources := make([]Resource, 0, len(entries))
 	for _, entry := range entries {
@@ -161,7 +162,7 @@ func Get(homeDir, profileName, resourceName string) (Resource, error) {
 	}
 	resource, err := readResourceDir(dir, profileName, resourceName)
 	if errors.Is(err, os.ErrNotExist) {
-		return Resource{}, resourceError("fs.resource_not_found", profileName, resourceName, "tdc fs resource is not configured")
+		return Resource{}, resourceError("fs.resource_not_found", profileName, resourceName, "ti fs resource is not configured")
 	}
 	return resource, err
 }
@@ -183,7 +184,11 @@ func ResolveAuthenticated(homeDir string, profile *config.Profile, opts ResolveA
 		return nil, Resource{}, apperr.New("fs.empty_file_system_name", "usage", 2, "--file-system-name cannot be empty")
 	}
 	if name == "" {
-		name = strings.TrimSpace(fsEnvValue(opts.Env, "TDC_FS_FILE_SYSTEM_NAME"))
+		value, err := fsEnvValue(opts.Env, "TI_FS_FILE_SYSTEM_NAME")
+		if err != nil {
+			return nil, Resource{}, err
+		}
+		name = strings.TrimSpace(value)
 	}
 	if name == "" {
 		return nil, Resource{}, missingFileSystemName()
@@ -202,7 +207,11 @@ func ResolveAuthenticated(homeDir string, profile *config.Profile, opts ResolveA
 		return nil, Resource{}, apperr.New("fs.empty_token", "usage", 2, "--fs-token cannot be empty")
 	}
 	if token == "" {
-		token = strings.TrimSpace(fsEnvValue(opts.Env, "TDC_FS_TOKEN"))
+		value, err := fsEnvValue(opts.Env, "TI_FS_TOKEN")
+		if err != nil {
+			return nil, Resource{}, err
+		}
+		token = strings.TrimSpace(value)
 	}
 
 	resource, resourceErr := Get(homeDir, profile.Name, name)
@@ -228,7 +237,7 @@ func ResolveAuthenticated(homeDir string, profile *config.Profile, opts ResolveA
 		token = strings.TrimSpace(resource.APIKey)
 	}
 	if opts.TokenRequired && token == "" {
-		return nil, Resource{}, apperr.New("fs.missing_token", "authentication", 3, "authentication required: missing FS token; pass --fs-token, set TDC_FS_TOKEN, or select a locally registered file system with credentials")
+		return nil, Resource{}, apperr.New("fs.missing_token", "authentication", 3, "authentication required: missing FS token; pass --fs-token, set TI_FS_TOKEN, or select a locally registered file system with credentials")
 	}
 
 	placementCode := strings.TrimSpace(opts.RegionOverride)
@@ -239,7 +248,7 @@ func ResolveAuthenticated(homeDir string, profile *config.Profile, opts ResolveA
 		placementCode = strings.TrimSpace(profile.PlacementRegionCode)
 	}
 	if placementCode == "" {
-		return nil, Resource{}, apperr.New("fs.missing_region", "config", 2, "tdc fs region is required; pass --region, set TDC_REGION_CODE, or configure region_code for the selected file system or profile")
+		return nil, Resource{}, apperr.New("fs.missing_region", "config", 2, "ti fs region is required; pass --region, set TI_REGION_CODE, or configure region_code for the selected file system or profile")
 	}
 	placement, err := region.ParsePlacementCode(placementCode)
 	if err != nil {
@@ -269,11 +278,11 @@ func resolve(homeDir string, profile *config.Profile, selector string, selectorE
 		return nil, Resource{}, apperr.New("fs.empty_file_system_name", "usage", 2, "--file-system-name cannot be empty")
 	}
 	if name == "" {
-		if env != nil {
-			name = strings.TrimSpace(env["TDC_FS_FILE_SYSTEM_NAME"])
-		} else {
-			name = strings.TrimSpace(os.Getenv("TDC_FS_FILE_SYSTEM_NAME"))
+		value, err := fsEnvValue(env, "TI_FS_FILE_SYSTEM_NAME")
+		if err != nil {
+			return nil, Resource{}, err
 		}
+		name = strings.TrimSpace(value)
 	}
 	if name == "" {
 		return nil, Resource{}, missingFileSystemName()
@@ -311,14 +320,12 @@ func resolve(homeDir string, profile *config.Profile, selector string, selectorE
 }
 
 func missingFileSystemName() error {
-	return apperr.New("fs.missing_file_system_name", "usage", 2, "file system name is required; pass --file-system-name or set TDC_FS_FILE_SYSTEM_NAME")
+	return apperr.New("fs.missing_file_system_name", "usage", 2, "file system name is required; pass --file-system-name or set TI_FS_FILE_SYSTEM_NAME")
 }
 
-func fsEnvValue(env map[string]string, key string) string {
-	if env != nil {
-		return env[key]
-	}
-	return os.Getenv(key)
+func fsEnvValue(env map[string]string, key string) (string, error) {
+	value, _, _, err := envcompat.ResolveNames(env, key, envcompat.LegacyNameFor(key))
+	return value, err
 }
 
 func Delete(homeDir string, profile *config.Profile, resourceName string) error {
@@ -333,7 +340,7 @@ func Delete(homeDir string, profile *config.Profile, resourceName string) error 
 		return err
 	}
 	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("delete local tdc fs resource %q: %w", resourceName, err)
+		return fmt.Errorf("delete local ti fs resource %q: %w", resourceName, err)
 	}
 	return nil
 }
@@ -351,7 +358,7 @@ func MigrateLegacy(homeDir string, profile *config.Profile) error {
 		return nil
 	}
 	if !legacyComplete(profile) {
-		return resourceError("fs.resource_credentials_incomplete", profile.Name, profile.FSResourceName, "legacy flat tdc fs credentials are incomplete; recreate the resource")
+		return resourceError("fs.resource_credentials_incomplete", profile.Name, profile.FSResourceName, "legacy flat ti fs credentials are incomplete; recreate the resource")
 	}
 	existing, err := Get(homeDir, profile.Name, profile.FSResourceName)
 	if err == nil {
@@ -367,7 +374,7 @@ func MigrateLegacy(homeDir string, profile *config.Profile) error {
 		}
 	}
 	if err := store.ClearFSResource(homeDir, profile.Name); err != nil {
-		return apperr.Wrap("fs.resource_migration_failed", "config", 1, "clear migrated flat tdc fs credentials", err)
+		return apperr.Wrap("fs.resource_migration_failed", "config", 1, "clear migrated flat ti fs credentials", err)
 	}
 	profile.FSResourceName = ""
 	profile.FSTenantID = ""
@@ -388,7 +395,7 @@ func validateLegacy(profile *config.Profile) error {
 		return nil
 	}
 	if !legacyComplete(profile) {
-		return resourceError("fs.resource_credentials_incomplete", profile.Name, profile.FSResourceName, "legacy flat tdc fs credentials are incomplete; recreate the resource")
+		return resourceError("fs.resource_credentials_incomplete", profile.Name, profile.FSResourceName, "legacy flat ti fs credentials are incomplete; recreate the resource")
 	}
 	return nil
 }
@@ -419,9 +426,9 @@ func CompanionHome(homeDir, profileName, resourceName string) (string, error) {
 	profileKey := encodeKey(normalizedProfile(profileName))
 	resourceKey := encodeKey(strings.TrimSpace(resourceName))
 	if resourceKey == "" {
-		return "", resourceError("fs.resource_not_configured", profileName, resourceName, "tdc fs resource is required for the companion runtime")
+		return "", resourceError("fs.resource_not_configured", profileName, resourceName, "ti fs resource is required for the companion runtime")
 	}
-	return filepath.Join(homeDir, store.TDCDirName, "drive9-home", profileKey, resourceKey), nil
+	return filepath.Join(homeDir, store.TIDirName, "drive9-home", profileKey, resourceKey), nil
 }
 
 func Paths(homeDir, profileName, resourceName string) (RegistryPaths, error) {
@@ -477,11 +484,11 @@ func resourceDir(homeDir, profileName, resourceName string) (string, error) {
 }
 
 func profileDir(homeDir, profileName string) string {
-	return filepath.Join(homeDir, store.TDCDirName, resourcesDirName, encodeKey(normalizedProfile(profileName)))
+	return filepath.Join(homeDir, store.TIDirName, resourcesDirName, encodeKey(normalizedProfile(profileName)))
 }
 
 func ensureRegistryDirs(homeDir, profileName, resourceName string) error {
-	root := filepath.Join(homeDir, store.TDCDirName, resourcesDirName)
+	root := filepath.Join(homeDir, store.TIDirName, resourcesDirName)
 	profilePath := profileDir(homeDir, profileName)
 	resourcePath, err := resourceDir(homeDir, profileName, resourceName)
 	if err != nil {

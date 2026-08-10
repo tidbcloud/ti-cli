@@ -9,38 +9,38 @@ Add optional package-manager distribution after the GitHub Releases installer wo
 Homebrew:
 
 ```bash
-brew install tidbcloud/tap/tdc
-brew upgrade tidbcloud/tap/tdc
+brew install tidbcloud/tap/ti-cli
+brew upgrade tidbcloud/tap/ti-cli
 ```
 
 Scoop:
 
 ```powershell
-scoop bucket add icemap https://github.com/tidbcloud/scoop-bucket
-scoop install tdc
-scoop update tdc
+scoop bucket add tidbcloud https://github.com/tidbcloud/scoop-bucket
+scoop install ti-cli
+scoop update ti-cli
 ```
 
-Existing `tdc` commands keep the same behavior:
+Existing `ti` commands keep the same behavior:
 
 ```bash
-tdc update --check
-tdc update --dry-run
-tdc update
+ti update --check
+ti update --dry-run
+ti update
 ```
 
-For Homebrew and Scoop installs, `tdc update` must not replace the binary. It returns `update.managed_install` with the correct package-manager command.
+For Homebrew and Scoop installs, `ti update` must not replace the binary. It returns `update.managed_install` with the correct package-manager command.
 
 ## Behavior
 
 - Homebrew distribution uses a separate tap repository, expected name `github.com/tidbcloud/homebrew-tap`.
 - Scoop distribution uses a separate bucket repository, expected name `github.com/tidbcloud/scoop-bucket`.
-- The main `github.com/tidbcloud/tdc` release remains the source of binary artifacts and checksums.
+- The main `github.com/tidbcloud/ti-cli` release remains the source of binary artifacts and checksums.
 - GoReleaser updates the Homebrew formula and Scoop manifest as part of release publishing after this spec is implemented.
 - The Homebrew formula and Scoop manifest consume GitHub Releases assets produced by `0012-install-and-update-distribution.md`.
 - Package-manager installs embed `install_source=homebrew` or `install_source=scoop` through package build/wrapper metadata when practical.
-- `tdc update` also detects common Homebrew and Scoop install paths as a fallback, even if build metadata is missing.
-- Users can still run `tdc update --check` from Homebrew/Scoop installs; it reports release availability but does not mutate package-managed files.
+- `ti update` also detects common Homebrew and Scoop install paths as a fallback, even if build metadata is missing.
+- Users can still run `ti update --check` from Homebrew/Scoop installs; it reports release availability but does not mutate package-managed files.
 
 ## Inputs And Config
 
@@ -55,20 +55,20 @@ GoReleaser config additions:
 - Formula/manifest URLs pointing to GitHub Releases assets.
 - SHA-256 values generated from the release artifacts.
 
-No user `~/.tdc/` config or credentials are required for package-manager installation. Package-manager metadata must not store TiDB Cloud API keys, DB credentials, fs API keys, SQL text, file paths, or telemetry identifiers.
+No user `~/.ti/` config or credentials are required for package-manager installation. Package-manager metadata must not store TiDB Cloud API keys, DB credentials, fs API keys, SQL text, file paths, or telemetry identifiers.
 
 ## Output And Errors
 
-`tdc update` from a Homebrew install:
+`ti update` from a Homebrew install:
 
 ```text
-tdc [ERROR]: tdc is managed by homebrew; update it with `brew upgrade tidbcloud/tap/tdc`
+ti [ERROR]: ti is managed by homebrew; update it with `brew upgrade tidbcloud/tap/ti-cli`
 ```
 
-`tdc update` from a Scoop install:
+`ti update` from a Scoop install:
 
 ```text
-tdc [ERROR]: tdc is managed by scoop; update it with `scoop update tdc`
+ti [ERROR]: ti is managed by scoop; update it with `scoop update ti-cli`
 ```
 
 The structured error code remains `update.managed_install`.
@@ -78,22 +78,22 @@ The structured error code remains `update.managed_install`.
 Users can choose between direct GitHub Releases installers and package-manager installs:
 
 ```bash
-curl -fsSL https://github.com/tidbcloud/tdc/releases/latest/download/install.sh | sh -s -- --yes
-export PATH="$HOME/.tdc/bin:$PATH"
-brew install tidbcloud/tap/tdc
+curl -fsSL https://github.com/tidbcloud/ti-cli/releases/latest/download/install.sh | sh -s -- --yes
+export PATH="$HOME/.ti/bin:$PATH"
+brew install tidbcloud/tap/ti-cli
 ```
 
 Windows users can choose between the PowerShell installer and Scoop:
 
 ```powershell
-iwr https://github.com/tidbcloud/tdc/releases/latest/download/install.ps1 -OutFile $env:TEMP\install-tdc.ps1
-powershell -ExecutionPolicy Bypass -File $env:TEMP\install-tdc.ps1 -Yes
-$env:Path = "$HOME\.tdc\bin;$env:Path"
-scoop bucket add icemap https://github.com/tidbcloud/scoop-bucket
-scoop install tdc
+iwr https://github.com/tidbcloud/ti-cli/releases/latest/download/install.ps1 -OutFile $env:TEMP\install-ti.ps1
+powershell -ExecutionPolicy Bypass -File $env:TEMP\install-ti.ps1 -Yes
+$env:Path = "$HOME\.ti\bin;$env:Path"
+scoop bucket add tidbcloud https://github.com/tidbcloud/scoop-bucket
+scoop install ti-cli
 ```
 
-Package-manager users update through the package manager, not `tdc update`.
+Package-manager users update through the package manager, not `ti update`.
 
 ## Implementation Design
 
@@ -102,20 +102,20 @@ Package-manager users update through the package manager, not `tdc update`.
 - Add release workflow secret usage for the cross-repository publishing token.
 - Add README installation sections for Homebrew and Scoop.
 - Add e2e/unit coverage for `install_source=homebrew`, `install_source=scoop`, and known path detection.
-- Keep `tdc update` refusal logic in `internal/update`; do not add package-manager-specific update code outside that package.
+- Keep `ti update` refusal logic in `internal/update`; do not add package-manager-specific update code outside that package.
 
 Homebrew tap repository work:
 
 - Create `github.com/tidbcloud/homebrew-tap`.
-- Let GoReleaser write a formula such as `Formula/tdc.rb`.
-- Formula installs `tdc` from GitHub Releases.
-- Formula test should run `tdc --version`.
+- Let GoReleaser write a formula such as `Formula/ti-cli.rb`.
+- Formula installs `ti` from GitHub Releases.
+- Formula test should run `ti --version`.
 
 Scoop bucket repository work:
 
 - Create `github.com/tidbcloud/scoop-bucket`.
-- Let GoReleaser write `bucket/tdc.json`.
-- Manifest installs `tdc.exe` from GitHub Releases.
+- Let GoReleaser write `bucket/ti-cli.json`.
+- Manifest installs `ti.exe` from GitHub Releases.
 - Manifest checkver/autoupdate should track GitHub Releases tags.
 
 ## API Call Chain
@@ -131,9 +131,9 @@ Release publishing call chain:
 
 Runtime update call chain from package-managed installs:
 
-1. `tdc update --check` reads GitHub Releases metadata normally.
-2. `tdc update` reads local install-source metadata and known install path patterns.
-3. `tdc update` returns `update.managed_install` before downloading or replacing anything.
+1. `ti update --check` reads GitHub Releases metadata normally.
+2. `ti update` reads local install-source metadata and known install path patterns.
+3. `ti update` returns `update.managed_install` before downloading or replacing anything.
 
 ## Dependencies And Platform
 
@@ -146,16 +146,17 @@ Runtime update call chain from package-managed installs:
 ## Dependencies
 
 - `0012-install-and-update-distribution.md`
+- `0026-ti-cli-rename-and-migration.md`
 - `0013-github-actions-ci-cd.md` if package-manager publishing is automated through the same release workflow hardening.
 
 ## Acceptance Criteria
 
-- `brew install tidbcloud/tap/tdc` installs a released `tdc` binary on macOS.
-- `brew upgrade tidbcloud/tap/tdc` upgrades to a newer release.
-- `scoop bucket add icemap https://github.com/tidbcloud/scoop-bucket` and `scoop install tdc` install `tdc.exe` on Windows.
-- `scoop update tdc` upgrades to a newer release.
-- `tdc update --check` works from Homebrew and Scoop installs.
-- `tdc update` refuses Homebrew and Scoop installs with `update.managed_install`.
+- `brew install tidbcloud/tap/ti-cli` installs a released `ti` binary on macOS.
+- `brew upgrade tidbcloud/tap/ti-cli` upgrades to a newer release.
+- `scoop bucket add tidbcloud https://github.com/tidbcloud/scoop-bucket` and `scoop install ti-cli` install `ti.exe` on Windows.
+- `scoop update ti-cli` upgrades to a newer release.
+- `ti update --check` works from Homebrew and Scoop installs.
+- `ti update` refuses Homebrew and Scoop installs with `update.managed_install`.
 - README documents Homebrew and Scoop as optional package-manager channels.
 
 ## Out Of Scope
@@ -163,4 +164,4 @@ Runtime update call chain from package-managed installs:
 - apt, yum, dnf, apk, pacman, winget, Chocolatey, Mac App Store, Microsoft Store, Snap, Flatpak, and other package registries.
 - Package-manager install telemetry.
 - Auto-update daemons or background update checks.
-- Changing the `~/.tdc/` config and credentials model.
+- Changing the `~/.ti/` config and credentials model.

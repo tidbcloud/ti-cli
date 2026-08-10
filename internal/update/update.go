@@ -21,13 +21,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/version"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
 const (
-	DefaultReleaseAPIBaseURL = "https://api.github.com/repos/tidbcloud/tdc"
-	checksumAssetName        = "tdc_checksums.txt"
+	DefaultReleaseAPIBaseURL = "https://api.github.com/repos/tidbcloud/ti-cli"
+	checksumAssetName        = "ti_checksums.txt"
 	drive9ReleaseBaseURL     = "https://drive9.ai/releases"
 	drive9ChecksumAssetName  = "checksums.txt"
 )
@@ -105,11 +105,11 @@ type ApplyResult struct {
 func (r ApplyResult) Human() string {
 	var b strings.Builder
 	if r.DryRun {
-		fmt.Fprintf(&b, "Dry run: update tdc from %s to %s\n", r.CurrentVersion, r.TargetVersion)
+		fmt.Fprintf(&b, "Dry run: update ti from %s to %s\n", r.CurrentVersion, r.TargetVersion)
 	} else if r.Updated {
-		fmt.Fprintf(&b, "Updated tdc from %s to %s\n", r.CurrentVersion, r.TargetVersion)
+		fmt.Fprintf(&b, "Updated ti from %s to %s\n", r.CurrentVersion, r.TargetVersion)
 	} else {
-		fmt.Fprintf(&b, "tdc is already at %s\n", r.CurrentVersion)
+		fmt.Fprintf(&b, "ti is already at %s\n", r.CurrentVersion)
 	}
 	fmt.Fprintf(&b, "Install source: %s\n", r.InstallSource)
 	fmt.Fprintf(&b, "Target path: %s\n", r.TargetPath)
@@ -187,7 +187,7 @@ func Apply(ctx context.Context, info version.Info, opts ApplyOptions) (ApplyResu
 			"update.unknown_install",
 			"runtime",
 			1,
-			fmt.Sprintf("tdc install source %q is not owned by tdc; reinstall with scripts/install.sh or scripts/install.ps1 before using tdc update", source.Name),
+			fmt.Sprintf("ti install source %q is not owned by ti; reinstall with scripts/install.sh or scripts/install.ps1 before using ti update", source.Name),
 		)
 	}
 
@@ -196,7 +196,7 @@ func Apply(ctx context.Context, info version.Info, opts ApplyOptions) (ApplyResu
 			"update.unsupported_platform",
 			"runtime",
 			1,
-			"tdc update cannot safely replace the running Windows executable yet; rerun the PowerShell installer for the target version",
+			"ti update cannot safely replace the running Windows executable yet; rerun the PowerShell installer for the target version",
 		)
 	}
 
@@ -215,7 +215,7 @@ func Apply(ctx context.Context, info version.Info, opts ApplyOptions) (ApplyResu
 			"update.no_update_available",
 			"runtime",
 			1,
-			fmt.Sprintf("The latest version of tdc (%s) is already installed", info.Version),
+			fmt.Sprintf("The latest version of ti (%s) is already installed", info.Version),
 		)
 	}
 
@@ -271,7 +271,7 @@ func Apply(ctx context.Context, info version.Info, opts ApplyOptions) (ApplyResu
 			"update.permission_denied",
 			"runtime",
 			1,
-			fmt.Sprintf("tdc cannot update the protected installation at %s; rerun the installer to migrate to ~/.tdc/bin", targetPath),
+			fmt.Sprintf("ti cannot update the protected installation at %s; rerun the installer to migrate to ~/.ti/bin", targetPath),
 		)
 	}
 
@@ -294,18 +294,18 @@ func Apply(ctx context.Context, info version.Info, opts ApplyOptions) (ApplyResu
 	}
 	defer companionCleanup()
 
-	stagedTDC, err := stageBinary(extracted, targetPath)
+	stagedTI, err := stageBinary(extracted, targetPath)
 	if err != nil {
 		return ApplyResult{}, err
 	}
-	defer os.Remove(stagedTDC)
+	defer os.Remove(stagedTI)
 	companionTarget := companionPathForExecutable(targetPath)
 	stagedCompanion, err := stageBinary(companion.Path, companionTarget)
 	if err != nil {
 		return ApplyResult{}, err
 	}
 	defer os.Remove(stagedCompanion)
-	if err := replaceBinary(ctx, stagedTDC, targetPath); err != nil {
+	if err := replaceBinary(ctx, stagedTI, targetPath); err != nil {
 		return ApplyResult{}, err
 	}
 	if err := replaceFile(stagedCompanion, companionTarget); err != nil {
@@ -318,7 +318,7 @@ func Apply(ctx context.Context, info version.Info, opts ApplyOptions) (ApplyResu
 
 func newClient(baseURL string, httpClient *http.Client) client {
 	if strings.TrimSpace(baseURL) == "" {
-		baseURL = strings.TrimRight(os.Getenv("TDC_RELEASE_API_BASE_URL"), "/")
+		baseURL = strings.TrimRight(os.Getenv("TI_RELEASE_API_BASE_URL"), "/")
 	}
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = DefaultReleaseAPIBaseURL
@@ -363,7 +363,7 @@ func (c client) download(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, apperr.Wrap("update.invalid_url", "runtime", 1, "build release request", err)
 	}
-	req.Header.Set("User-Agent", "tdc")
+	req.Header.Set("User-Agent", "ti")
 	req.Header.Set("Accept", "application/json, application/octet-stream")
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -424,12 +424,12 @@ func artifactName(goos, goarch string) (string, error) {
 		if goarch != "amd64" && goarch != "arm64" {
 			return "", unsupportedTarget(goos, goarch)
 		}
-		return fmt.Sprintf("tdc_%s_%s.tar.gz", goos, goarch), nil
+		return fmt.Sprintf("ti_%s_%s.tar.gz", goos, goarch), nil
 	case "windows":
 		if goarch != "amd64" {
 			return "", unsupportedTarget(goos, goarch)
 		}
-		return fmt.Sprintf("tdc_%s_%s.zip", goos, goarch), nil
+		return fmt.Sprintf("ti_%s_%s.zip", goos, goarch), nil
 	default:
 		return "", unsupportedTarget(goos, goarch)
 	}
@@ -440,7 +440,7 @@ func unsupportedTarget(goos, goarch string) error {
 		"update.unsupported_target",
 		"runtime",
 		1,
-		fmt.Sprintf("no tdc release artifact is defined for %s/%s", goos, goarch),
+		fmt.Sprintf("no ti release artifact is defined for %s/%s", goos, goarch),
 	)
 }
 
@@ -493,16 +493,16 @@ func isHexSHA256(value string) bool {
 }
 
 func extractBinary(archiveBytes []byte, artifactName string) (string, func(), error) {
-	tempDir, err := os.MkdirTemp("", "tdc-update-*")
+	tempDir, err := os.MkdirTemp("", "ti-update-*")
 	if err != nil {
 		return "", func() {}, apperr.Wrap("update.temp_dir", "runtime", 1, "create update temp directory", err)
 	}
 	cleanup := func() {
 		_ = os.RemoveAll(tempDir)
 	}
-	targetName := "tdc"
+	targetName := "ti"
 	if strings.HasSuffix(artifactName, ".zip") {
-		targetName = "tdc.exe"
+		targetName = "ti.exe"
 	}
 	targetPath := filepath.Join(tempDir, targetName)
 	var extractErr error
@@ -517,7 +517,7 @@ func extractBinary(archiveBytes []byte, artifactName string) (string, func(), er
 	}
 	if err := os.Chmod(targetPath, 0o755); err != nil {
 		cleanup()
-		return "", func() {}, apperr.Wrap("update.extract_artifact", "runtime", 1, "make downloaded tdc executable", err)
+		return "", func() {}, apperr.Wrap("update.extract_artifact", "runtime", 1, "make downloaded ti executable", err)
 	}
 	return targetPath, cleanup, nil
 }
@@ -542,7 +542,7 @@ func extractTarGzBinary(archiveBytes []byte, targetName, targetPath string) erro
 		}
 		return writeExtractedBinary(targetPath, tr)
 	}
-	return apperr.New("update.extract_artifact", "runtime", 1, "release archive did not contain tdc binary")
+	return apperr.New("update.extract_artifact", "runtime", 1, "release archive did not contain ti binary")
 }
 
 func extractZipBinary(archiveBytes []byte, targetName, targetPath string) error {
@@ -556,22 +556,22 @@ func extractZipBinary(archiveBytes []byte, targetName, targetPath string) error 
 		}
 		rc, err := file.Open()
 		if err != nil {
-			return apperr.Wrap("update.extract_artifact", "runtime", 1, "open zipped tdc binary", err)
+			return apperr.Wrap("update.extract_artifact", "runtime", 1, "open zipped ti binary", err)
 		}
 		defer rc.Close()
 		return writeExtractedBinary(targetPath, rc)
 	}
-	return apperr.New("update.extract_artifact", "runtime", 1, "release archive did not contain tdc binary")
+	return apperr.New("update.extract_artifact", "runtime", 1, "release archive did not contain ti binary")
 }
 
 func writeExtractedBinary(targetPath string, r io.Reader) error {
 	file, err := os.OpenFile(targetPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o755)
 	if err != nil {
-		return apperr.Wrap("update.extract_artifact", "runtime", 1, "create extracted tdc binary", err)
+		return apperr.Wrap("update.extract_artifact", "runtime", 1, "create extracted ti binary", err)
 	}
 	defer file.Close()
 	if _, err := io.Copy(file, r); err != nil {
-		return apperr.Wrap("update.extract_artifact", "runtime", 1, "write extracted tdc binary", err)
+		return apperr.Wrap("update.extract_artifact", "runtime", 1, "write extracted ti binary", err)
 	}
 	return nil
 }
@@ -600,13 +600,13 @@ type downloadedBinary struct {
 func isTargetWritable(path string) (bool, error) {
 	info, err := os.Stat(path)
 	if err != nil {
-		return false, apperr.Wrap("update.permission_denied", "runtime", 1, "check current tdc binary", err)
+		return false, apperr.Wrap("update.permission_denied", "runtime", 1, "check current ti binary", err)
 	}
 	if info.IsDir() {
-		return false, apperr.New("update.permission_denied", "runtime", 1, "current tdc executable path is a directory")
+		return false, apperr.New("update.permission_denied", "runtime", 1, "current ti executable path is a directory")
 	}
 	dir := filepath.Dir(path)
-	temp, err := os.CreateTemp(dir, ".tdc-update-write-test-*")
+	temp, err := os.CreateTemp(dir, ".ti-update-write-test-*")
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			return false, nil
@@ -615,7 +615,7 @@ func isTargetWritable(path string) (bool, error) {
 			"update.permission_denied",
 			"runtime",
 			1,
-			fmt.Sprintf("tdc cannot stage an update in %s", dir),
+			fmt.Sprintf("ti cannot stage an update in %s", dir),
 			err,
 		)
 	}
@@ -660,10 +660,10 @@ func stageBinary(sourcePath, targetPath string) (string, error) {
 }
 
 func replaceBinary(ctx context.Context, newBinary, targetPath string) error {
-	backupPath := targetPath + ".tdc-backup"
+	backupPath := targetPath + ".ti-backup"
 	_ = os.Remove(backupPath)
 	if err := os.Rename(targetPath, backupPath); err != nil {
-		return apperr.Wrap("update.permission_denied", "runtime", 1, "move current tdc binary aside", err)
+		return apperr.Wrap("update.permission_denied", "runtime", 1, "move current ti binary aside", err)
 	}
 	installed := false
 	defer func() {
@@ -675,7 +675,7 @@ func replaceBinary(ctx context.Context, newBinary, targetPath string) error {
 	}()
 
 	if err := os.Rename(newBinary, targetPath); err != nil {
-		return apperr.Wrap("update.permission_denied", "runtime", 1, "install new tdc binary", err)
+		return apperr.Wrap("update.permission_denied", "runtime", 1, "install new ti binary", err)
 	}
 	if err := validateInstalledBinary(ctx, targetPath); err != nil {
 		return err
@@ -689,13 +689,13 @@ func validateInstalledBinary(ctx context.Context, targetPath string) error {
 	validateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(validateCtx, targetPath, "--version")
-	cmd.Env = append(os.Environ(), "TDC_LOGGING=off")
+	cmd.Env = append(os.Environ(), "TI_LOGGING=off")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return apperr.Wrap(
 			"update.validation_failed",
 			"runtime",
 			1,
-			fmt.Sprintf("new tdc binary failed --version validation: %s", strings.TrimSpace(string(output))),
+			fmt.Sprintf("new ti binary failed --version validation: %s", strings.TrimSpace(string(output))),
 			err,
 		)
 	}
@@ -726,9 +726,9 @@ func (c client) downloadDrive9Companion(ctx context.Context, baseURL string) (do
 	if err := verifyChecksum(binaryBytes, expectedSHA, artifactName); err != nil {
 		return downloadedBinary{}, func() {}, err
 	}
-	tempDir, err := os.MkdirTemp("", "tdc-drive9-update-*")
+	tempDir, err := os.MkdirTemp("", "ti-drive9-update-*")
 	if err != nil {
-		return downloadedBinary{}, func() {}, apperr.Wrap("update.temp_dir", "runtime", 1, "create tdc-drive9 update temp directory", err)
+		return downloadedBinary{}, func() {}, apperr.Wrap("update.temp_dir", "runtime", 1, "create ti-drive9 update temp directory", err)
 	}
 	cleanup := func() {
 		_ = os.RemoveAll(tempDir)
@@ -736,11 +736,11 @@ func (c client) downloadDrive9Companion(ctx context.Context, baseURL string) (do
 	tempPath := filepath.Join(tempDir, companionBinaryName())
 	if err := os.WriteFile(tempPath, binaryBytes, 0o755); err != nil {
 		cleanup()
-		return downloadedBinary{}, func() {}, apperr.Wrap("update.extract_artifact", "runtime", 1, "write temporary tdc-drive9 binary", err)
+		return downloadedBinary{}, func() {}, apperr.Wrap("update.extract_artifact", "runtime", 1, "write temporary ti-drive9 binary", err)
 	}
 	if err := os.Chmod(tempPath, 0o755); err != nil {
 		cleanup()
-		return downloadedBinary{}, func() {}, apperr.Wrap("update.extract_artifact", "runtime", 1, "make tdc-drive9 executable", err)
+		return downloadedBinary{}, func() {}, apperr.Wrap("update.extract_artifact", "runtime", 1, "make ti-drive9 executable", err)
 	}
 	return downloadedBinary{Path: tempPath, SHA256: expectedSHA}, cleanup, nil
 }
@@ -768,8 +768,8 @@ func drive9ArtifactName(goos, goarch string) (string, error) {
 	}
 }
 
-func companionPathForExecutable(tdcPath string) string {
-	path := strings.TrimSpace(tdcPath)
+func companionPathForExecutable(tiPath string) string {
+	path := strings.TrimSpace(tiPath)
 	if path == "" {
 		current, err := os.Executable()
 		if err == nil {
@@ -784,9 +784,9 @@ func companionPathForExecutable(tdcPath string) string {
 
 func companionBinaryName() string {
 	if runtime.GOOS == "windows" {
-		return "tdc-drive9.exe"
+		return "ti-drive9.exe"
 	}
-	return "tdc-drive9"
+	return "ti-drive9"
 }
 
 func companionStatusText(path string, installed bool) string {
@@ -805,13 +805,13 @@ func fileExists(path string) bool {
 }
 
 func replaceFile(sourcePath, targetPath string) error {
-	backupPath := targetPath + ".tdc-backup"
+	backupPath := targetPath + ".ti-backup"
 	_ = os.Remove(backupPath)
 	hadTarget := false
 	if _, err := os.Stat(targetPath); err == nil {
 		hadTarget = true
 		if err := os.Rename(targetPath, backupPath); err != nil {
-			return apperr.Wrap("update.permission_denied", "runtime", 1, "move current tdc-drive9 binary aside", err)
+			return apperr.Wrap("update.permission_denied", "runtime", 1, "move current ti-drive9 binary aside", err)
 		}
 	}
 	installed := false
@@ -823,7 +823,7 @@ func replaceFile(sourcePath, targetPath string) error {
 		_ = os.Rename(backupPath, targetPath)
 	}()
 	if err := os.Rename(sourcePath, targetPath); err != nil {
-		return apperr.Wrap("update.permission_denied", "runtime", 1, "install tdc-drive9 binary", err)
+		return apperr.Wrap("update.permission_denied", "runtime", 1, "install ti-drive9 binary", err)
 	}
 	installed = true
 	if hadTarget {
@@ -840,12 +840,12 @@ type installSource struct {
 
 func detectInstallSource(source, path string) installSource {
 	name := normalizedInstallSource(source)
-	lowerPath := strings.ToLower(filepath.ToSlash(path))
+	lowerPath := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(path), `\`, "/"))
 	switch {
-	case strings.Contains(lowerPath, "/homebrew/cellar/tdc/"),
-		strings.Contains(lowerPath, "/cellar/tdc/"):
+	case strings.Contains(lowerPath, "/homebrew/cellar/ti-cli/"),
+		strings.Contains(lowerPath, "/cellar/ti-cli/"):
 		name = "homebrew"
-	case strings.Contains(lowerPath, "/scoop/apps/tdc/"):
+	case strings.Contains(lowerPath, "/scoop/apps/ti-cli/"):
 		name = "scoop"
 	}
 
@@ -871,18 +871,18 @@ func normalizedInstallSource(source string) string {
 
 func managedInstallError(source string) error {
 	command := map[string]string{
-		"homebrew": "brew upgrade tidbcloud/tap/tdc",
-		"scoop":    "scoop update tdc",
-		"winget":   "winget upgrade tidbcloud.tdc",
+		"homebrew": "brew upgrade tidbcloud/tap/ti-cli",
+		"scoop":    "scoop update ti-cli",
+		"winget":   "winget upgrade TiDBCloud.TiCLI",
 	}[source]
 	if command == "" {
-		command = "use the package manager that installed tdc"
+		command = "use the package manager that installed ti"
 	}
 	return apperr.New(
 		"update.managed_install",
 		"runtime",
 		1,
-		fmt.Sprintf("tdc is managed by %s; update it with `%s`", source, command),
+		fmt.Sprintf("ti is managed by %s; update it with `%s`", source, command),
 	)
 }
 

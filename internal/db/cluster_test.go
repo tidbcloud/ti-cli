@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/db/validate"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/db/validate"
 )
 
 func TestCreateCluster(t *testing.T) {
@@ -256,7 +256,7 @@ func TestCreateClusterProjectResolutionErrors(t *testing.T) {
 	t.Run("explicit empty", func(t *testing.T) {
 		profile := testProfile()
 		profile.ProjectID = "profile-project"
-		_, err := Service{}.DryRunCreateCluster(context.Background(), "tdc db create-db-cluster", CreateClusterOptions{
+		_, err := Service{}.DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
 			Profile: profile, DisplayName: "demo", ClusterType: "starter", ProjectIDExplicit: true, MonthlySpendingLimitUSDCents: -1,
 		})
 		if apperr.CodeFor(err) != "db.empty_project_id" {
@@ -490,7 +490,7 @@ func TestDryRunCreateClusterDoesNotSendRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := testService(server.URL).DryRunCreateCluster(context.Background(), "tdc db create-db-cluster", CreateClusterOptions{
+	result, err := testService(server.URL).DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
 		Profile:                      testProfile(),
 		DisplayName:                  "demo-cluster",
 		ClusterType:                  "starter",
@@ -519,7 +519,7 @@ func TestDryRunCreateClusterDoesNotSendRequest(t *testing.T) {
 }
 
 func TestDryRunCreateClusterOmitsProjectLabelWhenUnset(t *testing.T) {
-	result, err := testService("https://starter.test").DryRunCreateCluster(context.Background(), "tdc db create-db-cluster", CreateClusterOptions{
+	result, err := testService("https://starter.test").DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
 		Profile:                      testProfile(),
 		DisplayName:                  "demo-cluster",
 		ClusterType:                  "starter",
@@ -538,7 +538,7 @@ func TestDryRunCreateClusterOmitsProjectLabelWhenUnset(t *testing.T) {
 }
 
 func TestDryRunDeleteClusterDescribesWait(t *testing.T) {
-	result, err := testService("https://starter.test").DryRunDeleteCluster(context.Background(), "tdc db delete-db-cluster", DeleteClusterOptions{
+	result, err := testService("https://starter.test").DryRunDeleteCluster(context.Background(), "ti db delete-db-cluster", DeleteClusterOptions{
 		Profile:          testProfile(),
 		ClusterID:        "cluster-1",
 		WaitUntilDeleted: true,
@@ -562,7 +562,7 @@ func TestDryRunDeleteClusterDescribesWait(t *testing.T) {
 }
 
 func TestDryRunUpdateClusterDescribesStarterPrecondition(t *testing.T) {
-	result, err := testService("https://starter.test").DryRunUpdateCluster(context.Background(), "tdc db update-db-cluster", UpdateClusterOptions{
+	result, err := testService("https://starter.test").DryRunUpdateCluster(context.Background(), "ti db update-db-cluster", UpdateClusterOptions{
 		Profile: testProfile(), ClusterID: "cluster-1", DisplayName: "renamed", MonthlySpendingLimitUSDCents: -1,
 	})
 	if err != nil {
@@ -577,7 +577,7 @@ func TestDryRunUpdateClusterDescribesStarterPrecondition(t *testing.T) {
 }
 
 func TestCreateDefaultsToStarterType(t *testing.T) {
-	result, err := Service{}.DryRunCreateCluster(context.Background(), "tdc db create-db-cluster", CreateClusterOptions{
+	result, err := Service{}.DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
 		Profile:     testProfile(),
 		DisplayName: "demo-cluster",
 		ProjectID:   "project-1",
@@ -597,7 +597,7 @@ func TestCreateDefaultsToStarterType(t *testing.T) {
 }
 
 func TestCreateRejectsUnsupportedClusterType(t *testing.T) {
-	_, err := Service{}.DryRunCreateCluster(context.Background(), "tdc db create-db-cluster", CreateClusterOptions{
+	_, err := Service{}.DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
 		Profile:     testProfile(),
 		DisplayName: "demo-cluster",
 		ClusterType: "essential",
@@ -616,10 +616,10 @@ func testService(baseURL string) Service {
 
 func testProfile() *config.Profile {
 	return &config.Profile{
-		Name:          "test",
-		CloudProvider: "aws",
-		RegionCode:    "us-east-1",
-		TDCPublicKey:  "public",
-		TDCPrivateKey: "private",
+		Name:                "test",
+		CloudProvider:       "aws",
+		RegionCode:          "us-east-1",
+		TiDBCloudPublicKey:  "public",
+		TiDBCloudPrivateKey: "private",
 	}
 }

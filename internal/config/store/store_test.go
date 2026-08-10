@@ -6,6 +6,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 func TestWriteProfileCreatesFilesAndRestrictsCredentials(t *testing.T) {
@@ -19,9 +21,9 @@ func TestWriteProfileCreatesFilesAndRestrictsCredentials(t *testing.T) {
 		FSCloudProvider: "aws",
 		FSRegionCode:    "aws-us-east-1",
 	}, CredentialsProfile{
-		TDCPublicKey:  "public",
-		TDCPrivateKey: "private",
-		FSAPIKey:      "fs-secret",
+		TiDBCloudPublicKey:  "public",
+		TiDBCloudPrivateKey: "private",
+		FSAPIKey:            "fs-secret",
 	})
 	if err != nil {
 		t.Fatalf("WriteProfile failed: %v", err)
@@ -60,8 +62,8 @@ func TestWriteProfileCreatesFilesAndRestrictsCredentials(t *testing.T) {
 
 func TestReadConfigRejectsURLLikeKeys(t *testing.T) {
 	home := t.TempDir()
-	tdcDir := filepath.Join(home, TDCDirName)
-	if err := os.MkdirAll(tdcDir, 0o700); err != nil {
+	tiDir := filepath.Join(home, TIDirName)
+	if err := os.MkdirAll(tiDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(ConfigPath(home), []byte(`
@@ -83,7 +85,7 @@ server_url = "https://example.invalid"
 
 func TestWriteProfileRejectsReservedLoggingName(t *testing.T) {
 	home := t.TempDir()
-	err := WriteProfile(home, "LoGgInG", ConfigProfile{RegionCode: "aws-us-east-1"}, CredentialsProfile{TDCPublicKey: "public", TDCPrivateKey: "private"})
+	err := WriteProfile(home, "LoGgInG", ConfigProfile{RegionCode: "aws-us-east-1"}, CredentialsProfile{TiDBCloudPublicKey: "public", TiDBCloudPrivateKey: "private"})
 	if err == nil || !strings.Contains(err.Error(), "reserved") {
 		t.Fatalf("expected reserved profile error, got %v", err)
 	}
@@ -97,8 +99,8 @@ func TestWriteProfileRejectsReservedLoggingName(t *testing.T) {
 
 func TestRemoveLegacyFSDefaultFileSystemPreservesConfig(t *testing.T) {
 	home := t.TempDir()
-	tdcDir := filepath.Join(home, TDCDirName)
-	if err := os.MkdirAll(tdcDir, 0o700); err != nil {
+	tiDir := filepath.Join(home, TIDirName)
+	if err := os.MkdirAll(tiDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(ConfigPath(home), []byte(`
@@ -156,9 +158,9 @@ func TestClearFSResourcePreservesTiDBCloudCredentials(t *testing.T) {
 		FSCloudProvider: "aws",
 		FSRegionCode:    "aws-us-east-1",
 	}, CredentialsProfile{
-		TDCPublicKey:  "public",
-		TDCPrivateKey: "private",
-		FSAPIKey:      "fs-secret",
+		TiDBCloudPublicKey:  "public",
+		TiDBCloudPrivateKey: "private",
+		FSAPIKey:            "fs-secret",
 	}); err != nil {
 		t.Fatalf("WriteProfile failed: %v", err)
 	}
@@ -179,7 +181,7 @@ func TestClearFSResourcePreservesTiDBCloudCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadCredentials failed: %v", err)
 	}
-	if got := credentialsDoc["stage"]; got.FSAPIKey != "" || got.TDCPublicKey != "public" || got.TDCPrivateKey != "private" {
+	if got := credentialsDoc["stage"]; got.FSAPIKey != "" || got.TiDBCloudPublicKey != "public" || got.TiDBCloudPrivateKey != "private" {
 		t.Fatalf("unexpected credentials after clear: %#v", got)
 	}
 }
@@ -190,13 +192,13 @@ func TestReadCredentialsRepairsPermissions(t *testing.T) {
 	}
 
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, TDCDirName), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, TIDirName), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(CredentialsPath(home), []byte(`
 [default]
-tdc_public_key = "public"
-tdc_private_key = "private"
+tidb_cloud_public_key = "public"
+tidb_cloud_private_key = "private"
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -215,13 +217,13 @@ tdc_private_key = "private"
 
 func TestReadCredentialsRejectsDBUsersInMainCredentials(t *testing.T) {
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, TDCDirName), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, TIDirName), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(CredentialsPath(home), []byte(`
 [default]
-tdc_public_key = "public"
-tdc_private_key = "private"
+tidb_cloud_public_key = "public"
+tidb_cloud_private_key = "private"
 
 [default.db_users."cluster-id".read_write]
 username = "user"
@@ -234,7 +236,68 @@ password = "pass"
 	if err == nil {
 		t.Fatal("expected db_users in main credentials to be rejected")
 	}
-	if !strings.Contains(err.Error(), "~/.tdc/db_users/<cluster-id>/credentials") {
+	if !strings.Contains(err.Error(), "~/.ti/db_users/<cluster-id>/credentials") {
 		t.Fatalf("expected error to mention db user credential path, got %v", err)
+	}
+}
+
+func TestReadCredentialsSupportsLegacyFieldsAndWritesCanonicalFields(t *testing.T) {
+	home := t.TempDir()
+	path := CredentialsPath(home)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("[default]\ntdc_public_key='public'\ntdc_private_key='private'\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	doc, err := ReadCredentials(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if doc["default"].TiDBCloudPublicKey != "public" || doc["default"].TiDBCloudPrivateKey != "private" {
+		t.Fatalf("legacy credentials were not decoded: %#v", doc)
+	}
+	if err := WriteProfile(home, "default", ConfigProfile{RegionCode: "aws-us-east-1"}, CredentialsProfile{}); err != nil {
+		t.Fatal(err)
+	}
+	written, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), "tidb_cloud_public_key") || strings.Contains(string(written), "tdc_public_key") {
+		t.Fatalf("write did not canonicalize credentials:\n%s", written)
+	}
+}
+
+func TestReadCredentialsRejectsConflictingLegacyFields(t *testing.T) {
+	home := t.TempDir()
+	path := CredentialsPath(home)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	contents := "[default]\ntidb_cloud_public_key='new'\ntdc_public_key='old'\ntidb_cloud_private_key='same'\ntdc_private_key='same'\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ReadCredentials(home)
+	if apperr.CodeFor(err) != "config.environment_conflict" {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestNormalizeCredentialsPreservesUnrelatedFields(t *testing.T) {
+	contents := []byte("[default]\ntdc_public_key='public'\ntdc_private_key='private'\nfs_api_key='drive9-token'\nfuture_secret='preserve-me'\n")
+	normalized, err := NormalizeCredentials(contents, "credentials")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(normalized)
+	for _, want := range []string{"tidb_cloud_public_key", "tidb_cloud_private_key", "fs_api_key", "future_secret", "preserve-me"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("normalized credentials lost %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "tdc_public_key") || strings.Contains(text, "tdc_private_key") {
+		t.Fatalf("normalized credentials retained legacy names:\n%s", text)
 	}
 }
