@@ -14,8 +14,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
 	"golang.org/x/net/webdav"
 )
 

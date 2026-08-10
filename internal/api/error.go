@@ -3,7 +3,7 @@ package api
 import (
 	"fmt"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 type Error struct {

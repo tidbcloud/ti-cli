@@ -10,15 +10,15 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/auth"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	"github.com/tidbcloud/tdc/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/auth"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 )
 
 type Service struct {
@@ -201,7 +201,7 @@ func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string,
 			Method:      http.MethodDelete,
 			Path:        "/v1/tenant",
 			Body:        redactedDeprovisionRequest(body),
-			Description: "normal execution uses the stored tdc fs API key before deleting",
+			Description: "normal execution uses the stored ti fs API key before deleting",
 		},
 		checks...,
 	), nil
@@ -284,7 +284,7 @@ func (s Service) bearerClient(profile *config.Profile, endpoint endpoints.Endpoi
 		Timeout:     s.Timeout,
 		Debug:       s.Debug,
 		DebugWriter: s.DebugWriter,
-		UserAgent:   "tdc fs legacy helper",
+		UserAgent:   "ti fs legacy helper",
 	})
 	if err != nil {
 		return nil, err
@@ -395,7 +395,7 @@ func resourceMismatch(existing, requested string) error {
 		"fs.resource_name_mismatch",
 		"usage",
 		2,
-		fmt.Sprintf("profile is already configured for tdc fs resource %q; use that name or delete it before creating %q", existing, requested),
+		fmt.Sprintf("profile is already configured for ti fs resource %q; use that name or delete it before creating %q", existing, requested),
 	)
 }
 
@@ -446,7 +446,7 @@ func (r FileSystemResult) Human() string {
 		lines = append(lines, "Location: "+strings.TrimSpace(r.CloudProvider+" "+r.RegionCode))
 	}
 	if r.CredentialsStored {
-		lines = append(lines, "Credentials: stored in ~/.tdc/credentials")
+		lines = append(lines, "Credentials: stored in ~/.ti/credentials")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -463,14 +463,14 @@ func (r DeleteResult) Human() string {
 		lines = append(lines, "Remote deletion state: "+r.RemoteDeletionState)
 	}
 	if r.CredentialsRemoved {
-		lines = append(lines, "Credentials: removed from ~/.tdc/credentials")
+		lines = append(lines, "Credentials: removed from ~/.ti/credentials")
 	}
 	return strings.Join(lines, "\n")
 }
 
 func (r CheckResult) Human() string {
 	var out strings.Builder
-	_, _ = fmt.Fprintf(&out, "tdc fs check: %s\n", r.Status)
+	_, _ = fmt.Fprintf(&out, "ti fs check: %s\n", r.Status)
 	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(writer, "CHECK\tSTATUS\tMESSAGE")
 	for _, check := range r.Checks {

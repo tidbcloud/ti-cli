@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	rootdb "github.com/tidbcloud/tdc/internal/db"
+	rootdb "github.com/tidbcloud/ti-cli/internal/db"
 )
 
 func TestDispatcherReusesStarterDiscoverySnapshot(t *testing.T) {

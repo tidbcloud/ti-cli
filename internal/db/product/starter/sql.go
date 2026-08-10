@@ -6,23 +6,23 @@ import (
 	"os"
 	"strings"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apiiam "github.com/tidbcloud/tdc/internal/api/iam"
-	apistarter "github.com/tidbcloud/tdc/internal/api/starter"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	rootdb "github.com/tidbcloud/tdc/internal/db"
-	"github.com/tidbcloud/tdc/internal/db/connectionstring"
-	"github.com/tidbcloud/tdc/internal/db/sqlaccess"
-	"github.com/tidbcloud/tdc/internal/db/sqlcred"
-	"github.com/tidbcloud/tdc/internal/db/sqlhttp"
-	"github.com/tidbcloud/tdc/internal/db/sqlmysql"
-	"github.com/tidbcloud/tdc/internal/db/sqlresult"
-	"github.com/tidbcloud/tdc/internal/db/sqlsingle"
-	"github.com/tidbcloud/tdc/internal/db/validate"
-	"github.com/tidbcloud/tdc/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apiiam "github.com/tidbcloud/ti-cli/internal/api/iam"
+	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	rootdb "github.com/tidbcloud/ti-cli/internal/db"
+	"github.com/tidbcloud/ti-cli/internal/db/connectionstring"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlaccess"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlhttp"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlmysql"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlresult"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlsingle"
+	"github.com/tidbcloud/ti-cli/internal/db/validate"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
 )
 
 const (
@@ -95,7 +95,7 @@ func (s Service) DryRunPrepareQueryAccess(ctx context.Context, commandPath strin
 		dryrun.RequestSummary{
 			Method:      "GET/POST/PATCH",
 			Path:        "/v1beta1/clusters/" + clusterID + "/sqlUsers",
-			Description: "normal execution verifies the cluster, lists SQL users, creates missing tdc-managed read_only/read_write/admin users, and rotates passwords for missing local credentials",
+			Description: "normal execution verifies the cluster, lists SQL users, creates missing ti-managed read_only/read_write/admin users, and rotates passwords for missing local credentials",
 			Body:        prepareResult,
 		},
 		dryrun.Check{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
@@ -161,7 +161,7 @@ func (s Service) ExecuteSQL(ctx context.Context, opts ExecuteSQLOptions) (sqlres
 			HTTPClient:  s.HTTPClient,
 			Debug:       s.Debug,
 			DebugWriter: s.DebugWriter,
-			UserAgent:   "tdc db execute-sql-statement",
+			UserAgent:   "ti db execute-sql-statement",
 		})
 	case transportMySQL:
 		if err := sqlmysql.ValidateEndpoint(host, port); err != nil {
@@ -213,7 +213,7 @@ func (s Service) sqlConnectionInputs(ctx context.Context, profile *config.Profil
 			"db.sql_credentials_missing",
 			"config",
 			2,
-			fmt.Sprintf("missing prepared %s DB SQL credentials for cluster %s; run tdc db create-db-sql-users --db-cluster-id %s", mode, clusterID, clusterID),
+			fmt.Sprintf("missing prepared %s DB SQL credentials for cluster %s; run ti db create-db-sql-users --db-cluster-id %s", mode, clusterID, clusterID),
 		)
 	}
 	return clusterID, mode, credential, cluster, nil
@@ -278,7 +278,7 @@ func (s Service) iamClient(profile *config.Profile, permission authz.Permission,
 		Timeout:     s.Timeout,
 		Debug:       s.Debug,
 		DebugWriter: s.DebugWriter,
-		UserAgent:   "tdc db sql",
+		UserAgent:   "ti db sql",
 	})
 	if err != nil {
 		return nil, err

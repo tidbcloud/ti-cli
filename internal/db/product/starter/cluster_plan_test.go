@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	apistarter "github.com/tidbcloud/tdc/internal/api/starter"
-	"github.com/tidbcloud/tdc/internal/apperr"
+	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 func TestEnsureStarterClusterPlanResolution(t *testing.T) {

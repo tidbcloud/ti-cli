@@ -9,15 +9,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apistarter "github.com/tidbcloud/tdc/internal/api/starter"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	rootdb "github.com/tidbcloud/tdc/internal/db"
-	"github.com/tidbcloud/tdc/internal/db/validate"
-	"github.com/tidbcloud/tdc/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	rootdb "github.com/tidbcloud/ti-cli/internal/db"
+	"github.com/tidbcloud/ti-cli/internal/db/validate"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
 )
 
 const (
@@ -246,7 +246,7 @@ func (s Service) waitUntilClusterActive(ctx context.Context, client *apistarter.
 				"db.cluster_wait_read_failed",
 				"api",
 				1,
-				fmt.Sprintf("DB cluster %q was created but tdc could not read its state while waiting for ACTIVE; the cluster was not deleted; inspect it with `tdc db describe-db-cluster --db-cluster-id %s`", cluster.ID, cluster.ID),
+				fmt.Sprintf("DB cluster %q was created but ti could not read its state while waiting for ACTIVE; the cluster was not deleted; inspect it with `ti db describe-db-cluster --db-cluster-id %s`", cluster.ID, cluster.ID),
 				err,
 			)
 		}
@@ -261,7 +261,7 @@ func (s Service) waitUntilClusterActive(ctx context.Context, client *apistarter.
 				"db.cluster_wait_terminal_state",
 				"api",
 				1,
-				fmt.Sprintf("DB cluster %q was created but entered state %q before becoming ACTIVE; the cluster was not deleted; inspect it with `tdc db describe-db-cluster --db-cluster-id %s`", cluster.ID, current.State, cluster.ID),
+				fmt.Sprintf("DB cluster %q was created but entered state %q before becoming ACTIVE; the cluster was not deleted; inspect it with `ti db describe-db-cluster --db-cluster-id %s`", cluster.ID, current.State, cluster.ID),
 			)
 		}
 
@@ -288,7 +288,7 @@ func clusterWaitContextError(parent, waitCtx context.Context, clusterID string, 
 			"db.cluster_wait_timeout",
 			"api",
 			1,
-			fmt.Sprintf("DB cluster %q was created but did not become ACTIVE within %s; the cluster was not deleted; inspect it with `tdc db describe-db-cluster --db-cluster-id %s`", clusterID, timeout, clusterID),
+			fmt.Sprintf("DB cluster %q was created but did not become ACTIVE within %s; the cluster was not deleted; inspect it with `ti db describe-db-cluster --db-cluster-id %s`", clusterID, timeout, clusterID),
 		)
 	}
 	return nil
@@ -405,7 +405,7 @@ func (s Service) waitUntilClusterDeleted(ctx context.Context, client *apistarter
 				"db.cluster_delete_wait_read_failed",
 				"api",
 				1,
-				fmt.Sprintf("DB cluster %q deletion was accepted but tdc could not confirm completion; deletion may still be in progress", cluster.ID),
+				fmt.Sprintf("DB cluster %q deletion was accepted but ti could not confirm completion; deletion may still be in progress", cluster.ID),
 				err,
 			)
 		}
@@ -587,7 +587,7 @@ func (s Service) starterClient(profile *config.Profile, permission authz.Permiss
 		Timeout:     s.Timeout,
 		Debug:       s.Debug,
 		DebugWriter: s.DebugWriter,
-		UserAgent:   "tdc db cluster",
+		UserAgent:   "ti db cluster",
 	})
 	if err != nil {
 		return nil, err

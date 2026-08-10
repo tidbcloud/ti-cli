@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 func TestValidateProfileMissingCredentials(t *testing.T) {
@@ -18,16 +18,16 @@ func TestValidateProfileMissingCredentials(t *testing.T) {
 	if got := apperr.ExitCodeFor(err); got != 3 {
 		t.Fatalf("expected auth exit code 3, got %d", got)
 	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "authentication required") || !strings.Contains(got, "tdc_public_key and tdc_private_key") {
+	if got := apperr.MessageFor(err); !strings.Contains(got, "authentication required") || !strings.Contains(got, "tidb_cloud_public_key and tidb_cloud_private_key") {
 		t.Fatalf("unexpected message %q", got)
 	}
 }
 
 func TestValidateProfileRejectsMalformedCredentials(t *testing.T) {
 	_, err := ValidateProfile(&config.Profile{
-		Name:          "stage",
-		TDCPublicKey:  "public:key",
-		TDCPrivateKey: "private",
+		Name:                "stage",
+		TiDBCloudPublicKey:  "public:key",
+		TiDBCloudPrivateKey: "private",
 	})
 	if err == nil {
 		t.Fatal("expected malformed credentials to fail")
@@ -86,7 +86,7 @@ func TestLoadProfileMissingPartialEnvironmentCredentialsDoesNotReportEnvProfile(
 	_, err := LoadProfile(context.Background(), config.LoadOptions{
 		HomeDir: home,
 		Env: map[string]string{
-			"TDC_PUBLIC_KEY": "env-public",
+			"TIDB_CLOUD_PUBLIC_KEY": "env-public",
 		},
 	})
 	if err == nil {

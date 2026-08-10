@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apistarter "github.com/tidbcloud/tdc/internal/api/starter"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/db/validate"
-	"github.com/tidbcloud/tdc/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/db/validate"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
 )
 
 func (s Service) ListBranches(ctx context.Context, opts ListBranchesOptions) (ListBranchesResult, error) {
@@ -188,7 +188,7 @@ func (s Service) waitUntilBranchActive(ctx context.Context, client *apistarter.C
 				"db.branch_wait_read_failed",
 				"api",
 				1,
-				fmt.Sprintf("DB branch %q was created in cluster %q but tdc could not read its state while waiting for ACTIVE; the branch was not deleted", branch.ID, clusterID),
+				fmt.Sprintf("DB branch %q was created in cluster %q but ti could not read its state while waiting for ACTIVE; the branch was not deleted", branch.ID, clusterID),
 				err,
 			)
 		}

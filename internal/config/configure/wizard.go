@@ -11,32 +11,33 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apiiam "github.com/tidbcloud/tdc/internal/api/iam"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/region"
-	"github.com/tidbcloud/tdc/internal/config/store"
-	"github.com/tidbcloud/tdc/internal/secretinput"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apiiam "github.com/tidbcloud/ti-cli/internal/api/iam"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/config/envcompat"
+	"github.com/tidbcloud/ti-cli/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/secretinput"
 )
 
 type Options struct {
-	Profile        string
-	HomeDir        string
-	RegionCode     string
-	TDCPublicKey   string
-	TDCPrivateKey  string
-	NonInteractive bool
-	Env            map[string]string
-	In             io.Reader
-	Out            io.Writer
-	Resolver       endpoints.Resolver
-	Transport      http.RoundTripper
-	Timeout        time.Duration
-	Debug          bool
-	DebugWriter    io.Writer
+	Profile             string
+	HomeDir             string
+	RegionCode          string
+	TiDBCloudPublicKey  string
+	TiDBCloudPrivateKey string
+	NonInteractive      bool
+	Env                 map[string]string
+	In                  io.Reader
+	Out                 io.Writer
+	Resolver            endpoints.Resolver
+	Transport           http.RoundTripper
+	Timeout             time.Duration
+	Debug               bool
+	DebugWriter         io.Writer
 }
 
 type Result struct {
@@ -89,7 +90,11 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	}
 
 	defaultRegion := region.DefaultPlacementCode()
-	regionCode, err := valueOrPrompt(ctx, input, opts.Out, valueOrEnv(opts.RegionCode, opts.Env, "TDC_REGION_CODE"), "default region code", fmt.Sprintf("Default region code (%s): ", defaultRegion), defaultRegion, false, opts.NonInteractive)
+	regionInput, err := valueOrEnv(opts.RegionCode, opts.Env, "TI_REGION_CODE")
+	if err != nil {
+		return Result{}, err
+	}
+	regionCode, err := valueOrPrompt(ctx, input, opts.Out, regionInput, "default region code", fmt.Sprintf("Default region code (%s): ", defaultRegion), defaultRegion, false, opts.NonInteractive)
 	if err != nil {
 		return Result{}, err
 	}
@@ -98,11 +103,19 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		return Result{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
 
-	publicKey, err := valueOrPrompt(ctx, input, opts.Out, valueOrEnv(opts.TDCPublicKey, opts.Env, "TDC_PUBLIC_KEY"), "TiDB Cloud public key", "TiDB Cloud public key: ", "", false, opts.NonInteractive)
+	publicKeyInput, err := valueOrEnv(opts.TiDBCloudPublicKey, opts.Env, "TIDB_CLOUD_PUBLIC_KEY")
 	if err != nil {
 		return Result{}, err
 	}
-	privateKey, err := valueOrPrompt(ctx, input, opts.Out, valueOrEnv(opts.TDCPrivateKey, opts.Env, "TDC_PRIVATE_KEY"), "TiDB Cloud private key", "TiDB Cloud private key: ", "", true, opts.NonInteractive)
+	publicKey, err := valueOrPrompt(ctx, input, opts.Out, publicKeyInput, "TiDB Cloud public key", "TiDB Cloud public key: ", "", false, opts.NonInteractive)
+	if err != nil {
+		return Result{}, err
+	}
+	privateKeyInput, err := valueOrEnv(opts.TiDBCloudPrivateKey, opts.Env, "TIDB_CLOUD_PRIVATE_KEY")
+	if err != nil {
+		return Result{}, err
+	}
+	privateKey, err := valueOrPrompt(ctx, input, opts.Out, privateKeyInput, "TiDB Cloud private key", "TiDB Cloud private key: ", "", true, opts.NonInteractive)
 	if err != nil {
 		return Result{}, err
 	}
@@ -112,8 +125,8 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		PlacementRegionCode: placement.Code,
 		CloudProvider:       placement.Provider,
 		RegionCode:          placement.NativeCode,
-		TDCPublicKey:        publicKey,
-		TDCPrivateKey:       privateKey,
+		TiDBCloudPublicKey:  publicKey,
+		TiDBCloudPrivateKey: privateKey,
 	}
 	project, err := discoverVirtualProject(ctx, opts, profile)
 	if err != nil {
@@ -124,8 +137,8 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 		RegionCode: placement.Code,
 		ProjectID:  project.ID,
 	}, store.CredentialsProfile{
-		TDCPublicKey:  publicKey,
-		TDCPrivateKey: privateKey,
+		TiDBCloudPublicKey:  publicKey,
+		TiDBCloudPrivateKey: privateKey,
 	}); err != nil {
 		return Result{}, apperr.Wrap("config.write_failed", "config", 1, err.Error(), err)
 	}
@@ -158,7 +171,7 @@ func discoverVirtualProject(ctx context.Context, opts Options, profile *config.P
 		Timeout:     timeout,
 		Debug:       opts.Debug,
 		DebugWriter: opts.DebugWriter,
-		UserAgent:   "tdc configure",
+		UserAgent:   "ti configure",
 	})
 	if err != nil {
 		return apiiam.Project{}, err
@@ -228,7 +241,7 @@ func valueOrPrompt(ctx context.Context, in io.Reader, out io.Writer, value, fiel
 			"config.non_interactive_missing",
 			"config",
 			2,
-			fmt.Sprintf("%s is required for non-interactive configure; provide a flag or TDC_* environment variable", fieldName),
+			fmt.Sprintf("%s is required for non-interactive configure; provide a flag or TI_* environment variable", fieldName),
 		)
 	}
 
@@ -245,12 +258,10 @@ func valueOrPrompt(ctx context.Context, in io.Reader, out io.Writer, value, fiel
 	return strings.TrimSpace(value), nil
 }
 
-func valueOrEnv(value string, env map[string]string, key string) string {
+func valueOrEnv(value string, env map[string]string, key string) (string, error) {
 	if value != "" {
-		return value
+		return value, nil
 	}
-	if env != nil {
-		return env[key]
-	}
-	return os.Getenv(key)
+	resolved, _, _, err := envcompat.ResolveNames(env, key, envcompat.LegacyNameFor(key))
+	return resolved, err
 }

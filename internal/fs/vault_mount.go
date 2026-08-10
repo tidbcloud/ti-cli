@@ -14,9 +14,9 @@ import (
 
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/fs/mountstate"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 )
 
 func (s Service) mountVaultForeground(ctx context.Context, inputs vaultMountInputs, checks []MountRuntimeCheck) (MountResult, error) {
@@ -33,14 +33,14 @@ func (s Service) mountVaultForeground(ctx context.Context, inputs vaultMountInpu
 		UID:             uint32(os.Getuid()),
 		GID:             uint32(os.Getgid()),
 		MountOptions: gofuse.MountOptions{
-			FsName:  "tdc-vault",
-			Name:    "tdcvault",
+			FsName:  "ti-vault",
+			Name:    "tivault",
 			Options: []string{"ro"},
 		},
 	}
 	server, err := gofs.Mount(inputs.mountPath, root, options)
 	if err != nil {
-		return MountResult{}, apperr.Wrap("vault.mount_fuse", "runtime", 1, fmt.Sprintf("mount tdc fs-vault with FUSE at %q", inputs.mountPath), err)
+		return MountResult{}, apperr.Wrap("vault.mount_fuse", "runtime", 1, fmt.Sprintf("mount ti fs-vault with FUSE at %q", inputs.mountPath), err)
 	}
 
 	state, err := mountstate.New(inputs.profile.Name, "vault", inputs.mountPath, "/n/vault", "fuse", inputs.endpoint, os.Getpid(), true, time.Now().UTC())

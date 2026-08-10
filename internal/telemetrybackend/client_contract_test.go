@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	clienttelemetry "github.com/tidbcloud/tdc/internal/telemetry"
-	"github.com/tidbcloud/tdc/internal/version"
+	clienttelemetry "github.com/tidbcloud/ti-cli/internal/telemetry"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
 func TestCLIEventMatchesBackendContract(t *testing.T) {
@@ -42,7 +42,7 @@ func TestCLIEventMatchesBackendContract(t *testing.T) {
 		t.Fatal("telemetry session was not created")
 	}
 	session.Finish(clienttelemetry.EventInput{
-		CommandPath:   "tdc fs create-file-system",
+		CommandPath:   "ti fs create-file-system",
 		FlagNames:     []string{"file-system-name", "wait"},
 		ExitCode:      0,
 		Duration:      150 * time.Millisecond,

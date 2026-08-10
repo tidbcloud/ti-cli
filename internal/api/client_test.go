@@ -9,10 +9,10 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/oplog"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/oplog"
 )
 
 func TestClientDoJSON(t *testing.T) {
@@ -116,7 +116,7 @@ func TestClientRecordsSafeAPIEvent(t *testing.T) {
 		},
 		ProfileName: "stage",
 		Permission:  authz.FSFileRead,
-		Action:      "read tdc fs file",
+		Action:      "read ti fs file",
 	})
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
@@ -136,7 +136,7 @@ func TestClientRecordsSafeAPIEvent(t *testing.T) {
 		t.Fatalf("expected one event, got %#v", recorder.events)
 	}
 	event := recorder.events[0]
-	if event.Service != "tdc_fs" || event.Operation != "read tdc fs file" || event.StatusCode != http.StatusOK || event.RequestID != "request-1" {
+	if event.Service != "ti_fs" || event.Operation != "read ti fs file" || event.StatusCode != http.StatusOK || event.RequestID != "request-1" {
 		t.Fatalf("unexpected event: %#v", event)
 	}
 	if strings.Contains(event.Operation, "secret/path") || strings.Contains(event.Operation, "read=1") {

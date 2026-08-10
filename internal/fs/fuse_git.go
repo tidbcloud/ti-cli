@@ -17,7 +17,7 @@ import (
 	"time"
 
 	"github.com/hanwen/go-fuse/v2/fuse"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
 )
 
 const fuseGitCacheTTL = 2 * time.Second

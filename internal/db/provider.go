@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
 var ErrResolverNotApplicable = errors.New("database cluster resolver not applicable")

@@ -4,12 +4,12 @@ import (
 	"context"
 	"fmt"
 
-	apistarter "github.com/tidbcloud/tdc/internal/api/starter"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	rootdb "github.com/tidbcloud/tdc/internal/db"
-	"github.com/tidbcloud/tdc/internal/db/validate"
+	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	rootdb "github.com/tidbcloud/ti-cli/internal/db"
+	"github.com/tidbcloud/ti-cli/internal/db/validate"
 )
 
 type clusterSnapshot struct {

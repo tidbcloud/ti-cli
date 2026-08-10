@@ -4,16 +4,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 func TestForCommand(t *testing.T) {
 	tests := map[string]Permission{
-		"tdc organization list-projects": OrganizationProjectRead,
-		"tdc fs create-file-system":      FSVolumeCreate,
-		"tdc fs search-file-content":     FSFileRead,
-		"tdc fs mount-file-system":       FSMount,
-		"tdc fs-vault mount-vault":       FSVaultSecretRead,
+		"ti organization list-projects": OrganizationProjectRead,
+		"ti fs create-file-system":      FSVolumeCreate,
+		"ti fs search-file-content":     FSFileRead,
+		"ti fs mount-file-system":       FSMount,
+		"ti fs-vault mount-vault":       FSVaultSecretRead,
 	}
 
 	for command, want := range tests {
@@ -41,7 +41,7 @@ func TestPermissionDenied(t *testing.T) {
 }
 
 func TestDBCommandsDoNotUseStaticCommandPermissions(t *testing.T) {
-	_, err := ForCommand("tdc db describe-db-cluster")
+	_, err := ForCommand("ti db describe-db-cluster")
 	if apperr.CodeFor(err) != "authz.permission_mapping_missing" {
 		t.Fatalf("expected DB permission to be dynamically resolved, got %v", err)
 	}

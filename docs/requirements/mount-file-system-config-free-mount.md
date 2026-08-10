@@ -1,18 +1,18 @@
-# `tdc fs mount-file-system` Configuration\-Free Mount
+# `ti fs mount-file-system` Configuration\-Free Mount
 
 ## Problem
 
-Today `tdc fs mount-file-system` requires an initialized `~/.tdc/credentials` file, which in turn requires `tdc configure` with TiDB Cloud API public/private keys\. This makes the mount command unusable in ephemeral environments \(CI/CD pipelines, E2B sandboxes, Docker containers\) where provisioning long\-lived API credentials is undesirable\. Users want a "mount and go" experience with only the information intrinsic to the filesystem itself\.
+Today `ti fs mount-file-system` requires an initialized `~/.ti/credentials` file, which in turn requires `ti configure` with TiDB Cloud API public/private keys\. This makes the mount command unusable in ephemeral environments \(CI/CD pipelines, E2B sandboxes, Docker containers\) where provisioning long\-lived API credentials is undesirable\. Users want a "mount and go" experience with only the information intrinsic to the filesystem itself\.
 
 ## Solution
 
-Make `tdc fs mount-file-system --file-system-name my-workspace --mount-path ~/my-workspace` work without any prior `tdc configure` by accepting three pieces of information directly:
+Make `ti fs mount-file-system --file-system-name my-workspace --mount-path ~/my-workspace` work without any prior `ti configure` by accepting three pieces of information directly:
 
 1. **file\-system\-name** — identifies the target File System
 
-2. **\-\-region\-code** flag or **TDC\_REGION\_CODE** environment variable — specifies the deployment region
+2. **\-\-region\-code** flag or **TI\_REGION\_CODE** environment variable — specifies the deployment region
 
-3. **\-\-fs\-token** flag or **TDC\_FS\_TOKEN** environment variable — the filesystem\-scoped authentication token
+3. **\-\-fs\-token** flag or **TI\_FS\_TOKEN** environment variable — the filesystem\-scoped authentication token
 
 With these three variables, the CLI has everything it needs to mount the filesystem — region for the API endpoint, FS identity, and a scoped credential — without a credentials file or API key pair\.
 
@@ -20,35 +20,35 @@ With these three variables, the CLI has everything it needs to mount the filesys
 
 ```bash
 # Minimal mount — everything via flags
-tdc fs mount-file-system \
+ti fs mount-file-system \
   --file-system-name my-workspace \
   --mount-path ~/my-workspace \
-  --region-code aws-us-east-1 \
-  --fs-token tdc_fs_v1_abc123...xyz
+  --region aws-us-east-1 \
+  --fs-token drive9_abc123...xyz
 
 # Mount using env vars for region and token
-export TDC_REGION_CODE=aws-us-east-1
-export TDC_FS_TOKEN=tdc_fs_v1_abc123...xyz
-tdc fs mount-file-system \
+export TI_REGION_CODE=aws-us-east-1
+export TI_FS_TOKEN=drive9_abc123...xyz
+ti fs mount-file-system \
   --file-system-name my-workspace \
   --mount-path ~/my-workspace
 
 # Mount with mixed sources — pick what suits the environment
-tdc fs mount-file-system \
+ti fs mount-file-system \
   --file-system-name my-workspace \
   --mount-path ~/my-workspace \
-  --region-code aws-us-east-1
+  --region aws-us-east-1
 ```
 
 ## Variable Precedence
 
 When multiple sources provide the same variable, the priority is \(highest wins\):
 
-1. CLI flag \(`--region-code`, `--fs-token`\)
+1. CLI flag \(`--region`, `--fs-token`\)
 
-2. Environment variable \(`TDC_REGION_CODE`, `TDC_FS_TOKEN`\)
+2. Environment variable \(`TI_REGION_CODE`, `TI_FS_TOKEN`\)
 
-3. `~/.tdc/credentials` \(existing config, if any\)
+3. `~/.ti/credentials` \(existing config, if any\)
 
 This means existing configured setups continue to work unchanged — the new flags and env vars are purely additive\.
 
@@ -62,11 +62,11 @@ This means existing configured setups continue to work unchanged — the new fla
 
 4. Mount proceeds as normal — FUSE mount \(Linux/macOS\) or WebDAV \(fallback\)
 
-5. No `~/.tdc/credentials` file is **pre\-required** before this mount command
+5. No `~/.ti/credentials` file is **pre\-required** before this mount command
 
 ## Use Cases
 
-- **E2B sandboxes:** pass `TDC_FS_TOKEN` and `TDC_REGION_CODE` as sandbox environment variables — no config step needed
+- **E2B sandboxes:** pass `TI_FS_TOKEN` and `TI_REGION_CODE` as sandbox environment variables — no config step needed
 
 - **CI/CD pipelines:** inject token and region via CI secrets, mount in one command
 

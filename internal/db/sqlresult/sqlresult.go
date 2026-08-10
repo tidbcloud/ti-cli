@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tidbcloud/tdc/internal/db/sqlcred"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
 )
 
 type Field struct {

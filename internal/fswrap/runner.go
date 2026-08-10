@@ -12,16 +12,16 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 )
 
 const (
-	defaultCompanionName = "tdc-drive9"
-	envCompanionBin      = "TDC_DRIVE9_BIN"
-	envAllowDrive9       = "TDC_ALLOW_STANDALONE_DRIVE9"
+	defaultCompanionName = "ti-drive9"
+	envCompanionBin      = "TI_DRIVE9_BIN"
+	envAllowDrive9       = "TI_ALLOW_STANDALONE_DRIVE9"
 )
 
 type Runner struct {
@@ -40,7 +40,7 @@ type RunOptions struct {
 	ResourceName    string
 	Args            []string
 	CaptureStdout   bool
-	IncludeTDCKeys  bool
+	IncludeTIKeys   bool
 	IncludeFSAPIKey bool
 	VaultToken      string
 }
@@ -91,7 +91,7 @@ func (r Runner) Run(ctx context.Context, opts RunOptions) (Result, error) {
 	}
 
 	if r.Debug && r.DebugWriter != nil {
-		_, _ = fmt.Fprintf(r.DebugWriter, "tdc [DEBUG]: running %s %s\n", path, strings.Join(redactArgs(opts.Args), " "))
+		_, _ = fmt.Fprintf(r.DebugWriter, "ti [DEBUG]: running %s %s\n", path, strings.Join(redactArgs(opts.Args), " "))
 	}
 	if err := cmd.Run(); err != nil {
 		exitCode := 1
@@ -101,7 +101,7 @@ func (r Runner) Run(ctx context.Context, opts RunOptions) (Result, error) {
 		}
 		message := strings.TrimSpace(stderr.String())
 		if message == "" {
-			message = fmt.Sprintf("tdc fs companion command failed: %s %s", path, strings.Join(redactArgs(opts.Args), " "))
+			message = fmt.Sprintf("ti fs companion command failed: %s %s", path, strings.Join(redactArgs(opts.Args), " "))
 		}
 		return Result{CompanionPath: path, Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, apperr.Wrap("fs.companion_failed", "runtime", exitCode, redactRunSecrets(message, opts), err)
 	}
@@ -137,7 +137,9 @@ func (r Runner) drive9Env(homeDir string, opts RunOptions) ([]string, error) {
 			continue
 		}
 		switch key {
-		case "HOME", "USERPROFILE", "TDC_PUBLIC_KEY", "TDC_PRIVATE_KEY", "TDC_FS_TOKEN", "TDC_VAULT_TOKEN":
+		case "HOME", "USERPROFILE",
+			"TIDB_CLOUD_PUBLIC_KEY", "TIDB_CLOUD_PRIVATE_KEY", "TI_FS_TOKEN", "TI_VAULT_TOKEN", "TI_FS_API_KEY",
+			"TDC_PUBLIC_KEY", "TDC_PRIVATE_KEY", "TDC_FS_TOKEN", "TDC_VAULT_TOKEN":
 			continue
 		}
 		env = append(env, entry)
@@ -149,26 +151,26 @@ func (r Runner) drive9Env(homeDir string, opts RunOptions) ([]string, error) {
 	if profile := opts.Profile; profile != nil {
 		provider, regionCode, placementCode := fsPlacement(profile)
 		if provider == "" || regionCode == "" || placementCode == "" {
-			return nil, apperr.New("fs.resource_credentials_incomplete", "config", 2, fmt.Sprintf("tdc fs resource placement is incomplete for profile %q", profile.Name))
+			return nil, apperr.New("fs.resource_credentials_incomplete", "config", 2, fmt.Sprintf("ti fs resource placement is incomplete for profile %q", profile.Name))
 		}
 		endpoint, err := r.resolver().ResolveFS(provider, regionCode)
 		if err != nil {
 			return nil, err
 		}
 		if endpoint.BaseURL == "" {
-			return nil, apperr.New("api.fs_endpoint_missing", "config", 2, fmt.Sprintf("tdc fs endpoint is unavailable for %s", placementCode))
+			return nil, apperr.New("api.fs_endpoint_missing", "config", 2, fmt.Sprintf("ti fs endpoint is unavailable for %s", placementCode))
 		}
 		env = append(env, "DRIVE9_SERVER="+endpoint.BaseURL)
 		env = append(env, "DRIVE9_REGION_CODE="+placementCode)
 		if opts.IncludeFSAPIKey && strings.TrimSpace(profile.FSAPIKey) != "" {
 			env = append(env, "DRIVE9_API_KEY="+strings.TrimSpace(profile.FSAPIKey))
 		}
-		if opts.IncludeTDCKeys {
-			if strings.TrimSpace(profile.TDCPublicKey) != "" {
-				env = append(env, "DRIVE9_PUBLIC_KEY="+strings.TrimSpace(profile.TDCPublicKey))
+		if opts.IncludeTIKeys {
+			if strings.TrimSpace(profile.TiDBCloudPublicKey) != "" {
+				env = append(env, "DRIVE9_PUBLIC_KEY="+strings.TrimSpace(profile.TiDBCloudPublicKey))
 			}
-			if strings.TrimSpace(profile.TDCPrivateKey) != "" {
-				env = append(env, "DRIVE9_PRIVATE_KEY="+strings.TrimSpace(profile.TDCPrivateKey))
+			if strings.TrimSpace(profile.TiDBCloudPrivateKey) != "" {
+				env = append(env, "DRIVE9_PRIVATE_KEY="+strings.TrimSpace(profile.TiDBCloudPrivateKey))
 			}
 		}
 	}
@@ -205,7 +207,7 @@ func (r Runner) locateCompanion() (string, error) {
 			return resolved, nil
 		}
 	}
-	return "", apperr.New("fs.companion_missing", "runtime", 1, "tdc fs requires the Drive9 companion binary; reinstall tdc or set TDC_DRIVE9_BIN to a compatible drive9 binary")
+	return "", apperr.New("fs.companion_missing", "runtime", 1, "ti fs requires the Drive9 companion binary; reinstall ti or set TI_DRIVE9_BIN to a compatible drive9 binary")
 }
 
 func (r Runner) homeDir(opts RunOptions) (string, error) {
@@ -237,7 +239,7 @@ func (r Runner) resolver() endpoints.Resolver {
 
 func prepareHome(homeDir string) error {
 	if err := os.MkdirAll(filepath.Join(homeDir, ".drive9"), 0o700); err != nil {
-		return apperr.Wrap("fs.companion_home", "runtime", 1, "prepare tdc fs companion home", err)
+		return apperr.Wrap("fs.companion_home", "runtime", 1, "prepare ti fs companion home", err)
 	}
 	return nil
 }
@@ -297,8 +299,8 @@ func redactRunSecrets(message string, opts RunOptions) string {
 	if opts.Profile != nil {
 		for _, value := range []string{
 			opts.Profile.FSAPIKey,
-			opts.Profile.TDCPublicKey,
-			opts.Profile.TDCPrivateKey,
+			opts.Profile.TiDBCloudPublicKey,
+			opts.Profile.TiDBCloudPrivateKey,
 		} {
 			if strings.TrimSpace(value) == "" {
 				continue

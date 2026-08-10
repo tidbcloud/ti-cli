@@ -14,11 +14,24 @@ func TestDecodeAndValidateBatchAcceptsAllowlistedEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decodeAndValidateBatch returned error: %v", err)
 	}
-	if len(events) != 1 || events[0].EventName != "tdc.command.finished" {
+	if len(events) != 1 || events[0].EventName != "ti.command.finished" {
 		t.Fatalf("events = %#v", events)
 	}
 	if !events[0].ReceivedAt.Equal(receivedAt.UTC()) {
 		t.Fatalf("ReceivedAt = %v, want %v", events[0].ReceivedAt, receivedAt.UTC())
+	}
+}
+
+func TestDecodeAndValidateBatchAcceptsLegacyTDCEvent(t *testing.T) {
+	body := bytes.ReplaceAll(validRequestBody(), []byte("ti.command.finished"), []byte("tdc.command.finished"))
+	body = bytes.ReplaceAll(body, []byte("ti_01j0a0n8m9f4q2x6cn0b9q3k3z"), []byte("tdc_01j0a0n8m9f4q2x6cn0b9q3k3z"))
+	body = bytes.ReplaceAll(body, []byte("ti db"), []byte("tdc db"))
+	events, err := decodeAndValidateBatch(body, 20, time.Now())
+	if err != nil {
+		t.Fatalf("legacy event should remain accepted during v0.2.x: %v", err)
+	}
+	if len(events) != 1 || events[0].EventName != "tdc.command.finished" {
+		t.Fatalf("unexpected legacy event: %#v", events)
 	}
 }
 
@@ -166,7 +179,7 @@ func TestDecodeAndValidateBatchRejectsInvalidEnumsAndLimits(t *testing.T) {
 	}{
 		{"event_name", "custom.event"},
 		{"command_path", "rm -rf"},
-		{"command_path", "tdc db list-db-clusters select secret"},
+		{"command_path", "ti db list-db-clusters select secret"},
 		{"cloud_provider", "gcp"},
 		{"region_code", "us-east-1"},
 		{"install_source", "curl"},

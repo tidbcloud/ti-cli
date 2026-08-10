@@ -9,12 +9,12 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	"github.com/tidbcloud/tdc/internal/fs/fscred"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 )
 
 type CreateLayerOptions struct {
@@ -164,7 +164,7 @@ func (s Service) DiffLayer(ctx context.Context, opts LayerEntriesOptions) (Layer
 }
 
 func (s Service) ReplayLayer(ctx context.Context, opts LayerEntriesOptions) (LayerEntriesResult, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "replay tdc fs layer")
+	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "replay ti fs layer")
 	if err != nil {
 		return LayerEntriesResult{}, err
 	}
@@ -182,7 +182,7 @@ func (s Service) ReplayLayer(ctx context.Context, opts LayerEntriesOptions) (Lay
 }
 
 func (s Service) CreateLayerEntry(ctx context.Context, opts CreateLayerEntryOptions) (LayerEntryResult, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSFileWrite, "write tdc fs layer entry")
+	client, err := s.dataClient(opts.Profile, authz.FSFileWrite, "write ti fs layer entry")
 	if err != nil {
 		return LayerEntryResult{}, err
 	}
@@ -198,7 +198,7 @@ func (s Service) CreateLayerEntry(ctx context.Context, opts CreateLayerEntryOpti
 }
 
 func (s Service) UploadLayerFile(ctx context.Context, opts UploadLayerFileOptions) (LayerEntryResult, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSFileWrite, "upload tdc fs layer file")
+	client, err := s.dataClient(opts.Profile, authz.FSFileWrite, "upload ti fs layer file")
 	if err != nil {
 		return LayerEntryResult{}, err
 	}
@@ -210,7 +210,7 @@ func (s Service) UploadLayerFile(ctx context.Context, opts UploadLayerFileOption
 }
 
 func (s Service) ReadLayerFile(ctx context.Context, opts ReadLayerFileOptions) ([]byte, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "read tdc fs layer file")
+	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "read ti fs layer file")
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +226,7 @@ func (s Service) ReadLayerFile(ctx context.Context, opts ReadLayerFileOptions) (
 }
 
 func (s Service) DescribeLayerEntry(ctx context.Context, opts DescribeLayerEntryOptions) (LayerEntryResult, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "describe tdc fs layer entry")
+	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "describe ti fs layer entry")
 	if err != nil {
 		return LayerEntryResult{}, err
 	}
@@ -251,7 +251,7 @@ func (s Service) CreateLayerCheckpoint(ctx context.Context, opts CreateLayerChec
 }
 
 func (s Service) DescribeLayerCheckpoint(ctx context.Context, opts DescribeLayerCheckpointOptions) (LayerCheckpointResult, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "describe tdc fs layer checkpoint")
+	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "describe ti fs layer checkpoint")
 	if err != nil {
 		return LayerCheckpointResult{}, err
 	}
@@ -263,7 +263,7 @@ func (s Service) DescribeLayerCheckpoint(ctx context.Context, opts DescribeLayer
 }
 
 func (s Service) ListLayerEvents(ctx context.Context, opts ListLayerEventsOptions) (LayerEventsResult, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "list tdc fs layer events")
+	client, err := s.dataClient(opts.Profile, authz.FSFileRead, "list ti fs layer events")
 	if err != nil {
 		return LayerEventsResult{}, err
 	}
@@ -299,7 +299,7 @@ func (s Service) DryRunLayerMutation(ctx context.Context, commandPath, operation
 	if resource := fscred.FromProfile(profile); resource.HasAPIKey {
 		checks = append(checks, dryrun.Check{Name: "fs_resource_credentials", Status: "passed", Message: resource.Name})
 	} else {
-		return dryrun.Result{}, apperr.New("auth.missing_fs_api_key", "authentication", 3, fmt.Sprintf("authentication required: missing fs_api_key for profile %q. Create or configure a tdc fs resource first.", profileName(profile)))
+		return dryrun.Result{}, apperr.New("auth.missing_fs_api_key", "authentication", 3, fmt.Sprintf("authentication required: missing fs_api_key for profile %q. Create or configure a ti fs resource first.", profileName(profile)))
 	}
 	return dryrun.New(
 		commandPath,

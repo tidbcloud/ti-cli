@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
 type fsMetadataStore struct {
@@ -33,7 +33,7 @@ type fsMetadataEntry struct {
 
 func newFSMetadataStore(homeDir string, profile *config.Profile) (*fsMetadataStore, error) {
 	if strings.TrimSpace(homeDir) == "" {
-		return nil, apperr.New("fs.metadata_missing_home", "config", 1, "home directory is required for tdc fs metadata")
+		return nil, apperr.New("fs.metadata_missing_home", "config", 1, "home directory is required for ti fs metadata")
 	}
 	key := "profile=" + profileNameForMetadata(profile) +
 		"\x00tenant=" + strings.TrimSpace(profileValue(profile, func(p *config.Profile) string { return p.FSTenantID })) +
@@ -41,7 +41,7 @@ func newFSMetadataStore(homeDir string, profile *config.Profile) (*fsMetadataSto
 		"\x00cloud=" + strings.TrimSpace(profileValue(profile, func(p *config.Profile) string { return p.FSCloudProvider })) +
 		"\x00region=" + strings.TrimSpace(profileValue(profile, func(p *config.Profile) string { return p.FSRegionCode }))
 	sum := sha256.Sum256([]byte(key))
-	return &fsMetadataStore{path: filepath.Join(homeDir, ".tdc", "fs_metadata", hex.EncodeToString(sum[:8])+".json")}, nil
+	return &fsMetadataStore{path: filepath.Join(homeDir, ".ti", "fs_metadata", hex.EncodeToString(sum[:8])+".json")}, nil
 }
 
 func profileNameForMetadata(profile *config.Profile) string {
@@ -228,19 +228,19 @@ func (s *fsMetadataStore) update(remotePath string, fn func(fsMetadataEntry) (fs
 }
 
 func (s *fsMetadataStore) readLocked() (fsMetadataDoc, error) {
-	doc := fsMetadataDoc{Schema: "tdc.fs.metadata/v1", Entries: map[string]fsMetadataEntry{}}
+	doc := fsMetadataDoc{Schema: "ti.fs.metadata/v1", Entries: map[string]fsMetadataEntry{}}
 	data, err := os.ReadFile(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return doc, nil
 		}
-		return fsMetadataDoc{}, fmt.Errorf("read tdc fs metadata %q: %w", s.path, err)
+		return fsMetadataDoc{}, fmt.Errorf("read ti fs metadata %q: %w", s.path, err)
 	}
 	if len(strings.TrimSpace(string(data))) == 0 {
 		return doc, nil
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
-		return fsMetadataDoc{}, fmt.Errorf("parse tdc fs metadata %q: %w", s.path, err)
+		return fsMetadataDoc{}, fmt.Errorf("parse ti fs metadata %q: %w", s.path, err)
 	}
 	if doc.Entries == nil {
 		doc.Entries = map[string]fsMetadataEntry{}
@@ -250,25 +250,25 @@ func (s *fsMetadataStore) readLocked() (fsMetadataDoc, error) {
 
 func (s *fsMetadataStore) writeLocked(doc fsMetadataDoc) error {
 	if doc.Schema == "" {
-		doc.Schema = "tdc.fs.metadata/v1"
+		doc.Schema = "ti.fs.metadata/v1"
 	}
 	if doc.Entries == nil {
 		doc.Entries = map[string]fsMetadataEntry{}
 	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
-		return fmt.Errorf("create tdc fs metadata directory: %w", err)
+		return fmt.Errorf("create ti fs metadata directory: %w", err)
 	}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode tdc fs metadata: %w", err)
+		return fmt.Errorf("encode ti fs metadata: %w", err)
 	}
 	tmp := s.path + ".tmp"
 	if err := os.WriteFile(tmp, append(data, '\n'), 0o644); err != nil {
-		return fmt.Errorf("write tdc fs metadata temp file: %w", err)
+		return fmt.Errorf("write ti fs metadata temp file: %w", err)
 	}
 	if err := os.Rename(tmp, s.path); err != nil {
 		_ = os.Remove(tmp)
-		return fmt.Errorf("replace tdc fs metadata file: %w", err)
+		return fmt.Errorf("replace ti fs metadata file: %w", err)
 	}
 	return nil
 }

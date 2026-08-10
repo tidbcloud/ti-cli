@@ -47,7 +47,7 @@ func TestJournalClientMethods(t *testing.T) {
 			sawSearchMeta = append([]string(nil), r.URL.Query()["meta"]...)
 			sawSearchInclude = r.URL.Query().Get("include")
 			sawSearchSince = r.URL.Query().Get("since")
-			if r.URL.Query().Get("actor") != "agent:tdc" || r.URL.Query().Get("type") != "tool.call.completed" {
+			if r.URL.Query().Get("actor") != "agent:ti" || r.URL.Query().Get("type") != "tool.call.completed" {
 				t.Fatalf("unexpected search query: %q", r.URL.RawQuery)
 			}
 			w.Header().Set("Content-Type", "application/x-ndjson")
@@ -80,7 +80,7 @@ func TestJournalClientMethods(t *testing.T) {
 	matches, err := client.SearchJournal(ctx, JournalSearchRequest{
 		Type:      "tool.call.completed",
 		ActorType: "agent",
-		ActorID:   "tdc",
+		ActorID:   "ti",
 		Labels:    []JournalLabel{{Key: "env", Value: "prod"}, {Key: "env", Value: "us-east"}},
 		SinceRaw:  "1h",
 		Entries:   true,

@@ -8,11 +8,11 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/db/sqlcred"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
 )
 
 func TestExecuteOpensAndClosesOneConnection(t *testing.T) {
-	driverName := "tdc_sqlmysql_fake"
+	driverName := "ti_sqlmysql_fake"
 	fake := &fakeDriver{}
 	sql.Register(driverName, fake)
 

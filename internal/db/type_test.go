@@ -3,7 +3,7 @@ package db
 import (
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 func TestParseCLIClusterTypeRequiresExactStarter(t *testing.T) {

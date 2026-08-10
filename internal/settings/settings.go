@@ -10,7 +10,8 @@ import (
 	"strings"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/config/envcompat"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 const (
@@ -20,8 +21,8 @@ const (
 	DefaultMaxFiles                   = 5
 	settingsFileMode      os.FileMode = 0o600
 	profileConfigFileMode os.FileMode = 0o644
-	tdcDirMode            os.FileMode = 0o700
-	envLogging                        = "TDC_LOGGING"
+	tiDirMode             os.FileMode = 0o700
+	envLogging                        = "TI_LOGGING"
 )
 
 type Document struct {
@@ -47,7 +48,7 @@ type LoggingConfig struct {
 }
 
 func Path(homeDir string) string {
-	return filepath.Join(homeDir, store.TDCDirName, FileName)
+	return filepath.Join(homeDir, store.TIDirName, FileName)
 }
 
 func Load(homeDir string) (Document, bool, error) {
@@ -63,7 +64,12 @@ func Load(homeDir string) (Document, bool, error) {
 
 func ResolveLogging(homeDir string, env map[string]string) (LoggingConfig, error) {
 	cfg := defaultLoggingConfig()
-	if value, ok := envValue(env, envLogging); ok {
+	value, hasOverride, _, resolveErr := envcompat.ResolveNames(env, envLogging, "TDC_LOGGING")
+	if resolveErr != nil {
+		cfg.Enabled = false
+		return cfg, resolveErr
+	}
+	if hasOverride {
 		enabled, valid := parseBool(value)
 		if !valid {
 			cfg.Enabled = false
@@ -85,7 +91,7 @@ func ResolveLogging(homeDir string, env map[string]string) (LoggingConfig, error
 		return cfg, err
 	}
 
-	if _, ok := envValue(env, envLogging); ok {
+	if hasOverride {
 		cfg.Enabled = true
 		doc, exists, err := read(homeDir)
 		if err != nil {
@@ -265,8 +271,8 @@ func createSettings(homeDir string, doc Document) error {
 	if err != nil {
 		return fmt.Errorf("marshal settings: %w", err)
 	}
-	dir := filepath.Join(homeDir, store.TDCDirName)
-	if err := os.MkdirAll(dir, tdcDirMode); err != nil {
+	dir := filepath.Join(homeDir, store.TIDirName)
+	if err := os.MkdirAll(dir, tiDirMode); err != nil {
 		return fmt.Errorf("create settings directory: %w", err)
 	}
 	temp, err := os.CreateTemp(dir, ".preferences.tmp-*")
@@ -327,14 +333,6 @@ func writeTOMLAtomic(path string, value any, mode os.FileMode) error {
 		return err
 	}
 	return os.Chmod(path, mode)
-}
-
-func envValue(env map[string]string, key string) (string, bool) {
-	if env != nil {
-		value, ok := env[key]
-		return value, ok
-	}
-	return os.LookupEnv(key)
 }
 
 func parseBool(value string) (bool, bool) {

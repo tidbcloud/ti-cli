@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	apistarter "github.com/tidbcloud/tdc/internal/api/starter"
-	"github.com/tidbcloud/tdc/internal/apperr"
+	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 const starterPlan = "starter"
@@ -22,7 +22,7 @@ func ensureStarterCluster(cluster apistarter.Cluster) error {
 		"db.not_starter_cluster",
 		"usage",
 		2,
-		fmt.Sprintf("cluster %q uses service plan %q; tdc db only manages Starter clusters", cluster.ID, clusterPlanDisplay(cluster)),
+		fmt.Sprintf("cluster %q uses service plan %q; ti db only manages Starter clusters", cluster.ID, clusterPlanDisplay(cluster)),
 	)
 }
 
@@ -78,7 +78,7 @@ func createdClusterPlanError(cluster apistarter.Cluster, cause error) error {
 		apperr.CodeFor(cause),
 		apperr.CategoryFor(cause),
 		apperr.ExitCodeFor(cause),
-		fmt.Sprintf("DB cluster %q creation was accepted in state %q but tdc could not verify it as a Starter cluster; the cluster was retained; inspect it with `tdc db describe-db-cluster --db-cluster-id %s`", cluster.ID, clusterStateDisplay(cluster), cluster.ID),
+		fmt.Sprintf("DB cluster %q creation was accepted in state %q but ti could not verify it as a Starter cluster; the cluster was retained; inspect it with `ti db describe-db-cluster --db-cluster-id %s`", cluster.ID, clusterStateDisplay(cluster), cluster.ID),
 		cause,
 	)
 }
@@ -88,7 +88,7 @@ func updatedClusterPlanError(cluster apistarter.Cluster, cause error) error {
 		apperr.CodeFor(cause),
 		apperr.CategoryFor(cause),
 		apperr.ExitCodeFor(cause),
-		fmt.Sprintf("DB cluster %q update was accepted but tdc could not verify the response as Starter; the update may have been applied; inspect it with `tdc db describe-db-cluster --db-cluster-id %s`", cluster.ID, cluster.ID),
+		fmt.Sprintf("DB cluster %q update was accepted but ti could not verify the response as Starter; the update may have been applied; inspect it with `ti db describe-db-cluster --db-cluster-id %s`", cluster.ID, cluster.ID),
 		cause,
 	)
 }
@@ -98,7 +98,7 @@ func deletingClusterPlanError(cluster apistarter.Cluster, cause error) error {
 		apperr.CodeFor(cause),
 		apperr.CategoryFor(cause),
 		apperr.ExitCodeFor(cause),
-		fmt.Sprintf("DB cluster %q deletion was accepted but tdc could not verify a later response as Starter; deletion may still be in progress", cluster.ID),
+		fmt.Sprintf("DB cluster %q deletion was accepted but ti could not verify a later response as Starter; deletion may still be in progress", cluster.ID),
 		cause,
 	)
 }

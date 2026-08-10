@@ -34,11 +34,11 @@ func testConfig() Config {
 func testEvent() Event {
 	return Event{
 		EventID:                 "018f7e67-8fe4-7cc2-9ca5-2d3536c7fb44",
-		EventName:               "tdc.command.finished",
+		EventName:               "ti.command.finished",
 		OccurredAt:              time.Date(2026, 7, 24, 12, 0, 0, 0, time.UTC),
 		ReceivedAt:              time.Date(2026, 7, 24, 12, 0, 1, 0, time.UTC),
-		AnonymousInstallationID: "tdc_01j0a0n8m9f4q2x6cn0b9q3k3z",
-		CommandPath:             "tdc fs create-file-system",
+		AnonymousInstallationID: "ti_01j0a0n8m9f4q2x6cn0b9q3k3z",
+		CommandPath:             "ti fs create-file-system",
 		FlagNames:               []string{"file-system-name", "output"},
 		ExitCode:                0,
 		ErrorCode:               "",
@@ -62,10 +62,10 @@ func validRequestBody() []byte {
 		SentAt:        "2026-07-24T12:00:00Z",
 		Events: []wireEvent{{
 			EventID:                 "018f7e67-8fe4-7cc2-9ca5-2d3536c7fb44",
-			EventName:               "tdc.command.finished",
+			EventName:               "ti.command.finished",
 			OccurredAt:              "2026-07-24T12:00:00Z",
-			AnonymousInstallationID: "tdc_01j0a0n8m9f4q2x6cn0b9q3k3z",
-			CommandPath:             "tdc fs create-file-system",
+			AnonymousInstallationID: "ti_01j0a0n8m9f4q2x6cn0b9q3k3z",
+			CommandPath:             "ti fs create-file-system",
 			FlagNames:               []string{"file-system-name", "output"},
 			ExitCode:                &exitCode,
 			DurationMS:              &duration,

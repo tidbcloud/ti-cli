@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 type VaultSecret struct {
@@ -54,7 +54,7 @@ func (c *Client) CreateVaultSecret(ctx context.Context, name string, fields map[
 	body := map[string]any{
 		"name":       name,
 		"fields":     fields,
-		"created_by": "tdc",
+		"created_by": "ti",
 	}
 	var response VaultSecret
 	if err := c.doVaultJSON(ctx, http.MethodPost, "/v1/vault/secrets", body, &response); err != nil {
@@ -66,7 +66,7 @@ func (c *Client) CreateVaultSecret(ctx context.Context, name string, fields map[
 func (c *Client) UpdateVaultSecret(ctx context.Context, name string, fields map[string]string) (VaultSecret, error) {
 	body := map[string]any{
 		"fields":     fields,
-		"updated_by": "tdc",
+		"updated_by": "ti",
 	}
 	var response VaultSecret
 	if err := c.doVaultJSON(ctx, http.MethodPut, "/v1/vault/secrets/"+url.PathEscape(name), body, &response); err != nil {

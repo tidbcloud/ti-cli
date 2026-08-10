@@ -1,6 +1,6 @@
 /bin/
 /dist/
-/tdc
+/ti
 .env
 .env.local
 .env.telemetry

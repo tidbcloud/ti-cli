@@ -39,9 +39,9 @@ func TestSafeClusterIDRejectsUnsafePathSegments(t *testing.T) {
 func TestReadWriteCredentials(t *testing.T) {
 	home := t.TempDir()
 	doc := Document{
-		ReadOnly:  Credential{Username: "prefix.tdc_ro", Password: "ro-pass"},
-		ReadWrite: Credential{Username: "prefix.tdc_rw", Password: "rw-pass"},
-		Admin:     Credential{Username: "prefix.tdc_admin", Password: "admin-pass"},
+		ReadOnly:  Credential{Username: "prefix.ti_ro", Password: "ro-pass"},
+		ReadWrite: Credential{Username: "prefix.ti_rw", Password: "rw-pass"},
+		Admin:     Credential{Username: "prefix.ti_admin", Password: "admin-pass"},
 	}
 	if err := Write(home, "cluster-1", doc); err != nil {
 		t.Fatalf("Write failed: %v", err)
@@ -50,14 +50,14 @@ func TestReadWriteCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CredentialsPath failed: %v", err)
 	}
-	if !strings.HasSuffix(path, filepath.Join(".tdc", "db_users", "cluster-1", "credentials")) {
+	if !strings.HasSuffix(path, filepath.Join(".ti", "db_users", "cluster-1", "credentials")) {
 		t.Fatalf("unexpected path %s", path)
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read credentials: %v", err)
 	}
-	if !strings.Contains(string(data), "[read_only]") || !strings.Contains(string(data), "prefix.tdc_admin") {
+	if !strings.Contains(string(data), "[read_only]") || !strings.Contains(string(data), "prefix.ti_admin") {
 		t.Fatalf("unexpected credentials file:\n%s", string(data))
 	}
 	if runtime.GOOS != "windows" {
@@ -77,7 +77,7 @@ func TestReadWriteCredentials(t *testing.T) {
 	if read.ReadWrite.Password != "rw-pass" {
 		t.Fatalf("unexpected read document: %#v", read)
 	}
-	if credential, ok := read.Credential(ReadOnly); !ok || credential.Username != "prefix.tdc_ro" {
+	if credential, ok := read.Credential(ReadOnly); !ok || credential.Username != "prefix.ti_ro" {
 		t.Fatalf("unexpected read_only credential: %#v ok=%t", credential, ok)
 	}
 }

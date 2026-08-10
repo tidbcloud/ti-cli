@@ -12,22 +12,24 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/auth"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/region"
-	"github.com/tidbcloud/tdc/internal/config/store"
-	"github.com/tidbcloud/tdc/internal/db"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	"github.com/tidbcloud/tdc/internal/oplog"
-	"github.com/tidbcloud/tdc/internal/output"
-	"github.com/tidbcloud/tdc/internal/settings"
-	"github.com/tidbcloud/tdc/internal/telemetry"
-	"github.com/tidbcloud/tdc/internal/version"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/auth"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/config/envcompat"
+	"github.com/tidbcloud/ti-cli/internal/config/homemigration"
+	"github.com/tidbcloud/ti-cli/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/db"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/oplog"
+	"github.com/tidbcloud/ti-cli/internal/output"
+	"github.com/tidbcloud/ti-cli/internal/settings"
+	"github.com/tidbcloud/ti-cli/internal/telemetry"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
-const usageRequiredFlagAnnotation = "tdc_usage_required"
+const usageRequiredFlagAnnotation = "ti_usage_required"
 
 func init() {
 	cobra.AddTemplateFunc("usageSynopsis", usageSynopsis)
@@ -42,11 +44,23 @@ type Options struct {
 	Query   string
 }
 
+type ExecuteOption func(*executeOptions)
+
+type executeOptions struct {
+	migrateHome bool
+}
+
+func WithHomeMigration() ExecuteOption {
+	return func(opts *executeOptions) {
+		opts.migrateHome = true
+	}
+}
+
 func NewRootCommand(info version.Info) *cobra.Command {
 	opts := &Options{}
 
 	root := newCommand(commandSpec{
-		Use:   "tdc",
+		Use:   "ti",
 		Short: "CLI for TiDB Cloud Filesystem and TiDB Cloud Starter.",
 		Long:  "The TiDB Cloud Command Line Interface is a unified tool to manage your TiDB Cloud Filesystem and Starter services.",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -57,8 +71,8 @@ func NewRootCommand(info version.Info) *cobra.Command {
 	root.SilenceErrors = true
 	root.SilenceUsage = true
 	root.Annotations = map[string]string{
-		"tdc.version": info.Version,
-		"tdc.commit":  info.Commit,
+		"ti.version": info.Version,
+		"ti.commit":  info.Commit,
 	}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.SetFlagErrorFunc(flagErrorFunc)
@@ -66,7 +80,7 @@ func NewRootCommand(info version.Info) *cobra.Command {
 	root.SetUsageTemplate(usageTemplate)
 
 	flags := root.PersistentFlags()
-	flags.StringVar(&opts.Profile, "profile", "default", "The profile name for tdc CLI.")
+	flags.StringVar(&opts.Profile, "profile", "default", "The profile name for ti CLI.")
 	flags.StringVar(&opts.Region, "region", "", "Override region code in the profile, for example aws-us-east-1.")
 	flags.BoolVar(&opts.Debug, "debug", false, "Enable debug output.")
 	flags.StringVar(&opts.Output, "output", "json", "Output format: json or text.")
@@ -96,16 +110,36 @@ func rootCommandRequiredError(cmd *cobra.Command) error {
 
 %s
 
-usage: tdc <command> [<subcommand>] [parameters]
+usage: ti <command> [<subcommand>] [parameters]
 To see help information, you can run:
 
-  tdc help
-  tdc <command> help
-  tdc <command> <subcommand> help`, cmd.Long),
+  ti help
+  ti <command> help
+  ti <command> <subcommand> help`, cmd.Long),
 	)
 }
 
-func Execute(ctx context.Context, root *cobra.Command, info version.Info, args []string, stdout, stderr io.Writer) error {
+func Execute(ctx context.Context, root *cobra.Command, info version.Info, args []string, stdout, stderr io.Writer, options ...ExecuteOption) error {
+	executeOpts := executeOptions{}
+	for _, option := range options {
+		if option != nil {
+			option(&executeOpts)
+		}
+	}
+	if !isUpdateInvocation(args) {
+		if err := envcompat.Validate(nil); err != nil {
+			return err
+		}
+		if executeOpts.migrateHome {
+			home, err := os.UserHomeDir()
+			if err != nil {
+				return apperr.Wrap("config.home_migration_failed", "config", 1, "cannot determine home directory for state migration", err)
+			}
+			if _, err := homemigration.Ensure(home); err != nil {
+				return err
+			}
+		}
+	}
 	recorder, recordCommand := commandRecorder(args, stderr)
 	ctx = oplog.WithRecorder(ctx, recorder)
 	operationStart := time.Now()
@@ -187,8 +221,8 @@ func effectiveTelemetryEndpoint(info version.Info) string {
 	if endpoint := strings.TrimSpace(info.TelemetryEndpoint); endpoint != "" {
 		return endpoint
 	}
-	if info.InstallSource == "local" && os.Getenv("TDC_ALLOW_TEST_ENDPOINTS") == "1" {
-		return strings.TrimSpace(os.Getenv("TDC_TEST_TELEMETRY_ENDPOINT"))
+	if info.InstallSource == "local" && os.Getenv("TI_ALLOW_TEST_ENDPOINTS") == "1" {
+		return strings.TrimSpace(os.Getenv("TI_TEST_TELEMETRY_ENDPOINT"))
 	}
 	return ""
 }
@@ -232,7 +266,7 @@ func telemetryProfileSource(cmd *cobra.Command) string {
 	if flag := cmd.Flag("profile"); flag != nil && flag.Changed {
 		return "explicit"
 	}
-	if value := strings.TrimSpace(os.Getenv("TDC_PROFILE")); value != "" {
+	if value := strings.TrimSpace(compatibleEnvironmentValue("TI_PROFILE")); value != "" {
 		return "env"
 	}
 	return "default"
@@ -252,7 +286,7 @@ func commandRecorder(args []string, stderr io.Writer) (oplog.Recorder, bool) {
 	logging, err := settings.ResolveLogging(home, nil)
 	if err != nil {
 		if debugRequested(args) && stderr != nil {
-			_, _ = fmt.Fprintln(stderr, "tdc [DEBUG]: operation logging disabled because global settings could not be loaded")
+			_, _ = fmt.Fprintln(stderr, "ti [DEBUG]: operation logging disabled because global settings could not be loaded")
 		}
 		return disabled()
 	}
@@ -316,17 +350,18 @@ func commandEvent(root, cmd *cobra.Command, err error, duration time.Duration) o
 	}
 	profileName, regionCode := commandProfileSummary(cmd)
 	return oplog.Event{
-		Type:          "command",
-		Version:       rootAnnotation(root, "tdc.version"),
-		Commit:        rootAnnotation(root, "tdc.commit"),
-		Profile:       profileName,
-		RegionCode:    regionCode,
-		Command:       cmd.CommandPath(),
-		FlagNames:     changedFlagNames(cmd),
-		DurationMS:    duration.Milliseconds(),
-		ExitCode:      apperr.ExitCodeFor(err),
-		ErrorCode:     apperr.CodeFor(err),
-		ErrorCategory: apperr.CategoryFor(err),
+		Type:                           "command",
+		Version:                        rootAnnotation(root, "ti.version"),
+		Commit:                         rootAnnotation(root, "ti.commit"),
+		Profile:                        profileName,
+		RegionCode:                     regionCode,
+		Command:                        cmd.CommandPath(),
+		FlagNames:                      changedFlagNames(cmd),
+		DurationMS:                     duration.Milliseconds(),
+		ExitCode:                       apperr.ExitCodeFor(err),
+		ErrorCode:                      apperr.CodeFor(err),
+		ErrorCategory:                  apperr.CategoryFor(err),
+		DeprecatedEnvironmentVariables: envcompat.LegacyNames(nil),
 	}
 }
 
@@ -367,14 +402,14 @@ func commandProfileSummary(cmd *cobra.Command) (string, string) {
 		profileExplicit = flag.Changed
 	}
 	if !profileExplicit {
-		if envProfile := strings.TrimSpace(os.Getenv("TDC_PROFILE")); envProfile != "" {
+		if envProfile := strings.TrimSpace(compatibleEnvironmentValue("TI_PROFILE")); envProfile != "" {
 			profileName = envProfile
 		}
 	}
 	if regionOverride != "" {
 		return profileName, regionOverride
 	}
-	if envRegion := strings.TrimSpace(os.Getenv("TDC_REGION_CODE")); envRegion != "" {
+	if envRegion := strings.TrimSpace(compatibleEnvironmentValue("TI_REGION_CODE")); envRegion != "" {
 		return profileName, envRegion
 	}
 	home, err := os.UserHomeDir()
@@ -632,10 +667,10 @@ func defaultControlPlaneDryRun(spec controlPlaneCommandSpec) func(commandContext
 }
 
 func isFSCommandPath(path string) bool {
-	return strings.HasPrefix(path, "tdc fs ") ||
-		strings.HasPrefix(path, "tdc fs-git ") ||
-		strings.HasPrefix(path, "tdc fs-journal ") ||
-		strings.HasPrefix(path, "tdc fs-vault ")
+	return strings.HasPrefix(path, "ti fs ") ||
+		strings.HasPrefix(path, "ti fs-git ") ||
+		strings.HasPrefix(path, "ti fs-journal ") ||
+		strings.HasPrefix(path, "ti fs-vault ")
 }
 
 func renderStructured(cmd *cobra.Command, result any) error {
@@ -696,7 +731,7 @@ func loadOptionsForCommand(cmd *cobra.Command) (config.LoadOptions, error) {
 		if strings.TrimSpace(profileName) == "" {
 			return config.LoadOptions{}, apperr.New("config.empty_profile", "usage", 2, "--profile cannot be empty")
 		}
-	} else if envProfile := strings.TrimSpace(os.Getenv("TDC_PROFILE")); envProfile != "" {
+	} else if envProfile := strings.TrimSpace(compatibleEnvironmentValue("TI_PROFILE")); envProfile != "" {
 		profileName = envProfile
 		profileExplicit = true
 	}
@@ -708,6 +743,11 @@ func loadOptionsForCommand(cmd *cobra.Command) (config.LoadOptions, error) {
 		ProfileExplicit: profileExplicit,
 		RegionOverride:  regionOverride,
 	}, nil
+}
+
+func compatibleEnvironmentValue(canonical string) string {
+	value, _, _, _ := envcompat.ResolveNames(nil, canonical, envcompat.LegacyNameFor(canonical))
+	return value
 }
 
 func applyCommandDefaults(cmd *cobra.Command, info version.Info) {

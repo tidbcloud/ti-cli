@@ -20,10 +20,10 @@ import (
 
 	gofs "github.com/hanwen/go-fuse/v2/fs"
 	gofuse "github.com/hanwen/go-fuse/v2/fuse"
-	"github.com/tidbcloud/tdc/internal/api"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/fs/mountstate"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 )
 
 var errFuseWriteConflict = errors.New("remote file changed since it was opened")
@@ -57,8 +57,8 @@ func (s Service) mountFUSEForeground(ctx context.Context, inputs mountInputs, re
 		UID:             uint32(os.Getuid()),
 		GID:             uint32(os.Getgid()),
 		MountOptions: gofuse.MountOptions{
-			FsName: "tdc-fs:" + inputs.fileSystemName,
-			Name:   "tdcfs",
+			FsName: "ti-fs:" + inputs.fileSystemName,
+			Name:   "tifs",
 		},
 	}
 	if inputs.readOnly {
@@ -66,12 +66,12 @@ func (s Service) mountFUSEForeground(ctx context.Context, inputs mountInputs, re
 	}
 	server, err := gofs.Mount(inputs.mountPath, root, options)
 	if err != nil {
-		return MountResult{}, apperr.Wrap("fs.mount_fuse", "runtime", 1, fmt.Sprintf("mount tdc fs with FUSE at %q", inputs.mountPath), err)
+		return MountResult{}, apperr.Wrap("fs.mount_fuse", "runtime", 1, fmt.Sprintf("mount ti fs with FUSE at %q", inputs.mountPath), err)
 	}
 	controlServer, err := startMountControlServer(inputs.mountPath, runtime)
 	if err != nil {
 		_ = server.Unmount()
-		return MountResult{}, apperr.Wrap("fs.mount_control", "runtime", 1, fmt.Sprintf("start tdc fs mount control socket for %q", inputs.mountPath), err)
+		return MountResult{}, apperr.Wrap("fs.mount_control", "runtime", 1, fmt.Sprintf("start ti fs mount control socket for %q", inputs.mountPath), err)
 	}
 	defer controlServer.Close()
 
@@ -332,7 +332,7 @@ func (r *remoteFuseRuntime) writeFileWithDirty(ctx context.Context, remotePath s
 
 func (r *remoteFuseRuntime) upload(ctx context.Context, remotePath string, data []byte, baseVersion fuseObjectVersion, baseSize int64, dirtyRanges []fuseDirtyRange) (fuseObjectVersion, error) {
 	if r == nil || r.client == nil {
-		return fuseObjectVersion{}, errors.New("tdc fs FUSE runtime has no data-plane client")
+		return fuseObjectVersion{}, errors.New("ti fs FUSE runtime has no data-plane client")
 	}
 	if err := r.checkWriteBase(ctx, remotePath, baseVersion); err != nil {
 		return fuseObjectVersion{}, err

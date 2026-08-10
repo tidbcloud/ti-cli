@@ -17,18 +17,18 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/version"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
 func TestCheckReportsAvailableRelease(t *testing.T) {
 	server := fakeReleaseServer(t, releaseFixture{
 		tag: "v0.2.0",
 		assets: map[string][]byte{
-			"tdc_darwin_arm64.tar.gz": []byte("not downloaded by check"),
+			"ti_darwin_arm64.tar.gz": []byte("not downloaded by check"),
 		},
 	})
-	t.Setenv("TDC_RELEASE_API_BASE_URL", server.URL)
+	t.Setenv("TI_RELEASE_API_BASE_URL", server.URL)
 
 	result, err := Check(context.Background(), version.Info{
 		Version:       "0.1.0",
@@ -42,7 +42,7 @@ func TestCheckReportsAvailableRelease(t *testing.T) {
 	if !result.UpdateAvailable || result.LatestVersion != "0.2.0" {
 		t.Fatalf("unexpected result: %+v", result)
 	}
-	if result.ArtifactName != "tdc_darwin_arm64.tar.gz" {
+	if result.ArtifactName != "ti_darwin_arm64.tar.gz" {
 		t.Fatalf("unexpected artifact name %q", result.ArtifactName)
 	}
 }
@@ -51,10 +51,10 @@ func TestApplyDryRunPlansOwnedInstall(t *testing.T) {
 	server := fakeReleaseServer(t, releaseFixture{
 		tag: "v0.2.0",
 		assets: map[string][]byte{
-			"tdc_linux_amd64.tar.gz": []byte("not downloaded by dry-run"),
+			"ti_linux_amd64.tar.gz": []byte("not downloaded by dry-run"),
 		},
 	})
-	current := filepath.Join(t.TempDir(), "tdc")
+	current := filepath.Join(t.TempDir(), "ti")
 	if err := os.WriteFile(current, []byte("current"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestApplyDryRunPlansOwnedInstall(t *testing.T) {
 }
 
 func TestApplyRefusesUnknownInstall(t *testing.T) {
-	current := filepath.Join(t.TempDir(), "tdc")
+	current := filepath.Join(t.TempDir(), "ti")
 	if err := os.WriteFile(current, []byte("current"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -102,8 +102,34 @@ func TestApplyRefusesUnknownInstall(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected unknown install to fail")
 	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "not owned by tdc") {
+	if got := apperr.MessageFor(err); !strings.Contains(got, "not owned by ti") {
 		t.Fatalf("unexpected error %q", got)
+	}
+}
+
+func TestPackageManagerNamingUsesTiCLI(t *testing.T) {
+	tests := []struct {
+		name        string
+		source      string
+		path        string
+		wantManager string
+		wantCommand string
+	}{
+		{name: "homebrew metadata", source: "homebrew", path: "/opt/homebrew/bin/ti", wantManager: "homebrew", wantCommand: "brew upgrade tidbcloud/tap/ti-cli"},
+		{name: "homebrew path", source: "archive", path: "/opt/homebrew/Cellar/ti-cli/0.2.0/bin/ti", wantManager: "homebrew", wantCommand: "brew upgrade tidbcloud/tap/ti-cli"},
+		{name: "scoop path", source: "archive", path: `C:\Users\test\scoop\apps\ti-cli\current\ti.exe`, wantManager: "scoop", wantCommand: "scoop update ti-cli"},
+		{name: "winget metadata", source: "winget", path: `C:\Program Files\ti\ti.exe`, wantManager: "winget", wantCommand: "winget upgrade TiDBCloud.TiCLI"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := detectInstallSource(tt.source, tt.path)
+			if got.Name != tt.wantManager || !got.Managed || got.Owned {
+				t.Fatalf("detectInstallSource() = %#v", got)
+			}
+			if message := apperr.MessageFor(managedInstallError(got.Name)); !strings.Contains(message, tt.wantCommand) {
+				t.Fatalf("managed install message %q does not contain %q", message, tt.wantCommand)
+			}
+		})
 	}
 }
 
@@ -112,7 +138,7 @@ func TestApplyReplacesOwnedUnixBinary(t *testing.T) {
 		t.Skip("running Windows executables cannot be replaced in-process")
 	}
 
-	archiveBytes := tarGzBinary(t, "tdc", "#!/bin/sh\necho 'tdc 0.2.0 (test, now, linux/amd64)'\n")
+	archiveBytes := tarGzBinary(t, "ti", "#!/bin/sh\necho 'ti 0.2.0 (test, now, linux/amd64)'\n")
 	companionArtifact, err := drive9ArtifactName(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +150,7 @@ func TestApplyReplacesOwnedUnixBinary(t *testing.T) {
 			companionArtifact:     []byte("#!/bin/sh\necho companion\n"),
 		},
 	})
-	current := filepath.Join(t.TempDir(), "tdc")
+	current := filepath.Join(t.TempDir(), "ti")
 	if err := os.WriteFile(current, []byte("#!/bin/sh\necho current\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +192,7 @@ func TestApplyRefusesProtectedTargetWithoutChangingFiles(t *testing.T) {
 		t.Skip("Windows self-update is unsupported")
 	}
 
-	archiveBytes := tarGzBinary(t, "tdc", "#!/bin/sh\necho 'tdc 0.2.0 (test, now, linux/amd64)'\n")
+	archiveBytes := tarGzBinary(t, "ti", "#!/bin/sh\necho 'ti 0.2.0 (test, now, linux/amd64)'\n")
 	companionArtifact, err := drive9ArtifactName(runtime.GOOS, runtime.GOARCH)
 	if err != nil {
 		t.Fatal(err)
@@ -178,7 +204,7 @@ func TestApplyRefusesProtectedTargetWithoutChangingFiles(t *testing.T) {
 			companionArtifact:     []byte("#!/bin/sh\necho companion-protected\n"),
 		},
 	})
-	current := filepath.Join(t.TempDir(), "tdc")
+	current := filepath.Join(t.TempDir(), "ti")
 	if err := os.WriteFile(current, []byte("#!/bin/sh\necho current\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +232,7 @@ func TestApplyRefusesProtectedTargetWithoutChangingFiles(t *testing.T) {
 	if got := apperr.CodeFor(err); got != "update.permission_denied" {
 		t.Fatalf("unexpected error code %q", got)
 	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "migrate to ~/.tdc/bin") {
+	if got := apperr.MessageFor(err); !strings.Contains(got, "migrate to ~/.ti/bin") {
 		t.Fatalf("unexpected error message %q", got)
 	}
 	currentBytes, err := os.ReadFile(current)
@@ -218,12 +244,12 @@ func TestApplyRefusesProtectedTargetWithoutChangingFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(currentBytes) != "#!/bin/sh\necho current\n" || string(companionBytes) != "old companion" {
-		t.Fatalf("targets changed after protected update refusal: tdc=%q companion=%q", currentBytes, companionBytes)
+		t.Fatalf("targets changed after protected update refusal: ti=%q companion=%q", currentBytes, companionBytes)
 	}
 }
 
 func TestChecksumForGoReleaserLine(t *testing.T) {
-	got, err := checksumFor([]byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  tdc_linux_amd64.tar.gz\n"), "tdc_linux_amd64.tar.gz")
+	got, err := checksumFor([]byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  ti_linux_amd64.tar.gz\n"), "ti_linux_amd64.tar.gz")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +274,7 @@ func fakeReleaseServer(t *testing.T, fixture releaseFixture) *httptest.Server {
 	mux.HandleFunc("/releases/tags/"+fixture.tag, func(w http.ResponseWriter, r *http.Request) {
 		writeReleaseJSON(t, w, server.URL, fixture, checksums)
 	})
-	mux.HandleFunc("/assets/tdc_checksums.txt", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/assets/ti_checksums.txt", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(checksums))
 	})
 	mux.HandleFunc("/assets/"+drive9ChecksumAssetName, func(w http.ResponseWriter, r *http.Request) {

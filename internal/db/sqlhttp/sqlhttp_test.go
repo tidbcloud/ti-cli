@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/db/sqlcred"
-	"github.com/tidbcloud/tdc/internal/oplog"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
+	"github.com/tidbcloud/ti-cli/internal/oplog"
 )
 
 func TestExecuteHTTP(t *testing.T) {

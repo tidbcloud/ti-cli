@@ -86,7 +86,7 @@ func TestServerRejectsInvalidRequestsWithGenericErrors(t *testing.T) {
 			server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, discardLogger(), nil)
 			request := httptest.NewRequest(test.method, "/v1/telemetry/batch", bytes.NewReader(test.body))
 			request.Header.Set("Content-Type", "application/json")
-			request.Header.Set("User-Agent", "tdc/0.2.0")
+			request.Header.Set("User-Agent", "ti/0.2.0")
 			if test.header != nil {
 				test.header(request)
 			}
@@ -119,7 +119,7 @@ func TestServerDoesNotLogRequestBodiesOrInstallationIDs(t *testing.T) {
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d", response.Code)
 	}
-	for _, prohibited := range []string{"highly-sensitive", "tdc_01j0a0n8m9f4q2x6cn0b9q3k3z"} {
+	for _, prohibited := range []string{"highly-sensitive", "ti_01j0a0n8m9f4q2x6cn0b9q3k3z"} {
 		if strings.Contains(logs.String(), prohibited) {
 			t.Fatalf("logs contain prohibited value %q: %s", prohibited, logs.String())
 		}
@@ -216,7 +216,7 @@ func TestServerExportsAggregateMetricsWithoutEventValues(t *testing.T) {
 		!strings.Contains(response.Body.String(), "telemetry_buffer_events 1") {
 		t.Fatalf("metrics body = %s", response.Body.String())
 	}
-	if strings.Contains(response.Body.String(), "tdc_01j0a0n8m9f4q2x6cn0b9q3k3z") {
+	if strings.Contains(response.Body.String(), "ti_01j0a0n8m9f4q2x6cn0b9q3k3z") {
 		t.Fatalf("metrics exposed installation ID: %s", response.Body.String())
 	}
 }
@@ -254,7 +254,7 @@ func performBatchRequest(handler http.Handler, body []byte) *httptest.ResponseRe
 func newBatchRequest(body []byte) *http.Request {
 	request := httptest.NewRequest(http.MethodPost, "/v1/telemetry/batch", bytes.NewReader(body))
 	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("User-Agent", "tdc/0.2.0")
+	request.Header.Set("User-Agent", "ti/0.2.0")
 	return request
 }
 

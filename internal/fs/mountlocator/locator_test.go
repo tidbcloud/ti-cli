@@ -60,7 +60,7 @@ func TestReadRejectsIncompleteLocator(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(`{"schema":"tdc.fs.mount-locator/v1"}`), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(`{"schema":"ti.fs.mount-locator/v1"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := Read(home, "./workspace"); err == nil {

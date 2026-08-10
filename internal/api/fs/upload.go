@@ -20,8 +20,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	tdcapi "github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/apperr"
+	tiapi "github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 const (
@@ -285,7 +285,7 @@ func (c *Client) InitiateUpload(ctx context.Context, remotePath string, size int
 	defer res.Body.Close()
 	var plan UploadPlan
 	if err := json.NewDecoder(res.Body).Decode(&plan); err != nil {
-		return UploadPlan{}, apperr.Wrap("api.decode_response", "runtime", 1, "decode tdc fs upload plan", err)
+		return UploadPlan{}, apperr.Wrap("api.decode_response", "runtime", 1, "decode ti fs upload plan", err)
 	}
 	return plan, nil
 }
@@ -413,7 +413,7 @@ func (c *Client) InitiateUploadV2(ctx context.Context, remotePath string, size i
 	defer res.Body.Close()
 	var plan UploadPlanV2
 	if err := json.NewDecoder(res.Body).Decode(&plan); err != nil {
-		return nil, apperr.Wrap("api.decode_response", "runtime", 1, "decode tdc fs v2 upload plan", err)
+		return nil, apperr.Wrap("api.decode_response", "runtime", 1, "decode ti fs v2 upload plan", err)
 	}
 	return &plan, nil
 }
@@ -464,7 +464,7 @@ func (c *Client) requestResumeByBody(ctx context.Context, uploadID string, check
 	defer res.Body.Close()
 	var plan UploadPlan
 	if err := json.NewDecoder(res.Body).Decode(&plan); err != nil {
-		return nil, apperr.Wrap("api.decode_response", "runtime", 1, "decode tdc fs upload resume plan", err)
+		return nil, apperr.Wrap("api.decode_response", "runtime", 1, "decode ti fs upload resume plan", err)
 	}
 	return &plan, nil
 }
@@ -484,7 +484,7 @@ func (c *Client) requestResumeLegacy(ctx context.Context, uploadID string, check
 	defer res.Body.Close()
 	var plan UploadPlan
 	if err := json.NewDecoder(res.Body).Decode(&plan); err != nil {
-		return nil, apperr.Wrap("api.decode_response", "runtime", 1, "decode tdc fs legacy upload resume plan", err)
+		return nil, apperr.Wrap("api.decode_response", "runtime", 1, "decode ti fs legacy upload resume plan", err)
 	}
 	return &plan, nil
 }
@@ -612,7 +612,7 @@ func (c *Client) presignPipeline(ctx context.Context, plan *UploadPlanV2, batchS
 		}
 		if err := json.NewDecoder(res.Body).Decode(&response); err != nil {
 			_ = res.Body.Close()
-			sendUploadErr(ctx, errCh, apperr.Wrap("api.decode_response", "runtime", 1, "decode tdc fs v2 presign batch", err))
+			sendUploadErr(ctx, errCh, apperr.Wrap("api.decode_response", "runtime", 1, "decode ti fs v2 presign batch", err))
 			return
 		}
 		_ = res.Body.Close()
@@ -735,7 +735,7 @@ func (c *Client) PresignOnePart(ctx context.Context, uploadID string, partNumber
 	defer res.Body.Close()
 	var part PresignedPart
 	if err := json.NewDecoder(res.Body).Decode(&part); err != nil {
-		return nil, apperr.Wrap("api.decode_response", "runtime", 1, "decode tdc fs v2 presigned part", err)
+		return nil, apperr.Wrap("api.decode_response", "runtime", 1, "decode ti fs v2 presigned part", err)
 	}
 	return &part, nil
 }
@@ -761,7 +761,7 @@ func (c *Client) InitiateAppend(ctx context.Context, remotePath string, appendSi
 	defer res.Body.Close()
 	var plan AppendPlan
 	if err := json.NewDecoder(res.Body).Decode(&plan); err != nil {
-		return AppendPlan{}, apperr.Wrap("api.decode_response", "runtime", 1, "decode tdc fs append plan", err)
+		return AppendPlan{}, apperr.Wrap("api.decode_response", "runtime", 1, "decode ti fs append plan", err)
 	}
 	return plan, nil
 }
@@ -862,7 +862,7 @@ func (c *Client) PatchFile(ctx context.Context, remotePath string, newSize int64
 	defer res.Body.Close()
 	var plan PatchPlan
 	if err := json.NewDecoder(res.Body).Decode(&plan); err != nil {
-		return apperr.Wrap("api.decode_response", "runtime", 1, "decode tdc fs patch plan", err)
+		return apperr.Wrap("api.decode_response", "runtime", 1, "decode ti fs patch plan", err)
 	}
 	if err := c.UploadPatchParts(ctx, plan, readPart); err != nil {
 		_ = c.AbortUpload(context.Background(), plan.UploadID)
@@ -1250,7 +1250,7 @@ func isV2NotAvailable(err error) bool {
 	if errors.Is(err, errV2NotAvailable) {
 		return true
 	}
-	var apiErr *tdcapi.Error
+	var apiErr *tiapi.Error
 	if !errors.As(err, &apiErr) {
 		return false
 	}
@@ -1265,7 +1265,7 @@ func isV2NotAvailable(err error) bool {
 }
 
 func shouldUseLegacyResume(err error) bool {
-	var apiErr *tdcapi.Error
+	var apiErr *tiapi.Error
 	if !errors.As(err, &apiErr) {
 		return false
 	}
