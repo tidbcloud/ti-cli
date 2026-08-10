@@ -14,11 +14,11 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
 type CopyFileOptions struct {

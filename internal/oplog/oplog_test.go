@@ -19,7 +19,7 @@ func TestDisabledRecorderDoesNotCreateFile(t *testing.T) {
 		MaxFiles:     2,
 	})
 
-	recorder.Record(context.Background(), Event{Type: "command", Command: "tdc help"})
+	recorder.Record(context.Background(), Event{Type: "command", Command: "ti help"})
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
 		t.Fatalf("expected no log file, got err=%v", err)
 	}
@@ -38,7 +38,7 @@ func TestRecorderWritesJSONL(t *testing.T) {
 	recorder.Record(context.Background(), Event{
 		Timestamp:  time.Date(2026, 7, 14, 1, 2, 3, 0, time.UTC),
 		Type:       "command",
-		Command:    "tdc db create-db-cluster",
+		Command:    "ti db create-db-cluster",
 		FlagNames:  []string{"db-cluster-name", "dry-run"},
 		ExitCode:   0,
 		DurationMS: 12,
@@ -48,7 +48,7 @@ func TestRecorderWritesJSONL(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("expected one event, got %d", len(events))
 	}
-	if events[0].Command != "tdc db create-db-cluster" || events[0].FlagNames[0] != "db-cluster-name" {
+	if events[0].Command != "ti db create-db-cluster" || events[0].FlagNames[0] != "db-cluster-name" {
 		t.Fatalf("unexpected event: %#v", events[0])
 	}
 	if data, err := os.ReadFile(path); err != nil {
@@ -69,7 +69,7 @@ func TestRecorderRotatesByTotalFileCount(t *testing.T) {
 	})
 
 	for i := 0; i < 4; i++ {
-		recorder.Record(context.Background(), Event{Type: "command", Command: "tdc help"})
+		recorder.Record(context.Background(), Event{Type: "command", Command: "ti help"})
 	}
 
 	if _, err := os.Stat(path); err != nil {

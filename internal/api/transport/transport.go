@@ -72,12 +72,12 @@ type debugRoundTripper struct {
 }
 
 func (t debugRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
-	fmt.Fprintf(t.writer, "tdc debug: request %s %s\n", req.Method, t.redactor.Redact(req.URL.String()))
+	fmt.Fprintf(t.writer, "ti debug: request %s %s\n", req.Method, t.redactor.Redact(req.URL.String()))
 	res, err := t.base.RoundTrip(req)
 	if err != nil {
-		fmt.Fprintf(t.writer, "tdc debug: error %s\n", t.redactor.Redact(err.Error()))
+		fmt.Fprintf(t.writer, "ti debug: error %s\n", t.redactor.Redact(err.Error()))
 		return nil, err
 	}
-	fmt.Fprintf(t.writer, "tdc debug: response %d %s\n", res.StatusCode, http.StatusText(res.StatusCode))
+	fmt.Fprintf(t.writer, "ti debug: response %d %s\n", res.StatusCode, http.StatusText(res.StatusCode))
 	return res, nil
 }

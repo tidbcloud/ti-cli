@@ -1,5 +1,5 @@
 name: Feature Request
-description: Propose a tdc capability or command improvement.
+description: Propose a ti capability or command improvement.
 title: "[Feature] "
 labels:
   - enhancement
@@ -19,7 +19,7 @@ body:
     id: current_workflow
     attributes:
       label: Current workflow
-      description: Show how users or agents handle this today, including relevant tdc commands.
+      description: Show how users or agents handle this today, including relevant ti commands.
     validations:
       required: true
   - type: textarea

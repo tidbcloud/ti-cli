@@ -7,7 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 func TestListBranches(t *testing.T) {

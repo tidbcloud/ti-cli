@@ -10,16 +10,16 @@ import (
 )
 
 type call struct {
-	Args          []string `json:"args"`
-	Home          string   `json:"home"`
-	APIKey        string   `json:"api_key"`
-	Server        string   `json:"server"`
-	RegionCode    string   `json:"region_code"`
-	TDCPublicKey  string   `json:"tdc_public_key,omitempty"`
-	TDCPrivateKey string   `json:"tdc_private_key,omitempty"`
-	TDCFSToken    string   `json:"tdc_fs_token,omitempty"`
-	Drive9Public  string   `json:"drive9_public_key,omitempty"`
-	Drive9Private string   `json:"drive9_private_key,omitempty"`
+	Args                []string `json:"args"`
+	Home                string   `json:"home"`
+	APIKey              string   `json:"api_key"`
+	Server              string   `json:"server"`
+	RegionCode          string   `json:"region_code"`
+	TiDBCloudPublicKey  string   `json:"tidb_cloud_public_key,omitempty"`
+	TiDBCloudPrivateKey string   `json:"tidb_cloud_private_key,omitempty"`
+	TIFSToken           string   `json:"ti_fs_token,omitempty"`
+	Drive9Public        string   `json:"drive9_public_key,omitempty"`
+	Drive9Private       string   `json:"drive9_private_key,omitempty"`
 }
 
 type tenant struct {
@@ -36,16 +36,16 @@ func main() {
 			panic(err)
 		}
 		_ = json.NewEncoder(file).Encode(call{
-			Args:          os.Args[1:],
-			Home:          os.Getenv("HOME"),
-			APIKey:        os.Getenv("DRIVE9_API_KEY"),
-			Server:        os.Getenv("DRIVE9_SERVER"),
-			RegionCode:    os.Getenv("DRIVE9_REGION_CODE"),
-			TDCPublicKey:  os.Getenv("TDC_PUBLIC_KEY"),
-			TDCPrivateKey: os.Getenv("TDC_PRIVATE_KEY"),
-			TDCFSToken:    os.Getenv("TDC_FS_TOKEN"),
-			Drive9Public:  os.Getenv("DRIVE9_PUBLIC_KEY"),
-			Drive9Private: os.Getenv("DRIVE9_PRIVATE_KEY"),
+			Args:                os.Args[1:],
+			Home:                os.Getenv("HOME"),
+			APIKey:              os.Getenv("DRIVE9_API_KEY"),
+			Server:              os.Getenv("DRIVE9_SERVER"),
+			RegionCode:          os.Getenv("DRIVE9_REGION_CODE"),
+			TiDBCloudPublicKey:  os.Getenv("TIDB_CLOUD_PUBLIC_KEY"),
+			TiDBCloudPrivateKey: os.Getenv("TIDB_CLOUD_PRIVATE_KEY"),
+			TIFSToken:           os.Getenv("TI_FS_TOKEN"),
+			Drive9Public:        os.Getenv("DRIVE9_PUBLIC_KEY"),
+			Drive9Private:       os.Getenv("DRIVE9_PRIVATE_KEY"),
 		})
 		_ = file.Close()
 	}

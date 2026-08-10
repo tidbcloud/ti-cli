@@ -18,16 +18,16 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	"github.com/tidbcloud/tdc/internal/fs/mountcontrol"
-	"github.com/tidbcloud/tdc/internal/fs/mountdriver"
-	"github.com/tidbcloud/tdc/internal/fs/mountprocess"
-	"github.com/tidbcloud/tdc/internal/fs/mountstate"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountcontrol"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountdriver"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountprocess"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 	"golang.org/x/net/webdav"
 )
 
@@ -170,7 +170,7 @@ func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, 
 	} else {
 		checks = append(checks, dryrun.Check{Name: "mount_driver", Status: "passed", Message: inputs.driver.Name()})
 	}
-	description := "normal execution starts a local tdc fs FUSE runtime and mounts it at the requested path"
+	description := "normal execution starts a local ti fs FUSE runtime and mounts it at the requested path"
 	if inputs.driver.Name() == "webdav" {
 		description = "normal execution starts a local WebDAV bridge and mounts it at the requested path"
 	}
@@ -231,7 +231,7 @@ func (s Service) DryRunDrainFileSystem(ctx context.Context, commandPath string, 
 		commandPath,
 		"drain_file_system",
 		dryrun.RequestSummary{
-			Description: "normal execution delegates mount drain to the resource-scoped tdc-drive9 companion runtime",
+			Description: "normal execution delegates mount drain to the resource-scoped ti-drive9 companion runtime",
 			Method:      "LOCAL",
 			Path:        opts.MountPath,
 		},
@@ -258,7 +258,7 @@ func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string
 		commandPath,
 		"unmount_file_system",
 		dryrun.RequestSummary{
-			Description: "normal execution delegates unmount to the resource-scoped tdc-drive9 companion runtime and removes the locator after success",
+			Description: "normal execution delegates unmount to the resource-scoped ti-drive9 companion runtime and removes the locator after success",
 			Method:      "LOCAL",
 			Path:        opts.MountPath,
 		},
@@ -280,7 +280,7 @@ func (s Service) readDrainMountState(mountPathInput string) (mountstate.State, s
 	state, stateFile, err := mountstate.Read(homeDir, mountPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return mountstate.State{}, "", "", nil, apperr.New("fs.mount_state_not_found", "runtime", 1, fmt.Sprintf("no tdc fs mount state found for %q", mountPath))
+			return mountstate.State{}, "", "", nil, apperr.New("fs.mount_state_not_found", "runtime", 1, fmt.Sprintf("no ti fs mount state found for %q", mountPath))
 		}
 		return mountstate.State{}, "", "", nil, apperr.Wrap("fs.read_mount_state", "runtime", 1, fmt.Sprintf("read mount state for %q", mountPath), err)
 	}
@@ -352,7 +352,7 @@ func (s Service) mountInputs(opts MountFileSystemOptions) (mountInputs, error) {
 	if err != nil {
 		return mountInputs{}, err
 	}
-	client, err := s.bearerClient(opts.Profile, endpoint, authz.FSMount, "mount tdc fs resource")
+	client, err := s.bearerClient(opts.Profile, endpoint, authz.FSMount, "mount ti fs resource")
 	if err != nil {
 		return mountInputs{}, err
 	}
@@ -435,7 +435,7 @@ func (s Service) mountForeground(ctx context.Context, inputs mountInputs, remote
 	case "webdav":
 		return s.mountWebDAVForeground(ctx, inputs, remote, checks)
 	default:
-		return MountResult{}, apperr.New("fs.invalid_mount_driver", "usage", 2, fmt.Sprintf("unsupported tdc fs mount driver %q", inputs.driver.Name()))
+		return MountResult{}, apperr.New("fs.invalid_mount_driver", "usage", 2, fmt.Sprintf("unsupported ti fs mount driver %q", inputs.driver.Name()))
 	}
 }
 
@@ -486,7 +486,7 @@ func (s Service) mountWebDAVForeground(ctx context.Context, inputs mountInputs, 
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return MountResult{}, apperr.Wrap("fs.mount_listen", "runtime", 1, "start local tdc fs WebDAV bridge", err)
+		return MountResult{}, apperr.Wrap("fs.mount_listen", "runtime", 1, "start local ti fs WebDAV bridge", err)
 	}
 	defer listener.Close()
 
@@ -551,7 +551,7 @@ func (s Service) mountWebDAVForeground(ctx context.Context, inputs mountInputs, 
 	err = <-serverErr
 	if err != nil && err != http.ErrServerClosed {
 		_ = inputs.driver.Unmount(context.Background(), inputs.mountPath)
-		return MountResult{}, apperr.Wrap("fs.mount_server", "runtime", 1, "tdc fs WebDAV bridge stopped unexpectedly", err)
+		return MountResult{}, apperr.Wrap("fs.mount_server", "runtime", 1, "ti fs WebDAV bridge stopped unexpectedly", err)
 	}
 	checks = append(checks, MountRuntimeCheck{Name: "mount_state", Status: "passed", Message: stateFile})
 	return mountResult("unmounted", inputs, remote, checks, os.Getpid(), stateFile, ""), nil
@@ -560,7 +560,7 @@ func (s Service) mountWebDAVForeground(ctx context.Context, inputs mountInputs, 
 func (s Service) mountBackground(ctx context.Context, inputs mountInputs, remote apifs.StatusResponse, checks []MountRuntimeCheck) (MountResult, error) {
 	executable, err := os.Executable()
 	if err != nil {
-		return MountResult{}, apperr.Wrap("fs.executable_path", "runtime", 1, "determine tdc executable path for background mount", err)
+		return MountResult{}, apperr.Wrap("fs.executable_path", "runtime", 1, "determine ti executable path for background mount", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(inputs.logFile), 0o700); err != nil {
 		return MountResult{}, apperr.Wrap("fs.mount_log_dir", "runtime", 1, fmt.Sprintf("create mount log directory %q", filepath.Dir(inputs.logFile)), err)
@@ -624,7 +624,7 @@ func startBackgroundMount(ctx context.Context, request backgroundMountRequest) (
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
 	if err := cmd.Start(); err != nil {
-		return 0, apperr.Wrap("fs.start_mount_process", "runtime", 1, "start background tdc fs mount process", err)
+		return 0, apperr.Wrap("fs.start_mount_process", "runtime", 1, "start background ti fs mount process", err)
 	}
 	deadline := time.Now().Add(request.Timeout)
 	for {
@@ -637,7 +637,7 @@ func startBackgroundMount(ctx context.Context, request backgroundMountRequest) (
 		}
 		if time.Now().After(deadline) {
 			_ = mountprocess.Terminate(cmd.Process.Pid)
-			return 0, apperr.New("fs.mount_ready_timeout", "runtime", 1, fmt.Sprintf("tdc fs mount at %q did not become ready within %s; inspect %s", request.MountPath, request.Timeout, request.LogFile))
+			return 0, apperr.New("fs.mount_ready_timeout", "runtime", 1, fmt.Sprintf("ti fs mount at %q did not become ready within %s; inspect %s", request.MountPath, request.Timeout, request.LogFile))
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -684,7 +684,7 @@ func mountCacheDir(homeDir string, identity MountCacheIdentity, explicit string)
 		identity.MountPath,
 		identity.APIKeyFingerprint,
 	}, "\x00")))
-	return filepath.Join(homeDir, ".tdc", "cache", "mounts", hex.EncodeToString(sum[:8])), nil
+	return filepath.Join(homeDir, ".ti", "cache", "mounts", hex.EncodeToString(sum[:8])), nil
 }
 
 func mountCacheIdentity(profile *config.Profile, fileSystemName, mountPath, remotePath string, endpoint endpoints.Endpoint) MountCacheIdentity {
@@ -739,7 +739,7 @@ func defaultMountLocalRoot(homeDir string, identity MountCacheIdentity) string {
 		identity.RemotePath,
 		identity.APIKeyFingerprint,
 	}, "\x00")))
-	return filepath.Join(homeDir, ".tdc", "local", "fs", hex.EncodeToString(sum[:8]))
+	return filepath.Join(homeDir, ".ti", "local", "fs", hex.EncodeToString(sum[:8]))
 }
 
 func mergeMountPackPaths(groups ...[]string) []string {
@@ -776,7 +776,7 @@ func randomWebDAVPrefix() (string, error) {
 	if _, err := rand.Read(buf[:]); err != nil {
 		return "", err
 	}
-	return "/tdc-" + hex.EncodeToString(buf[:]), nil
+	return "/ti-" + hex.EncodeToString(buf[:]), nil
 }
 
 func statusMessage(value string) string {

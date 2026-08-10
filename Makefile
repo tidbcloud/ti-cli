@@ -1,14 +1,14 @@
 GO ?= go
 GORELEASER ?= goreleaser
-MODULE := github.com/tidbcloud/tdc
-BINARY_NAME := tdc
+MODULE := github.com/tidbcloud/ti-cli
+BINARY_NAME := ti
 BIN_DIR := bin
-TDC_BIN := $(BIN_DIR)/$(BINARY_NAME)
-TELEMETRY_BACKEND_BIN := $(BIN_DIR)/tdc-telemetry-backend
-TELEMETRY_MIGRATOR_BIN := $(BIN_DIR)/tdc-telemetry-migrate
+TI_BIN := $(BIN_DIR)/$(BINARY_NAME)
+TELEMETRY_BACKEND_BIN := $(BIN_DIR)/ti-telemetry-backend
+TELEMETRY_MIGRATOR_BIN := $(BIN_DIR)/ti-telemetry-migrate
 TELEMETRY_E2E_ENV := e2e/.env.telemetry
 LIVE_E2E_PROFILE ?= live-e2e
-LIVE_E2E_RUN = TDC_E2E_BIN="$(abspath $(TDC_BIN))" TDC_LIVE=1 TDC_PROFILE="$(LIVE_E2E_PROFILE)" $(GO) test ./e2e -count=1 -v -timeout 30m
+LIVE_E2E_RUN = TI_E2E_BIN="$(abspath $(TI_BIN))" TI_LIVE=1 TI_PROFILE="$(LIVE_E2E_PROFILE)" $(GO) test ./e2e -count=1 -v -timeout 30m
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
@@ -31,26 +31,26 @@ all: build
 
 build:
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(TDC_BIN) ./cmd/tdc
+	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(TI_BIN) ./cmd/ti
 
 build-telemetry-backend:
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -trimpath -o $(TELEMETRY_BACKEND_BIN) ./cmd/tdc-telemetry-backend
+	$(GO) build -trimpath -o $(TELEMETRY_BACKEND_BIN) ./cmd/ti-telemetry-backend
 
 build-telemetry-migrator:
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -trimpath -o $(TELEMETRY_MIGRATOR_BIN) ./cmd/tdc-telemetry-migrate
+	$(GO) build -trimpath -o $(TELEMETRY_MIGRATOR_BIN) ./cmd/ti-telemetry-migrate
 
 test:
 	$(GO) test ./...
 
 e2e: build
-	TDC_E2E_BIN="$(abspath $(TDC_BIN))" $(GO) test ./e2e -count=1 -v
+	TI_E2E_BIN="$(abspath $(TI_BIN))" $(GO) test ./e2e -count=1 -v
 
 telemetry-e2e: build build-telemetry-backend build-telemetry-migrator
-	@test -f "$(TELEMETRY_E2E_ENV)" || { echo "missing $(TELEMETRY_E2E_ENV); set TDC_TEST_TELEMETRY_TIDB_DSN in that ignored file" >&2; exit 2; }
+	@test -f "$(TELEMETRY_E2E_ENV)" || { echo "missing $(TELEMETRY_E2E_ENV); set TI_TEST_TELEMETRY_TIDB_DSN in that ignored file" >&2; exit 2; }
 	@set -a; . "$(TELEMETRY_E2E_ENV)"; set +a; \
-		TDC_E2E_BIN="$(abspath $(TDC_BIN))" TDC_TELEMETRY_BACKEND_E2E_BIN="$(abspath $(TELEMETRY_BACKEND_BIN))" TDC_TELEMETRY_MIGRATOR_E2E_BIN="$(abspath $(TELEMETRY_MIGRATOR_BIN))" TDC_TELEMETRY_E2E=1 $(GO) test ./e2e -count=1 -v -run '^TestTelemetryDeliveryToTiDB$$'
+		TI_E2E_BIN="$(abspath $(TI_BIN))" TI_TELEMETRY_BACKEND_E2E_BIN="$(abspath $(TELEMETRY_BACKEND_BIN))" TI_TELEMETRY_MIGRATOR_E2E_BIN="$(abspath $(TELEMETRY_MIGRATOR_BIN))" TI_TELEMETRY_E2E=1 $(GO) test ./e2e -count=1 -v -run '^TestTelemetryDeliveryToTiDB$$'
 
 live-e2e: build
 	$(LIVE_E2E_RUN) -run '^TestLive'
@@ -65,7 +65,7 @@ live-e2e-db: build
 	$(LIVE_E2E_RUN) -run '^TestLiveDB'
 
 live-e2e-fs: build
-	$(LIVE_E2E_RUN) -run '^TestLive(FSResourceRegistryLifecycle|FSCommandSurface|FSConfigurationFreeAccess|FSDataPlaneLifecycle|FSMountRuntime|FSWebDAVMountRuntime)$$'
+	$(LIVE_E2E_RUN) -run '^TestLive(FSRemoteInventoryLifecycle|FSCommandSurface|FSConfigurationFreeAccess|FSDataPlaneLifecycle|FSMountRuntime|FSWebDAVMountRuntime)$$'
 
 live-e2e-fs-git: build
 	$(LIVE_E2E_RUN) -run '^TestLiveFSGit'

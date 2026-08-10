@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 type ClusterType string

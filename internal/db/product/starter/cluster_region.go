@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apistarter "github.com/tidbcloud/tdc/internal/api/starter"
-	"github.com/tidbcloud/tdc/internal/config"
-	configregion "github.com/tidbcloud/tdc/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	configregion "github.com/tidbcloud/ti-cli/internal/config/region"
 )
 
 type clusterRegionScope struct {

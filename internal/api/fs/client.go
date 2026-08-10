@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 type Client struct {
@@ -213,7 +213,7 @@ func (c *Client) readFile(ctx context.Context, remotePath string, offset, length
 	defer res.Body.Close()
 	data, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, apperr.Wrap("api.read_response", "runtime", 1, "read tdc fs response body", err)
+		return nil, apperr.Wrap("api.read_response", "runtime", 1, "read ti fs response body", err)
 	}
 	if ranged && res.StatusCode == http.StatusOK {
 		if offset >= int64(len(data)) {
@@ -232,11 +232,11 @@ func (c *Client) readRedirectedFile(ctx context.Context, res *http.Response, ran
 	defer res.Body.Close()
 	location, err := res.Location()
 	if err != nil {
-		return nil, apperr.Wrap("api.invalid_redirect", "api", 1, "tdc fs returned an invalid download redirect", err)
+		return nil, apperr.Wrap("api.invalid_redirect", "api", 1, "ti fs returned an invalid download redirect", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location.String(), nil)
 	if err != nil {
-		return nil, apperr.Wrap("api.build_request", "runtime", 1, "build redirected tdc fs download request", err)
+		return nil, apperr.Wrap("api.build_request", "runtime", 1, "build redirected ti fs download request", err)
 	}
 	req.Header.Set("User-Agent", c.api.UserAgent)
 	if rangeHeader != "" {
@@ -258,7 +258,7 @@ func (c *Client) readRedirectedFile(ctx context.Context, res *http.Response, ran
 	}
 	if redirected.StatusCode < 200 || redirected.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(redirected.Body, 8*1024))
-		message := "redirected tdc fs download failed with HTTP " + strconv.Itoa(redirected.StatusCode)
+		message := "redirected ti fs download failed with HTTP " + strconv.Itoa(redirected.StatusCode)
 		if trimmed := strings.TrimSpace(string(body)); trimmed != "" {
 			message += ": " + trimmed
 		}
@@ -266,7 +266,7 @@ func (c *Client) readRedirectedFile(ctx context.Context, res *http.Response, ran
 	}
 	data, err := io.ReadAll(redirected.Body)
 	if err != nil {
-		return nil, apperr.Wrap("api.read_response", "runtime", 1, "read redirected tdc fs response body", err)
+		return nil, apperr.Wrap("api.read_response", "runtime", 1, "read redirected ti fs response body", err)
 	}
 	if ranged && redirected.StatusCode == http.StatusOK {
 		if offset >= int64(len(data)) {

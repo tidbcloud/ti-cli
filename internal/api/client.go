@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apitransport "github.com/tidbcloud/tdc/internal/api/transport"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/auth"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apitransport "github.com/tidbcloud/ti-cli/internal/api/transport"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/auth"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
-const defaultUserAgent = "tdc"
+const defaultUserAgent = "ti"
 
 const defaultMaxRetries = 2
 
@@ -118,7 +118,7 @@ func NewBearerClient(profileName, apiKey string, endpoint endpoints.Endpoint, pe
 			"auth.missing_fs_api_key",
 			"authentication",
 			3,
-			fmt.Sprintf("authentication required: missing fs_api_key for profile %q. Create or configure a tdc fs resource first.", profileName),
+			fmt.Sprintf("authentication required: missing fs_api_key for profile %q. Create or configure a ti fs resource first.", profileName),
 		)
 	}
 	opts.Endpoint = endpoint
@@ -312,9 +312,9 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Body:       string(body),
 		}
 	case http.StatusUnauthorized:
-		message := fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.tdc/credentials or create a new API key.", profileName(c.ProfileName))
+		message := fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
 		if c.Service == endpoints.ServiceFS {
-			message = fmt.Sprintf("authentication failed: tdc fs rejected fs_api_key for profile %q. Run `tdc fs create-file-system` or recreate the tdc fs resource.", profileName(c.ProfileName))
+			message = fmt.Sprintf("authentication failed: ti fs rejected fs_api_key for profile %q. Run `ti fs create-file-system` or recreate the ti fs resource.", profileName(c.ProfileName))
 		}
 		return &Error{
 			Code:       "auth.invalid_credentials",

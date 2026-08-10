@@ -1,6 +1,6 @@
 # Explicit File System Selection
 
-> **Latest identity update:** `0027-remote-fs-resource-inventory.md` replaces explicit names with server-assigned IDs and permits token-derived ID selection. No default file system is inferred.
+> **Latest identity update:** `0028-remote-fs-resource-inventory.md` replaces explicit names with server-assigned IDs and permits token-derived ID selection. No default file system is inferred.
 
 ## Goal
 

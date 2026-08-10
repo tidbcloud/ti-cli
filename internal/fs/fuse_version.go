@@ -2,7 +2,7 @@
 
 package fs
 
-import apifs "github.com/tidbcloud/tdc/internal/api/fs"
+import apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
 
 type fuseObjectVersion struct {
 	Revision   int64  `json:"revision,omitempty"`

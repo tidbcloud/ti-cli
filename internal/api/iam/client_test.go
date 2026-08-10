@@ -7,10 +7,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
 )
 
 func TestListProjects(t *testing.T) {
@@ -124,21 +124,21 @@ func TestSQLUserLifecycleRequests(t *testing.T) {
 					t.Fatalf("unexpected pageSize %q", got)
 				}
 				_, _ = w.Write([]byte(`{
-					"sqlUsers":[{"userName":"prefix.tdc_rw","authMethod":"mysql_native_password","builtinRole":"role_readwrite"}],
+					"sqlUsers":[{"userName":"prefix.ti_rw","authMethod":"mysql_native_password","builtinRole":"role_readwrite"}],
 					"nextPageToken":"token-2"
 				}`))
 				return
 			}
-			_, _ = w.Write([]byte(`{"userName":"prefix.tdc_rw","authMethod":"mysql_native_password","builtinRole":"role_readwrite"}`))
+			_, _ = w.Write([]byte(`{"userName":"prefix.ti_rw","authMethod":"mysql_native_password","builtinRole":"role_readwrite"}`))
 		case http.MethodPost:
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode create body: %v", err)
 			}
-			if body["userName"] != "tdc_rw" || body["builtinRole"] != "role_readwrite" || body["authMethod"] != "mysql_native_password" || body["password"] != "secret" || body["autoPrefix"] != true {
+			if body["userName"] != "ti_rw" || body["builtinRole"] != "role_readwrite" || body["authMethod"] != "mysql_native_password" || body["password"] != "secret" || body["autoPrefix"] != true {
 				t.Fatalf("unexpected create body: %#v", body)
 			}
-			_, _ = w.Write([]byte(`{"userName":"prefix.tdc_rw","authMethod":"mysql_native_password","builtinRole":"role_readwrite"}`))
+			_, _ = w.Write([]byte(`{"userName":"prefix.ti_rw","authMethod":"mysql_native_password","builtinRole":"role_readwrite"}`))
 		case http.MethodPatch:
 			var body map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -147,7 +147,7 @@ func TestSQLUserLifecycleRequests(t *testing.T) {
 			if body["password"] != "rotated" {
 				t.Fatalf("unexpected update body: %#v", body)
 			}
-			_, _ = w.Write([]byte(`{"userName":"prefix.tdc_rw","authMethod":"mysql_native_password","builtinRole":"role_readwrite"}`))
+			_, _ = w.Write([]byte(`{"userName":"prefix.ti_rw","authMethod":"mysql_native_password","builtinRole":"role_readwrite"}`))
 		case http.MethodDelete:
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"message":"ok"}`))
@@ -162,11 +162,11 @@ func TestSQLUserLifecycleRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListSQLUsers failed: %v", err)
 	}
-	if list.NextPageToken != "token-2" || len(list.SQLUsers) != 1 || list.SQLUsers[0].UserName != "prefix.tdc_rw" {
+	if list.NextPageToken != "token-2" || len(list.SQLUsers) != 1 || list.SQLUsers[0].UserName != "prefix.ti_rw" {
 		t.Fatalf("unexpected list response: %#v", list)
 	}
 	created, err := client.CreateSQLUser(context.Background(), "cluster-1", CreateSQLUserRequest{
-		UserName:    "tdc_rw",
+		UserName:    "ti_rw",
 		Password:    "secret",
 		AuthMethod:  "mysql_native_password",
 		AutoPrefix:  true,
@@ -178,22 +178,22 @@ func TestSQLUserLifecycleRequests(t *testing.T) {
 	if created.BuiltinRole != "role_readwrite" {
 		t.Fatalf("unexpected created user: %#v", created)
 	}
-	if _, err := client.GetSQLUser(context.Background(), "cluster-1", "prefix.tdc_rw"); err != nil {
+	if _, err := client.GetSQLUser(context.Background(), "cluster-1", "prefix.ti_rw"); err != nil {
 		t.Fatalf("GetSQLUser failed: %v", err)
 	}
-	if _, err := client.UpdateSQLUser(context.Background(), "cluster-1", "prefix.tdc_rw", UpdateSQLUserRequest{Password: "rotated"}); err != nil {
+	if _, err := client.UpdateSQLUser(context.Background(), "cluster-1", "prefix.ti_rw", UpdateSQLUserRequest{Password: "rotated"}); err != nil {
 		t.Fatalf("UpdateSQLUser failed: %v", err)
 	}
-	if err := client.DeleteSQLUser(context.Background(), "cluster-1", "prefix.tdc_rw"); err != nil {
+	if err := client.DeleteSQLUser(context.Background(), "cluster-1", "prefix.ti_rw"); err != nil {
 		t.Fatalf("DeleteSQLUser failed: %v", err)
 	}
 
 	want := []string{
 		"GET /v1beta1/clusters/cluster-1/sqlUsers?pageSize=2",
 		"POST /v1beta1/clusters/cluster-1/sqlUsers",
-		"GET /v1beta1/clusters/cluster-1/sqlUsers/prefix.tdc_rw",
-		"PATCH /v1beta1/clusters/cluster-1/sqlUsers/prefix.tdc_rw",
-		"DELETE /v1beta1/clusters/cluster-1/sqlUsers/prefix.tdc_rw",
+		"GET /v1beta1/clusters/cluster-1/sqlUsers/prefix.ti_rw",
+		"PATCH /v1beta1/clusters/cluster-1/sqlUsers/prefix.ti_rw",
+		"DELETE /v1beta1/clusters/cluster-1/sqlUsers/prefix.ti_rw",
 	}
 	for i := range want {
 		if requests[i] != want[i] {

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 func TestLoadExplicitProfile(t *testing.T) {
@@ -33,7 +33,7 @@ func TestLoadExplicitProfile(t *testing.T) {
 
 func TestLoadReadsProjectID(t *testing.T) {
 	home := t.TempDir()
-	if err := store.WriteProfile(home, "stage", store.ConfigProfile{RegionCode: "aws-us-east-1", ProjectID: "virtual-1"}, store.CredentialsProfile{TDCPublicKey: "public", TDCPrivateKey: "private"}); err != nil {
+	if err := store.WriteProfile(home, "stage", store.ConfigProfile{RegionCode: "aws-us-east-1", ProjectID: "virtual-1"}, store.CredentialsProfile{TiDBCloudPublicKey: "public", TiDBCloudPrivateKey: "private"}); err != nil {
 		t.Fatal(err)
 	}
 	profile, err := Load(context.Background(), LoadOptions{Profile: "stage", ProfileExplicit: true, HomeDir: home})
@@ -61,7 +61,7 @@ func TestLoadRegionOverrideWinsOverExplicitProfile(t *testing.T) {
 	if profile.Name != "stage" || profile.CloudProvider != "aws" || profile.RegionCode != "ap-southeast-1" || profile.PlacementRegionCode != "aws-ap-southeast-1" {
 		t.Fatalf("region override did not win over profile: %#v", profile)
 	}
-	if profile.TDCPublicKey != "stage-public" || profile.TDCPrivateKey != "stage-private" {
+	if profile.TiDBCloudPublicKey != "stage-public" || profile.TiDBCloudPrivateKey != "stage-private" {
 		t.Fatalf("region override changed credentials: %#v", profile)
 	}
 }
@@ -70,9 +70,9 @@ func TestLoadEnvironmentFallback(t *testing.T) {
 	profile, err := Load(context.Background(), LoadOptions{
 		HomeDir: t.TempDir(),
 		Env: map[string]string{
-			"TDC_REGION_CODE": "aws-us-east-1",
-			"TDC_PUBLIC_KEY":  "env-public",
-			"TDC_PRIVATE_KEY": "env-private",
+			"TI_REGION_CODE":         "aws-us-east-1",
+			"TIDB_CLOUD_PUBLIC_KEY":  "env-public",
+			"TIDB_CLOUD_PRIVATE_KEY": "env-private",
 		},
 	})
 	if err != nil {
@@ -81,7 +81,7 @@ func TestLoadEnvironmentFallback(t *testing.T) {
 	if profile.Source != "env" {
 		t.Fatalf("expected env source, got %#v", profile)
 	}
-	if profile.TDCPrivateKey != "env-private" {
+	if profile.TiDBCloudPrivateKey != "env-private" {
 		t.Fatalf("env private key not loaded")
 	}
 }
@@ -91,8 +91,8 @@ func TestLoadEnvironmentFallbackUsesRegionOverride(t *testing.T) {
 		HomeDir:        t.TempDir(),
 		RegionOverride: "ali-ap-southeast-1",
 		Env: map[string]string{
-			"TDC_PUBLIC_KEY":  "env-public",
-			"TDC_PRIVATE_KEY": "env-private",
+			"TIDB_CLOUD_PUBLIC_KEY":  "env-public",
+			"TIDB_CLOUD_PRIVATE_KEY": "env-private",
 		},
 	})
 	if err != nil {
@@ -112,9 +112,9 @@ func TestLoadEnvironmentCredentialsUseDefaultProfileNamespace(t *testing.T) {
 		FSCloudProvider: "aws",
 		FSRegionCode:    "aws-us-east-1",
 	}, store.CredentialsProfile{
-		TDCPublicKey:  "local-public",
-		TDCPrivateKey: "local-private",
-		FSAPIKey:      "fs-secret",
+		TiDBCloudPublicKey:  "local-public",
+		TiDBCloudPrivateKey: "local-private",
+		FSAPIKey:            "fs-secret",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -122,9 +122,9 @@ func TestLoadEnvironmentCredentialsUseDefaultProfileNamespace(t *testing.T) {
 	profile, err := Load(context.Background(), LoadOptions{
 		HomeDir: home,
 		Env: map[string]string{
-			"TDC_REGION_CODE": "aws-us-east-1",
-			"TDC_PUBLIC_KEY":  "env-public",
-			"TDC_PRIVATE_KEY": "env-private",
+			"TI_REGION_CODE":         "aws-us-east-1",
+			"TIDB_CLOUD_PUBLIC_KEY":  "env-public",
+			"TIDB_CLOUD_PRIVATE_KEY": "env-private",
 		},
 	})
 	if err != nil {
@@ -133,7 +133,7 @@ func TestLoadEnvironmentCredentialsUseDefaultProfileNamespace(t *testing.T) {
 	if profile.Source != "env" || profile.Name != DefaultProfile {
 		t.Fatalf("expected env credential source with default profile namespace, got %#v", profile)
 	}
-	if profile.TDCPublicKey != "env-public" || profile.TDCPrivateKey != "env-private" {
+	if profile.TiDBCloudPublicKey != "env-public" || profile.TiDBCloudPrivateKey != "env-private" {
 		t.Fatalf("expected credentials from environment, got %#v", profile)
 	}
 	if profile.FSResourceName != "dropme-fs" || profile.FSTenantID != "tenant-1" || profile.FSAPIKey != "fs-secret" {
@@ -153,9 +153,9 @@ func TestLoadEnvironmentCredentialsUseExplicitProfileNamespace(t *testing.T) {
 		FSCloudProvider: "aws",
 		FSRegionCode:    "aws-us-west-2",
 	}, store.CredentialsProfile{
-		TDCPublicKey:  "stage-local-public",
-		TDCPrivateKey: "stage-local-private",
-		FSAPIKey:      "stage-fs-secret",
+		TiDBCloudPublicKey:  "stage-local-public",
+		TiDBCloudPrivateKey: "stage-local-private",
+		FSAPIKey:            "stage-fs-secret",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -165,8 +165,8 @@ func TestLoadEnvironmentCredentialsUseExplicitProfileNamespace(t *testing.T) {
 		ProfileExplicit: true,
 		HomeDir:         home,
 		Env: map[string]string{
-			"TDC_PUBLIC_KEY":  "env-public",
-			"TDC_PRIVATE_KEY": "env-private",
+			"TIDB_CLOUD_PUBLIC_KEY":  "env-public",
+			"TIDB_CLOUD_PRIVATE_KEY": "env-private",
 		},
 	})
 	if err != nil {
@@ -175,7 +175,7 @@ func TestLoadEnvironmentCredentialsUseExplicitProfileNamespace(t *testing.T) {
 	if profile.Source != "env" || profile.Name != "stage" {
 		t.Fatalf("expected env credential source with explicit profile namespace, got %#v", profile)
 	}
-	if profile.TDCPublicKey != "env-public" || profile.TDCPrivateKey != "env-private" {
+	if profile.TiDBCloudPublicKey != "env-public" || profile.TiDBCloudPrivateKey != "env-private" {
 		t.Fatalf("expected credentials from environment, got %#v", profile)
 	}
 	if profile.FSResourceName != "stage-fs" || profile.FSTenantID != "tenant-stage" || profile.FSAPIKey != "stage-fs-secret" {
@@ -225,14 +225,14 @@ func TestLoadMissingCredentialsSuggestsConfigure(t *testing.T) {
 		t.Fatal("expected missing credentials to fail")
 	}
 	message := apperr.MessageFor(err)
-	if !strings.Contains(message, "tdc configure") || !strings.Contains(message, "~/.tdc/credentials") {
+	if !strings.Contains(message, "ti configure") || !strings.Contains(message, "~/.ti/credentials") {
 		t.Fatalf("missing credentials error did not include guidance: %q", message)
 	}
 }
 
 func TestLoadRejectsServerURLKeys(t *testing.T) {
 	home := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(home, store.TDCDirName), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, store.TIDirName), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(store.ConfigPath(home), []byte(`
@@ -244,8 +244,8 @@ api_endpoint = "https://example.invalid"
 	}
 	if err := os.WriteFile(store.CredentialsPath(home), []byte(`
 [default]
-tdc_public_key = "public"
-tdc_private_key = "private"
+tidb_cloud_public_key = "public"
+tidb_cloud_private_key = "private"
 `), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -268,9 +268,9 @@ func TestLoadReadsFSCredentials(t *testing.T) {
 		FSCloudProvider: "aws",
 		FSRegionCode:    "aws-us-east-1",
 	}, store.CredentialsProfile{
-		TDCPublicKey:  "public",
-		TDCPrivateKey: "private",
-		FSAPIKey:      "fs-secret",
+		TiDBCloudPublicKey:  "public",
+		TiDBCloudPrivateKey: "private",
+		FSAPIKey:            "fs-secret",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -290,8 +290,8 @@ func TestLoadLocalDoesNotRequireProfileOrTiDBCloudCredentials(t *testing.T) {
 	profile, err := LoadLocal(context.Background(), LoadOptions{
 		HomeDir: home,
 		Env: map[string]string{
-			"TDC_REGION_CODE": "aws-us-east-1",
-			"TDC_PUBLIC_KEY":  "ignored-without-private-key",
+			"TI_REGION_CODE":        "aws-us-east-1",
+			"TIDB_CLOUD_PUBLIC_KEY": "ignored-without-private-key",
 		},
 	})
 	if err != nil {
@@ -300,10 +300,10 @@ func TestLoadLocalDoesNotRequireProfileOrTiDBCloudCredentials(t *testing.T) {
 	if profile.Name != DefaultProfile || profile.HomeDir != home || profile.PlacementRegionCode != "aws-us-east-1" {
 		t.Fatalf("unexpected local profile: %#v", profile)
 	}
-	if profile.TDCPublicKey != "" || profile.TDCPrivateKey != "" {
+	if profile.TiDBCloudPublicKey != "" || profile.TiDBCloudPrivateKey != "" {
 		t.Fatalf("local loader must not load TiDB Cloud credentials: %#v", profile)
 	}
-	if _, err := os.Stat(filepath.Join(home, store.TDCDirName)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, store.TIDirName)); !os.IsNotExist(err) {
 		t.Fatalf("LoadLocal wrote local state: %v", err)
 	}
 }
@@ -321,7 +321,7 @@ func TestLoadLocalAllowsMissingPlacement(t *testing.T) {
 func TestLoadLocalRejectsMalformedEnvironmentPlacement(t *testing.T) {
 	_, err := LoadLocal(context.Background(), LoadOptions{
 		HomeDir: t.TempDir(),
-		Env:     map[string]string{"TDC_REGION_CODE": "aws-not-a-region"},
+		Env:     map[string]string{"TI_REGION_CODE": "aws-not-a-region"},
 	})
 	if apperr.CodeFor(err) != "config.invalid_region" {
 		t.Fatalf("error = %v, want config.invalid_region", err)
@@ -333,8 +333,8 @@ func writeProfile(t *testing.T, home, name, regionCode, publicKey, privateKey st
 	err := store.WriteProfile(home, name, store.ConfigProfile{
 		RegionCode: regionCode,
 	}, store.CredentialsProfile{
-		TDCPublicKey:  publicKey,
-		TDCPrivateKey: privateKey,
+		TiDBCloudPublicKey:  publicKey,
+		TiDBCloudPrivateKey: privateKey,
 	})
 	if err != nil {
 		t.Fatal(err)

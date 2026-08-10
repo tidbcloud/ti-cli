@@ -17,7 +17,7 @@ func TestDigestTransportUsesDigestNotBasic(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		auth := r.Header.Get("Authorization")
 		if auth == "" {
-			w.Header().Set("WWW-Authenticate", `Digest realm="tdc", nonce="nonce", qop="auth"`)
+			w.Header().Set("WWW-Authenticate", `Digest realm="ti", nonce="nonce", qop="auth"`)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}

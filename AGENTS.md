@@ -1,23 +1,30 @@
 ---
-title: AGENTS.md - tdc development guide for AI coding agents
+title: AGENTS.md - ti development guide for AI coding agents
 ---
 
 # Repository Overview
 
-tdc is a Go command-line product for TiDB Cloud Starter. It is designed to be
+ti is a Go command-line product for TiDB Cloud Starter. It is designed to be
 agent-friendly, predictable, scriptable, and safe for automation.
 
-Module: `github.com/tidbcloud/tdc`
+Module: `github.com/tidbcloud/ti-cli`
 Go version: 1.26.5 (see `go.mod`)
 
 The most important product document is `docs/priciples.md`. Treat that file as
 the source of truth for product principles. Requirement specs live in
 `docs/spec/`; completed specs are moved to `docs/spec/done/`.
 
+Completed specs that mention `tdc` describe the pre-v0.2 product name. Do not
+mechanically rename those historical records. Current code, documentation,
+commands, paths, and environment variables use `ti`.
+
 ## Current Implementation Status
 
 Implemented:
 
+- Ti CLI repository, executable, local-state, environment-variable, installer,
+  updater, release, telemetry, and documentation rename with safe v0.1 state
+  migration from `docs/spec/done/0027-ti-cli-rename-and-migration.md`
 - CLI foundation from `docs/spec/done/0001-cli-foundation.md`
 - Local config and credentials from
   `docs/spec/done/0002-local-config-and-credentials.md`
@@ -48,19 +55,19 @@ Implemented:
 - Product-aware DB dispatch, Starter package isolation, dynamic permissions,
   and filtered pagination from
   `docs/spec/done/0026-db-provider-dispatch-and-starter-refactor.md`
-- tdc fs Unix-style command aliases from
+- ti fs Unix-style command aliases from
   `docs/spec/done/0014-tdc-fs-unix-command-aliases.md`
-- tdc fs control plane from
+- ti fs control plane from
   `docs/spec/done/0009-tdc-fs-control-plane.md`
-- tdc fs data plane from
+- ti fs data plane from
   `docs/spec/done/0010-tdc-fs-data-plane.md`
-- tdc fs mount runtime from
+- ti fs mount runtime from
   `docs/spec/done/0011-tdc-fs-mount-runtime.md`
-- tdc fs FUSE correctness and Drive9 parity extension from
+- ti fs FUSE correctness and Drive9 parity extension from
   `docs/spec/done/0011-ext01-fuse-cache-and-open-handle-correctness.md`
-- profile-scoped 1:N tdc fs resource registry from
+- profile-scoped 1:N ti fs resource registry from
   `docs/spec/done/0016-profile-fs-resource-registry.md`
-- explicit tdc fs resource selection from
+- explicit ti fs resource selection from
   `docs/spec/done/0020-explicit-file-system-selection.md`
 - FS token authentication and configuration-free access from
   `docs/spec/done/0018-fs-token-auth-and-config-free-access.md`
@@ -68,78 +75,78 @@ Implemented:
   `docs/spec/done/0012-install-and-update-distribution.md`
 - English PingCAP Preview documentation from
   `docs/spec/done/0019-pingcap-tdc-documentation.md`
-- `tdc configure`
-- `tdc update --check`
-- `tdc update`
-- `tdc organization list-projects`
-- `tdc db create-db-cluster`
-- `tdc db list-db-clusters`
-- `tdc db describe-db-cluster`
-- `tdc db update-db-cluster`
-- `tdc db delete-db-cluster`
-- `tdc db create-db-cluster-branch`
-- `tdc db list-db-cluster-branches`
-- `tdc db describe-db-cluster-branch`
-- `tdc db delete-db-cluster-branch`
-- `tdc db create-db-sql-users`
-- `tdc db format-db-connection-string`
-- `tdc db execute-sql-statement`
-- `tdc fs create-file-system`
-- `tdc fs import-file-system-token`
-- `tdc fs delete-file-system`
-- `tdc fs list-file-systems`
-- `tdc fs describe-file-system`
-- `tdc fs check-file-system`
-- `tdc fs copy-file`
-- `tdc fs read-file`
-- `tdc fs list-files`
-- `tdc fs describe-file`
-- `tdc fs move-file`
-- `tdc fs delete-file`
-- `tdc fs create-directory`
-- `tdc fs chmod-file`
-- `tdc fs create-symlink`
-- `tdc fs create-hardlink`
-- `tdc fs search-file-content`
-- `tdc fs find-files`
-- `tdc fs create-layer`
-- `tdc fs list-layers`
-- `tdc fs describe-layer`
-- `tdc fs diff-layer`
-- `tdc fs create-layer-checkpoint`
-- `tdc fs rollback-layer`
-- `tdc fs commit-layer`
-- `tdc fs mount-file-system`
-- `tdc fs drain-file-system`
-- `tdc fs unmount-file-system`
-- Unix-style `tdc fs` command aliases: `cp`, `cat`, `ls`, `stat`, `mv`, `rm`,
+- `ti configure`
+- `ti update --check`
+- `ti update`
+- `ti organization list-projects`
+- `ti db create-db-cluster`
+- `ti db list-db-clusters`
+- `ti db describe-db-cluster`
+- `ti db update-db-cluster`
+- `ti db delete-db-cluster`
+- `ti db create-db-cluster-branch`
+- `ti db list-db-cluster-branches`
+- `ti db describe-db-cluster-branch`
+- `ti db delete-db-cluster-branch`
+- `ti db create-db-sql-users`
+- `ti db format-db-connection-string`
+- `ti db execute-sql-statement`
+- `ti fs create-file-system`
+- `ti fs import-file-system-token`
+- `ti fs delete-file-system`
+- `ti fs list-file-systems`
+- `ti fs describe-file-system`
+- `ti fs check-file-system`
+- `ti fs copy-file`
+- `ti fs read-file`
+- `ti fs list-files`
+- `ti fs describe-file`
+- `ti fs move-file`
+- `ti fs delete-file`
+- `ti fs create-directory`
+- `ti fs chmod-file`
+- `ti fs create-symlink`
+- `ti fs create-hardlink`
+- `ti fs search-file-content`
+- `ti fs find-files`
+- `ti fs create-layer`
+- `ti fs list-layers`
+- `ti fs describe-layer`
+- `ti fs diff-layer`
+- `ti fs create-layer-checkpoint`
+- `ti fs rollback-layer`
+- `ti fs commit-layer`
+- `ti fs mount-file-system`
+- `ti fs drain-file-system`
+- `ti fs unmount-file-system`
+- Unix-style `ti fs` command aliases: `cp`, `cat`, `ls`, `stat`, `mv`, `rm`,
   `mkdir`, `chmod`, `symlink`, `hardlink`, `grep`, `find`, `mount`, `drain`,
   and `umount`
-- `tdc fs-vault create-secret`
-- `tdc fs-vault replace-secret`
-- `tdc fs-vault read-secret`
-- `tdc fs-vault list-secrets`
-- `tdc fs-vault delete-secret`
-- `tdc fs-vault create-grant`
-- `tdc fs-vault delete-grant`
-- `tdc fs-vault list-audit-events`
-- `tdc fs-vault run-with-secret`
-- `tdc fs-vault mount-vault`
-- `tdc fs-vault unmount-vault`
-- `tdc fs-journal create-journal`
-- `tdc fs-journal append-journal-entries`
-- `tdc fs-journal read-journal-entries`
-- `tdc fs-journal search-journal-entries`
-- `tdc fs-journal verify-journal`
+- `ti fs-vault create-secret`
+- `ti fs-vault replace-secret`
+- `ti fs-vault read-secret`
+- `ti fs-vault list-secrets`
+- `ti fs-vault delete-secret`
+- `ti fs-vault create-grant`
+- `ti fs-vault delete-grant`
+- `ti fs-vault list-audit-events`
+- `ti fs-vault run-with-secret`
+- `ti fs-vault mount-vault`
+- `ti fs-vault unmount-vault`
+- `ti fs-journal create-journal`
+- `ti fs-journal append-journal-entries`
+- `ti fs-journal read-journal-entries`
+- `ti fs-journal search-journal-entries`
+- `ti fs-journal verify-journal`
 - help and version behavior at every command level
 - structured JSON/text rendering and JMESPath `--query`
 - `--dry-run` on mutating control-plane commands
 - TiDB Cloud Digest-auth API client foundation and auth/authz error mapping
-- region-scoped remote tdc fs inventory with profile-scoped, ID-keyed local credentials
-- tdc fs/fs-git/fs-journal/fs-vault commands routed through the bundled
-  `tdc-drive9` companion, with tdc-owned profile loading, credential storage,
+- region-scoped remote ti fs inventory with profile-scoped, ID-keyed local credentials
+- ti fs/fs-git/fs-journal/fs-vault commands routed through the bundled
+  `ti-drive9` companion, with ti-owned profile loading, credential storage,
   region resolution, and output/error handling
-- Drive9 public CLI coverage for tdc fs data-plane operations, FUSE/WebDAV
+- Drive9 public CLI coverage for ti fs data-plane operations, FUSE/WebDAV
   mount, mount drain, layers, pack/unpack, vault, journal, and Git clone,
   hydrate, add-worktree, and remove-worktree workflows
 - GoReleaser/GitHub Releases install and update workflow
@@ -151,10 +158,10 @@ There are no registered placeholder commands at the current stage. Implemented
 mutating commands support `--dry-run` where their command contract declares
 dry-run support.
 
-The client implementation for remote tdc fs inventory and ID-keyed credentials
-is tracked by `docs/spec/0027-remote-fs-resource-inventory.md`. Keep that spec
+The client implementation for remote ti fs inventory and ID-keyed credentials
+is tracked by `docs/spec/0028-remote-fs-resource-inventory.md`. Keep that spec
 pending until Drive9 enables admin tenant list/get/delete for ordinary TiDB
-Cloud organizations and the hosted manifest publishes every supported tdc fs
+Cloud organizations and the hosted manifest publishes every supported ti fs
 region, then complete its live acceptance flow before moving it to `done/`.
 
 ## Reference Code
@@ -163,15 +170,14 @@ region, then complete its live acceptance flow before moving it to `done/`.
   a reference for TiDB Cloud concepts, profile handling, output helpers,
   telemetry, and API client patterns.
 - `ref/drive9/` is the filesystem reference implementation. Use it as context
-  for filesystem commands, mount behavior, and data-plane semantics. In tdc
-  user-facing output, this domain is always called `tdc fs`.
+  for filesystem commands, mount behavior, and data-plane semantics. In ti
+  user-facing output, this domain is always called `ti fs`.
 - `ref/fs/` is the TiDB Filesystem server deployed for the Drive9-backed TiDB
   Cloud Filesystem service. Use it to verify server routes, TiDB Cloud IAM and
   billing authorization, tenant inventory and lifecycle behavior, quotas, and
-  data-plane contracts. It is server reference code, not a tdc dependency.
+  data-plane contracts. It is server reference code, not a ti dependency.
 - `ref/serverless-js/` is a reference for the HTTPS SQL API call shape.
-
-Reference directories are not product source for tdc. They exist only to give
+Reference directories are not product source for ti. They exist only to give
 agents context and implementation examples. In main project code, behave as if
 `ref/` does not exist:
 
@@ -207,23 +213,23 @@ make release-snapshot
 make clean
 ```
 
-`make build` writes the binary to `bin/tdc`.
+`make build` writes the binary to `bin/ti`.
 `make build-telemetry-backend` writes the independent ingestion service to
-`bin/tdc-telemetry-backend`.
+`bin/ti-telemetry-backend`.
 `make build-telemetry-migrator` writes the one-shot Goose migration runner to
-`bin/tdc-telemetry-migrate`.
+`bin/ti-telemetry-migrate`.
 
 `make test` runs ordinary Go tests and must not require live cloud credentials.
-`make e2e` builds `bin/tdc` and runs black-box tests against the real binary via
-`TDC_E2E_BIN`.
+`make e2e` builds `bin/ti` and runs black-box tests against the real binary via
+`TI_E2E_BIN`.
 `make telemetry-e2e` is separately opt-in. It loads the ignored
-`e2e/.env.telemetry` file, requires a test-only `TDC_TEST_TELEMETRY_TIDB_DSN`
+`e2e/.env.telemetry` file, requires a test-only `TI_TEST_TELEMETRY_TIDB_DSN`
 whose user can create and drop databases, and creates a unique temporary TiDB
 database. It verifies Goose initialization from empty state, an additive
 upgrade preserving a legacy event, and the real local CLI-to-backend-to-TiDB
 delivery path before dropping only that temporary database. It must not run as
 part of `make test`, `make e2e`, or any live-e2e target.
-The `make live-e2e-<family>` targets build `bin/tdc` and run only the selected
+The `make live-e2e-<family>` targets build `bin/ti` and run only the selected
 top-level command family against the `live-e2e` profile by default. Keep
 configure, organization, db, fs, fs-git, fs-journal, and fs-vault tests
 independently selectable. Do not make a focused family target run tests from a
@@ -234,18 +240,18 @@ the profile for both focused and complete live targets.
 Live e2e must strictly cover every implemented interface and command for the
 current project stage, including real create/update/delete flows when those
 commands are implemented. For Starter DB clusters, the live suite creates a
-uniquely named `tdc-e2e-*` cluster with `--wait`, without a
+uniquely named `ti-e2e-*` cluster with `--wait`, without a
 spending limit or explicit/configured project ID, verifies the returned state
 is `ACTIVE` and has a non-empty server-selected project label, and deletes only
 that cluster. The server-selected account default is not required to equal the
-`tidbx_virtual` project discovered by `tdc configure`. For Starter DB branches,
-the live suite creates, reads, lists, and deletes only a `tdc-e2e-branch-*`
+`tidbx_virtual` project discovered by `ti configure`. For Starter DB branches,
+the live suite creates, reads, lists, and deletes only a `ti-e2e-branch-*`
 branch on the cluster created by the same test run. Branch creation must use
-`--wait`; cluster deletion must use `--wait`. For Starter DB SQL access, the live suite prepares tdc-managed
+`--wait`; cluster deletion must use `--wait`. For Starter DB SQL access, the live suite prepares ti-managed
 read-only, read-write, and admin SQL users on the temporary cluster, verifies
 connection string output, and executes the HTTPS SQL API with all three access
 modes.
-For tdc fs data-plane and mount runtime, the live suite creates uniquely named
+For ti fs data-plane and mount runtime, the live suite creates uniquely named
 remote paths, exercises real file create/read/list/copy/move/delete flows,
 range reads, append, resume, recursive local/remote copy, stdin/stdout copy,
 tags/descriptions, chmod, symlink, hardlink, pack/unpack, real public layer
@@ -256,9 +262,9 @@ journal create/append/read/search/verify, public Git clone/hydrate/worktree
 flows, mount and drain through the companion runtime, and explicit WebDAV
 fallback when the platform supports it.
 If remote inventory has no resource with a local token, the suite creates one
-temporary tdc fs resource, records the server-assigned ID, and deletes only
+temporary ti fs resource, records the server-assigned ID, and deletes only
 that ID before the DB lifecycle needs the Starter slot or when the process
-exits. `TDC_LIVE_FS_ID` may select a remotely visible resource that already has
+exits. `TI_LIVE_FS_ID` may select a remotely visible resource that already has
 local credentials. Never delete a pre-existing resource to make room for a
 test. Fake-companion e2e covers multiple remote resources and ID routing.
 When a service command is implemented, add its real live verification to
@@ -270,7 +276,7 @@ For focused work, direct Go commands are also fine:
 ```bash
 go test ./...
 go test ./internal/config -run TestName
-go build ./cmd/tdc
+go build ./cmd/ti
 ```
 
 Build and release artifacts are ignored through `.gitignore`. Do not commit
@@ -284,9 +290,9 @@ that rewrite unrelated files.
 Current layout:
 
 ```text
-cmd/tdc/                    CLI entrypoint
-cmd/tdc-telemetry-backend/  independent telemetry ingestion service entrypoint
-cmd/tdc-telemetry-migrate/  one-shot embedded Goose migration runner
+cmd/ti/                    CLI entrypoint
+cmd/ti-telemetry-backend/  independent telemetry ingestion service entrypoint
+cmd/ti-telemetry-migrate/  one-shot embedded Goose migration runner
 internal/api/               shared HTTP API client and service clients
 internal/api/endpoints/     provider/region endpoint resolver
 internal/api/transport/     Digest/Bearer/debug HTTP transports
@@ -296,7 +302,9 @@ internal/authz/             permission constants and permission errors
 internal/cli/               command wiring
 internal/config/            profile loading and precedence rules
 internal/config/configure/  interactive configure wizard
-internal/config/fsresource/ legacy flat tdc fs migration key names
+internal/config/envcompat/  canonical and legacy environment compatibility
+internal/config/fsresource/ legacy flat ti fs migration key names
+internal/config/homemigration/ atomic pre-v0.2 state migration
 internal/config/region/     provider and region validation
 internal/config/store/      TOML read/write, file modes, atomic writes
 internal/db/                DB type discovery, capability dispatch, and pagination
@@ -311,8 +319,8 @@ internal/db/sqlresult/      SQL result model and decoding
 internal/db/sqlsingle/      one-statement validation
 internal/db/validate/       DB flag and request validation helpers
 internal/dryrun/            shared dry-run result envelope
-internal/fs/                tdc fs control-plane, data-plane, and mount use cases
-internal/fs/fscred/         ID-keyed tdc fs credentials, selection, and legacy migration
+internal/fs/                ti fs control-plane, data-plane, and mount use cases
+internal/fs/fscred/         ID-keyed ti fs credentials, selection, and legacy migration
 internal/fs/mountlocator/   non-secret Drive9 background mount routing state
 internal/oplog/             local JSONL operation log writer
 internal/output/            structured JSON/text/raw rendering
@@ -341,40 +349,42 @@ without underscores.
 
 Follow these rules unless `docs/priciples.md` is updated:
 
-- The command tree is at most two levels: `tdc <command> [subcommand]`.
-- `tdc configure` and `tdc update` are the only intentional top-level verb
-  exceptions. `tdc configure` is the only interactive command.
+- The command tree is at most two levels: `ti <command> [subcommand]`.
+- `ti configure` and `ti update` are the only intentional top-level verb
+  exceptions. `ti configure` is the only interactive command.
 - Other top-level commands are nouns such as `db`, `fs`, and `organization`.
 - Use long flags only, for example `--profile` and `--db-cluster-name`.
 - Do not add short flags or one-letter aliases. The current CLI rejects short
   flags before invoking Cobra.
-- `tdc fs` Unix-style aliases are command-name aliases only. They must keep the
+- `ti fs` Unix-style aliases are command-name aliases only. They must keep the
   same long flags, output modes, auth, permissions, dry-run behavior, and command
   handlers as their canonical commands.
-- Do not prompt for input except inside `tdc configure`.
+- Do not prompt for input except inside `ti configure`.
 - Successful structured control-plane commands output JSON by default.
 - Implement DB, organization, and fs control-plane commands through
   `controlPlaneCommandSpec` in `internal/cli`, so normal execution, dry-run,
   output rendering, and query handling stay on the shared path.
-- Each control-plane command must declare exactly one `authz.Permission` in its
-  command spec. Do not infer permissions from command names or SQL text.
+- Non-DB control-plane commands must declare exactly one `authz.Permission` in
+  their command spec. DB commands declare one `db.Operation`; the selected
+  product provider maps that operation to its permission. Do not infer
+  permissions from command names or SQL text.
 - Mutating control-plane commands support `--dry-run`.
 - `--dry-run` must validate local config, credentials, provider, and region
   before reporting a planned mutation.
-- `tdc db create-db-cluster --wait` waits up to 12 minutes for the
+- `ti db create-db-cluster --wait` waits up to 12 minutes for the
   created cluster to reach `ACTIVE`. It must never delete the cluster on
   timeout, cancellation, a polling failure, or a terminal state; errors must
   retain the created cluster ID and provide an inspection command.
-- `tdc db create-db-cluster-branch --wait` waits up to 5 minutes
+- `ti db create-db-cluster-branch --wait` waits up to 5 minutes
   for the created branch to reach `ACTIVE`. A failed wait must not delete or
   recreate the accepted branch.
-- `tdc db delete-db-cluster --wait` waits up to 12 minutes and
+- `ti db delete-db-cluster --wait` waits up to 12 minutes and
   succeeds when the API reports `DELETED` or the deleted cluster is no longer
   accessible. A failed wait must state that deletion may still be in progress.
-- `tdc fs create-file-system --wait` waits up to 10 minutes for the
+- `ti fs create-file-system --wait` waits up to 10 minutes for the
   root to become readable through the public Drive9 CLI. It must retain the
   resource and local credentials when waiting fails.
-- `tdc fs delete-file-system` is asynchronous. After Drive9 accepts deletion,
+- `ti fs delete-file-system` is asynchronous. After Drive9 accepts deletion,
   output status is `deleting`, not `deleted`.
 - Read-only commands reject `--dry-run`.
 - Apply `--query` after command execution and before rendering.
@@ -386,19 +396,19 @@ Follow these rules unless `docs/priciples.md` is updated:
   legacy fallback, and dispatch through capability interfaces. Reject
   recognized but unsupported products and missing, unknown, or conflicting
   plans before the product operation.
-- Only `tdc db` uses dynamic operation-to-permission mapping. Keep FS and
+- Only `ti db` uses dynamic operation-to-permission mapping. Keep FS and
   organization command permissions static. The CLI composition root registers
   product resolvers/providers; the root `internal/db` package must not import
   child product packages.
-- `tdc db list-db-clusters --db-cluster-type starter` adds an immutable API
+- `ti db list-db-clusters --db-cluster-type starter` adds an immutable API
   filter for the effective provider and region, scans upstream pages of 100,
-  and incrementally fills the requested tdc page with verified Starter
-  clusters. Never load all account clusters into memory. Return a tdc-owned
+  and incrementally fills the requested ti page with verified Starter
+  clusters. Never load all account clusters into memory. Return a ti-owned
   opaque cursor that binds profile, type, region, filter, and order and records
   replay offset/fingerprint. Do not expose the upstream token or total size.
   Missing or conflicting region metadata is excluded.
 - The global `--region <canonical-region-code>` flag overrides placement for
-  the current command only. It has higher priority than `TDC_REGION_CODE` and
+  the current command only. It has higher priority than `TI_REGION_CODE` and
   profile `region_code`, but it must not change the selected profile or
   credential source.
 - Every command should be usable by scripts and agents without
@@ -407,277 +417,299 @@ Follow these rules unless `docs/priciples.md` is updated:
   request template. If it does, follow that template when writing the pull
   request description.
 - Help must work as:
-  - `tdc help`
-  - `tdc <command> help`
-  - `tdc <command> <subcommand> help`
+  - `ti help`
+  - `ti <command> help`
+  - `ti <command> <subcommand> help`
 - In generated Flags and Global Flags sections, render value types as
   `<type>` and append `(required)` to flags marked with
-  `tdc_usage_required`.
+  `ti_usage_required`.
 - Keep the global `--version` behavior intact at every command level. Do not
   add command-specific `--version <value>` flags; use names such as
   `--target-version` when a command needs a version input.
-- `tdc update --check` and `tdc update` use GitHub Releases metadata and
-  must not read or mutate `~/.tdc/`.
-- `tdc update` may replace only tdc-owned archive/script installs. It must
+- `ti update --check` and `ti update` use GitHub Releases metadata and
+  must not read or mutate `~/.ti/` or inspect/migrate `~/.ti/`.
+- `ti update` may replace only ti-owned archive/script installs. It must
   refuse local, unknown, Homebrew, Scoop, Winget, or other package-manager
   installs with actionable guidance.
-- `tdc update` is itself explicit update intent and must not require `--yes`.
+- `ti update` is itself explicit update intent and must not require `--yes`.
   It downloads, extracts, verifies, stages, and replaces artifacts as the
   current user and must never invoke sudo or another privilege escalation
   mechanism.
-- Installer scripts default to the stable user-owned `~/.tdc/bin` directory on
+- Installer scripts default to the stable user-owned `~/.ti/bin` directory on
   macOS, Linux, and Windows unless `--install-dir`/`-InstallDir` or
-  `TDC_INSTALL_DIR` overrides it. They must not prefer or overwrite an active
-  system-level tdc found on PATH, invoke sudo, create system-directory
+  `TI_INSTALL_DIR` overrides it. They must not prefer or overwrite an active
+  system-level ti found on PATH, invoke sudo, create system-directory
   symlinks, or modify shell profile files automatically.
-- Installer scripts must detect PATH shadowing, bootstrap `~/.tdc/config` only
-  when missing, print the exact command that prepends `~/.tdc/bin` to PATH,
-  print DB and tdc fs region lists, and show clear next steps. They must never
-  write `~/.tdc/credentials`.
+- Installer scripts must detect PATH shadowing, bootstrap `~/.ti/config` only
+  when missing, print the exact command that prepends `~/.ti/bin` to PATH,
+  print DB and ti fs region lists, and show clear next steps. They must never
+  write `~/.ti/credentials`.
+- Installer scripts must invoke the staged `ti` binary's shared home migration
+  before creating the default `~/.ti/bin` destination. Do not duplicate state
+  copying in shell or PowerShell.
 
 ## Commands
 
 Implemented command behavior:
 
-- `tdc` without a command returns `cli.missing_command` with exit code `2` and
+- `ti` without a command returns `cli.missing_command` with exit code `2` and
   an AWS-style compact two-level usage synopsis on stderr
-- `tdc configure`
-- `tdc configure --non-interactive`
-- `tdc help`
-- `tdc --version`
-- `tdc <command> help`
-- `tdc <command> <subcommand> help`
-- `tdc <command> --version`
-- `tdc <command> <subcommand> --version`
-- `tdc update --check`
-- `tdc update --check --fail-if-update-available`
-- `tdc update --dry-run`
-- `tdc update`
-- `tdc update --target-version v0.1.1`
-- `tdc organization list-projects`
-- `tdc organization list-projects --query 'projects[0].id'`
-- `tdc organization list-projects --output text`
-- `tdc db create-db-cluster --db-cluster-type starter --db-cluster-name demo`
-- `tdc db create-db-cluster --db-cluster-type starter --db-cluster-name demo --wait`
-- `tdc db create-db-cluster --db-cluster-type starter --db-cluster-name demo --dry-run`
-- `tdc db create-db-cluster --db-cluster-type starter --db-cluster-name demo --project-id <project-id>`
-- `tdc db list-db-clusters --db-cluster-type starter`
-- `tdc db list-db-clusters --db-cluster-type starter --query 'clusters[].id'`
-- `tdc db describe-db-cluster --db-cluster-id <cluster-id>`
-- `tdc db update-db-cluster --db-cluster-id <cluster-id> --db-cluster-name new-name`
-- `tdc db update-db-cluster --db-cluster-id <cluster-id> --monthly-spending-limit-usd-cents 1000 --dry-run`
-- `tdc db delete-db-cluster --db-cluster-id <cluster-id>`
-- `tdc db delete-db-cluster --db-cluster-id <cluster-id> --wait`
-- `tdc db delete-db-cluster --db-cluster-id <cluster-id> --dry-run`
-- `tdc db create-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-name dev`
-- `tdc db create-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-name dev --wait`
-- `tdc db create-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-name dev --dry-run`
-- `tdc db list-db-cluster-branches --db-cluster-id <cluster-id>`
-- `tdc db list-db-cluster-branches --db-cluster-id <cluster-id> --query 'branches[].id'`
-- `tdc db list-db-cluster-branches --db-cluster-id <cluster-id> --output text`
-- `tdc db describe-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-id <branch-id>`
-- `tdc db delete-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-id <branch-id>`
-- `tdc db delete-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-id <branch-id> --dry-run`
-- `tdc db create-db-sql-users --db-cluster-id <cluster-id>`
-- `tdc db create-db-sql-users --db-cluster-id <cluster-id> --dry-run`
-- `tdc db format-db-connection-string --db-cluster-id <cluster-id>`
-- `tdc db format-db-connection-string --db-cluster-id <cluster-id> --read-write --format mysql-uri`
-- `tdc db format-db-connection-string --db-cluster-id <cluster-id> --read-only --format env`
-- `tdc db format-db-connection-string --db-cluster-id <cluster-id> --admin --format jdbc`
-- `tdc db execute-sql-statement --db-cluster-id <cluster-id> --sql "select 1"`
-- `tdc db execute-sql-statement --db-cluster-id <cluster-id> --read-write --sql "select 1"`
-- `tdc db execute-sql-statement --db-cluster-id <cluster-id> --read-only --sql "select 1"`
-- `tdc db execute-sql-statement --db-cluster-id <cluster-id> --admin --sql "select 1"`
-- `tdc db execute-sql-statement --db-cluster-id <cluster-id> --transport https --sql "select 1"`
-- `tdc db execute-sql-statement --db-cluster-id <cluster-id> --transport mysql --sql "select 1"`
-- `tdc fs create-file-system`
-- `tdc fs create-file-system --wait`
-- `tdc fs create-file-system --dry-run`
-- `tdc fs import-file-system-token --from-file ./fs-token`
-- `tdc fs delete-file-system --file-system-id <file-system-id>`
-- `tdc fs delete-file-system --file-system-id <file-system-id> --dry-run`
-- `tdc fs list-file-systems`
-- `tdc fs describe-file-system --file-system-id <file-system-id>`
-- `tdc fs check-file-system`
-- `tdc fs check-file-system --file-system-id <file-system-id>`
-- `tdc fs copy-file --from-local ./README.md --to-remote /workspace/README.md`
-- `tdc fs copy-file --from-remote /workspace/README.md --to-local ./README.copy.md --create-parents`
-- `tdc fs copy-file --from-remote /workspace/README.md --to-remote /workspace/README.copy.md`
-- `tdc fs read-file --path /workspace/README.md`
-- `tdc fs read-file --path /workspace/README.md --offset 0 --length 1024`
-- `tdc fs copy-file --from-local ./tail.log --to-remote /workspace/app.log --append`
-- `tdc fs copy-file --from-remote /workspace/large.bin --to-local ./large.bin --resume`
-- `tdc fs copy-file --from-local ./large.bin --to-remote /workspace/large.bin --resume`
-- `tdc fs copy-file --from-local ./src-dir --to-remote /workspace/src-dir --recursive`
-- `tdc fs copy-file --from-remote /workspace/src-dir --to-local ./src-dir.copy --recursive`
-- `tdc fs copy-file --from-remote /workspace/src-dir --to-remote /workspace/src-dir.copy --recursive`
-- `tdc fs copy-file --from-stdin --to-remote /workspace/stdin.txt --tag source=stdin --description "stdin upload"`
-- `tdc fs copy-file --from-remote /workspace/stdin.txt --to-stdout`
-- `tdc fs list-files --path /workspace`
-- `tdc fs list-files --path /workspace --output text`
-- `tdc fs describe-file --path /workspace/README.md`
-- `tdc fs move-file --from-remote /workspace/README.copy.md --to-remote /workspace/archive/README.md`
-- `tdc fs delete-file --path /workspace/archive/README.md`
-- `tdc fs delete-file --path /workspace --recursive`
-- `tdc fs create-directory --path /workspace/archive --mode 0755`
-- `tdc fs chmod-file --path /workspace/README.md --mode 0600`
-- `tdc fs create-symlink --target README.md --link-path /workspace/README.link`
-- `tdc fs create-hardlink --source-path /workspace/README.md --link-path /workspace/README.hard`
-- `tdc fs search-file-content --path /workspace --pattern "hello"`
-- `tdc fs search-file-content --path /workspace --pattern "hello" --layer-id layer-1`
-- `tdc fs find-files --path /workspace --file-name-pattern "*.md"`
-- `tdc fs find-files --path /workspace --file-name-pattern "*.md" --layer-id layer-1`
-- `tdc fs create-layer --layer-id layer-1 --base-root-path /workspace --layer-name task --durability-mode restore-safe --tag task=auth`
-- `tdc fs list-layers`
-- `tdc fs list-layers --output text`
-- `tdc fs describe-layer --layer-id layer-1`
-- `tdc fs diff-layer --layer-id layer-1`
-- `tdc fs copy-file --from-local ./README.md --to-remote /workspace/layered.md --layer-id layer-1`
-- `tdc fs create-layer-checkpoint --layer-id layer-1 --checkpoint-id cp-1 --label before-commit`
-- `tdc fs rollback-layer --layer-id layer-1`
-- `tdc fs commit-layer --layer-id layer-1`
-- `tdc fs pack-file-system --local-root ~/.tdc/local/fs/demo --remote-root /workspace --mount-profile portable`
-- `tdc fs pack-file-system --mount-path ./workspace`
-- `tdc fs unpack-file-system --local-root ~/.tdc/local/fs/demo --remote-root /workspace --mount-profile portable`
-- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace`
-- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse`
-- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver webdav`
-- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile coding-agent`
-- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile portable --pack-path /`
-- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --read-cache-size-mb 256 --read-cache-max-file-mb 16`
-- `tdc fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --cache-dir ~/.tdc/cache/workspace --write-back-cache=false`
-- `tdc fs drain-file-system --mount-path ./workspace`
-- `tdc fs drain-file-system --mount-path ./workspace --timeout 30s`
-- `tdc fs unmount-file-system --mount-path ./workspace`
-- `tdc fs unmount-file-system --mount-path ./workspace --ignore-absent`
-- `tdc fs-vault create-secret --secret-name db-prod --field DB_URL=mysql://example --field PASSWORD=@./password.txt`
-- `tdc fs-vault replace-secret --secret-path /n/vault/db-prod --from-directory ./secret-fields`
-- `tdc fs-vault read-secret --secret-name db-prod`
-- `tdc fs-vault read-secret --secret-name db-prod --field PASSWORD --format raw`
-- `tdc fs-vault read-secret --secret-name db-prod --field DB_URL --format env`
-- `tdc fs-vault list-secrets`
-- `tdc fs-vault delete-secret --secret-name db-prod`
-- `tdc fs-vault create-grant --agent-id deploy-agent --scope db-prod/DB_URL --permission read --ttl 10m`
-- `tdc fs-vault delete-grant --grant-id <grant-id> --reason rotated`
-- `tdc fs-vault list-audit-events --secret-name db-prod --limit 20`
-- `tdc fs-vault run-with-secret --secret-path /n/vault/db-prod -- env`
-- `tdc fs-vault mount-vault --mount-path ./vault --vault-token "$TDC_VAULT_TOKEN"`
-- `tdc fs-vault unmount-vault --mount-path ./vault`
-- `tdc fs-journal create-journal --journal-id jrn-demo --journal-kind agent --title "demo task" --actor agent:tdc --label env=dev`
-- `tdc fs-journal append-journal-entries --journal-id jrn-demo --entry-json '{"type":"task.started"}'`
-- `tdc fs-journal read-journal-entries --journal-id jrn-demo --after-seq 0 --limit 100`
-- `tdc fs-journal search-journal-entries --entry-type task.started --label env=dev --include-entries`
-- `tdc fs-journal verify-journal --journal-id jrn-demo --output text`
-- `tdc fs-git clone-git-workspace --repo-url https://github.com/pingcap/tidb.git --target-path ./workspace/tidb`
-- `tdc fs-git clone-git-workspace --repo-url https://github.com/pingcap/tidb.git --target-path ./workspace/tidb --blobless --hydrate sync`
-- `tdc fs-git hydrate-git-workspace --target-path ./workspace/tidb --timeout 30m`
-- `tdc fs-git add-git-worktree --base-path ./workspace/tidb --worktree-path ./workspace/tidb-feature --branch-name feature-x`
-- `tdc fs-git remove-git-worktree --worktree-path ./workspace/tidb-feature --force`
+- `ti configure`
+- `ti configure --non-interactive`
+- `ti help`
+- `ti --version`
+- `ti <command> help`
+- `ti <command> <subcommand> help`
+- `ti <command> --version`
+- `ti <command> <subcommand> --version`
+- `ti update --check`
+- `ti update --check --fail-if-update-available`
+- `ti update --dry-run`
+- `ti update`
+- `ti update --target-version v0.1.1`
+- `ti organization list-projects`
+- `ti organization list-projects --query 'projects[0].id'`
+- `ti organization list-projects --output text`
+- `ti db create-db-cluster --db-cluster-type starter --db-cluster-name demo`
+- `ti db create-db-cluster --db-cluster-type starter --db-cluster-name demo --wait`
+- `ti db create-db-cluster --db-cluster-type starter --db-cluster-name demo --dry-run`
+- `ti db create-db-cluster --db-cluster-type starter --db-cluster-name demo --project-id <project-id>`
+- `ti db list-db-clusters --db-cluster-type starter`
+- `ti db list-db-clusters --db-cluster-type starter --query 'clusters[].id'`
+- `ti db describe-db-cluster --db-cluster-id <cluster-id>`
+- `ti db update-db-cluster --db-cluster-id <cluster-id> --db-cluster-name new-name`
+- `ti db update-db-cluster --db-cluster-id <cluster-id> --monthly-spending-limit-usd-cents 1000 --dry-run`
+- `ti db delete-db-cluster --db-cluster-id <cluster-id>`
+- `ti db delete-db-cluster --db-cluster-id <cluster-id> --wait`
+- `ti db delete-db-cluster --db-cluster-id <cluster-id> --dry-run`
+- `ti db create-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-name dev`
+- `ti db create-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-name dev --wait`
+- `ti db create-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-name dev --dry-run`
+- `ti db list-db-cluster-branches --db-cluster-id <cluster-id>`
+- `ti db list-db-cluster-branches --db-cluster-id <cluster-id> --query 'branches[].id'`
+- `ti db list-db-cluster-branches --db-cluster-id <cluster-id> --output text`
+- `ti db describe-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-id <branch-id>`
+- `ti db delete-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-id <branch-id>`
+- `ti db delete-db-cluster-branch --db-cluster-id <cluster-id> --db-cluster-branch-id <branch-id> --dry-run`
+- `ti db create-db-sql-users --db-cluster-id <cluster-id>`
+- `ti db create-db-sql-users --db-cluster-id <cluster-id> --dry-run`
+- `ti db format-db-connection-string --db-cluster-id <cluster-id>`
+- `ti db format-db-connection-string --db-cluster-id <cluster-id> --read-write --format mysql-uri`
+- `ti db format-db-connection-string --db-cluster-id <cluster-id> --read-only --format env`
+- `ti db format-db-connection-string --db-cluster-id <cluster-id> --admin --format jdbc`
+- `ti db execute-sql-statement --db-cluster-id <cluster-id> --sql "select 1"`
+- `ti db execute-sql-statement --db-cluster-id <cluster-id> --read-write --sql "select 1"`
+- `ti db execute-sql-statement --db-cluster-id <cluster-id> --read-only --sql "select 1"`
+- `ti db execute-sql-statement --db-cluster-id <cluster-id> --admin --sql "select 1"`
+- `ti db execute-sql-statement --db-cluster-id <cluster-id> --transport https --sql "select 1"`
+- `ti db execute-sql-statement --db-cluster-id <cluster-id> --transport mysql --sql "select 1"`
+- `ti fs create-file-system`
+- `ti fs create-file-system --wait`
+- `ti fs create-file-system --dry-run`
+- `ti fs import-file-system-token --from-file ./fs-token`
+- `ti fs delete-file-system --file-system-id <file-system-id>`
+- `ti fs delete-file-system --file-system-id <file-system-id> --dry-run`
+- `ti fs list-file-systems`
+- `ti fs describe-file-system --file-system-id <file-system-id>`
+- `ti fs check-file-system`
+- `ti fs check-file-system --file-system-id <file-system-id>`
+- `ti fs copy-file --from-local ./README.md --to-remote /workspace/README.md`
+- `ti fs copy-file --from-remote /workspace/README.md --to-local ./README.copy.md --create-parents`
+- `ti fs copy-file --from-remote /workspace/README.md --to-remote /workspace/README.copy.md`
+- `ti fs read-file --path /workspace/README.md`
+- `ti fs read-file --path /workspace/README.md --offset 0 --length 1024`
+- `ti fs copy-file --from-local ./tail.log --to-remote /workspace/app.log --append`
+- `ti fs copy-file --from-remote /workspace/large.bin --to-local ./large.bin --resume`
+- `ti fs copy-file --from-local ./large.bin --to-remote /workspace/large.bin --resume`
+- `ti fs copy-file --from-local ./src-dir --to-remote /workspace/src-dir --recursive`
+- `ti fs copy-file --from-remote /workspace/src-dir --to-local ./src-dir.copy --recursive`
+- `ti fs copy-file --from-remote /workspace/src-dir --to-remote /workspace/src-dir.copy --recursive`
+- `ti fs copy-file --from-stdin --to-remote /workspace/stdin.txt --tag source=stdin --description "stdin upload"`
+- `ti fs copy-file --from-remote /workspace/stdin.txt --to-stdout`
+- `ti fs list-files --path /workspace`
+- `ti fs list-files --path /workspace --output text`
+- `ti fs describe-file --path /workspace/README.md`
+- `ti fs move-file --from-remote /workspace/README.copy.md --to-remote /workspace/archive/README.md`
+- `ti fs delete-file --path /workspace/archive/README.md`
+- `ti fs delete-file --path /workspace --recursive`
+- `ti fs create-directory --path /workspace/archive --mode 0755`
+- `ti fs chmod-file --path /workspace/README.md --mode 0600`
+- `ti fs create-symlink --target README.md --link-path /workspace/README.link`
+- `ti fs create-hardlink --source-path /workspace/README.md --link-path /workspace/README.hard`
+- `ti fs search-file-content --path /workspace --pattern "hello"`
+- `ti fs search-file-content --path /workspace --pattern "hello" --layer-id layer-1`
+- `ti fs find-files --path /workspace --file-name-pattern "*.md"`
+- `ti fs find-files --path /workspace --file-name-pattern "*.md" --layer-id layer-1`
+- `ti fs create-layer --layer-id layer-1 --base-root-path /workspace --layer-name task --durability-mode restore-safe --tag task=auth`
+- `ti fs list-layers`
+- `ti fs list-layers --output text`
+- `ti fs describe-layer --layer-id layer-1`
+- `ti fs diff-layer --layer-id layer-1`
+- `ti fs copy-file --from-local ./README.md --to-remote /workspace/layered.md --layer-id layer-1`
+- `ti fs create-layer-checkpoint --layer-id layer-1 --checkpoint-id cp-1 --label before-commit`
+- `ti fs rollback-layer --layer-id layer-1`
+- `ti fs commit-layer --layer-id layer-1`
+- `ti fs pack-file-system --local-root ~/.ti/local/fs/demo --remote-root /workspace --mount-profile portable`
+- `ti fs pack-file-system --mount-path ./workspace`
+- `ti fs unpack-file-system --local-root ~/.ti/local/fs/demo --remote-root /workspace --mount-profile portable`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver webdav`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile coding-agent`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile portable --pack-path /`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --read-cache-size-mb 256 --read-cache-max-file-mb 16`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --cache-dir ~/.ti/cache/workspace --write-back-cache=false`
+- `ti fs drain-file-system --mount-path ./workspace`
+- `ti fs drain-file-system --mount-path ./workspace --timeout 30s`
+- `ti fs unmount-file-system --mount-path ./workspace`
+- `ti fs unmount-file-system --mount-path ./workspace --ignore-absent`
+- `ti fs-vault create-secret --secret-name db-prod --field DB_URL=mysql://example --field PASSWORD=@./password.txt`
+- `ti fs-vault replace-secret --secret-path /n/vault/db-prod --from-directory ./secret-fields`
+- `ti fs-vault read-secret --secret-name db-prod`
+- `ti fs-vault read-secret --secret-name db-prod --field PASSWORD --format raw`
+- `ti fs-vault read-secret --secret-name db-prod --field DB_URL --format env`
+- `ti fs-vault list-secrets`
+- `ti fs-vault delete-secret --secret-name db-prod`
+- `ti fs-vault create-grant --agent-id deploy-agent --scope db-prod/DB_URL --permission read --ttl 10m`
+- `ti fs-vault delete-grant --grant-id <grant-id> --reason rotated`
+- `ti fs-vault list-audit-events --secret-name db-prod --limit 20`
+- `ti fs-vault run-with-secret --secret-path /n/vault/db-prod -- env`
+- `ti fs-vault mount-vault --mount-path ./vault --vault-token "$TI_VAULT_TOKEN"`
+- `ti fs-vault unmount-vault --mount-path ./vault`
+- `ti fs-journal create-journal --journal-id jrn-demo --journal-kind agent --title "demo task" --actor agent:ti --label env=dev`
+- `ti fs-journal append-journal-entries --journal-id jrn-demo --entry-json '{"type":"task.started"}'`
+- `ti fs-journal read-journal-entries --journal-id jrn-demo --after-seq 0 --limit 100`
+- `ti fs-journal search-journal-entries --entry-type task.started --label env=dev --include-entries`
+- `ti fs-journal verify-journal --journal-id jrn-demo --output text`
+- `ti fs-git clone-git-workspace --repo-url https://github.com/pingcap/tidb.git --target-path ./workspace/tidb`
+- `ti fs-git clone-git-workspace --repo-url https://github.com/pingcap/tidb.git --target-path ./workspace/tidb --blobless --hydrate sync`
+- `ti fs-git hydrate-git-workspace --target-path ./workspace/tidb --timeout 30m`
+- `ti fs-git add-git-worktree --base-path ./workspace/tidb --worktree-path ./workspace/tidb-feature --branch-name feature-x`
+- `ti fs-git remove-git-worktree --worktree-path ./workspace/tidb-feature --force`
 
 Registered command surface:
 
-- `tdc update --check`
-- `tdc update`
-- `tdc organization list-projects`
-- `tdc db create-db-cluster`
-- `tdc db list-db-clusters`
-- `tdc db describe-db-cluster`
-- `tdc db update-db-cluster`
-- `tdc db delete-db-cluster`
-- `tdc db create-db-cluster-branch`
-- `tdc db list-db-cluster-branches`
-- `tdc db describe-db-cluster-branch`
-- `tdc db delete-db-cluster-branch`
-- `tdc db create-db-sql-users`
-- `tdc db format-db-connection-string`
-- `tdc db execute-sql-statement`
-- `tdc fs create-file-system`
-- `tdc fs import-file-system-token`
-- `tdc fs delete-file-system`
-- `tdc fs list-file-systems`
-- `tdc fs describe-file-system`
-- `tdc fs check-file-system`
-- `tdc fs copy-file`
-- `tdc fs read-file`
-- `tdc fs list-files`
-- `tdc fs describe-file`
-- `tdc fs move-file`
-- `tdc fs delete-file`
-- `tdc fs create-directory`
-- `tdc fs chmod-file`
-- `tdc fs create-symlink`
-- `tdc fs create-hardlink`
-- `tdc fs search-file-content`
-- `tdc fs find-files`
-- `tdc fs create-layer`
-- `tdc fs list-layers`
-- `tdc fs describe-layer`
-- `tdc fs diff-layer`
-- `tdc fs create-layer-checkpoint`
-- `tdc fs rollback-layer`
-- `tdc fs commit-layer`
-- `tdc fs pack-file-system`
-- `tdc fs unpack-file-system`
-- `tdc fs mount-file-system`
-- `tdc fs drain-file-system`
-- `tdc fs unmount-file-system`
-- `tdc fs cp` aliases `tdc fs copy-file`
-- `tdc fs cat` aliases `tdc fs read-file`
-- `tdc fs ls` aliases `tdc fs list-files`
-- `tdc fs stat` aliases `tdc fs describe-file`
-- `tdc fs mv` aliases `tdc fs move-file`
-- `tdc fs rm` aliases `tdc fs delete-file`
-- `tdc fs mkdir` aliases `tdc fs create-directory`
-- `tdc fs chmod` aliases `tdc fs chmod-file`
-- `tdc fs symlink` aliases `tdc fs create-symlink`
-- `tdc fs hardlink` aliases `tdc fs create-hardlink`
-- `tdc fs grep` aliases `tdc fs search-file-content`
-- `tdc fs find` aliases `tdc fs find-files`
-- `tdc fs mount` aliases `tdc fs mount-file-system`
-- `tdc fs drain` aliases `tdc fs drain-file-system`
-- `tdc fs umount` aliases `tdc fs unmount-file-system`
-- `tdc fs-vault create-secret`
-- `tdc fs-vault replace-secret`
-- `tdc fs-vault read-secret`
-- `tdc fs-vault list-secrets`
-- `tdc fs-vault delete-secret`
-- `tdc fs-vault create-grant`
-- `tdc fs-vault delete-grant`
-- `tdc fs-vault list-audit-events`
-- `tdc fs-vault run-with-secret`
-- `tdc fs-vault mount-vault`
-- `tdc fs-vault unmount-vault`
-- `tdc fs-journal create-journal`
-- `tdc fs-journal append-journal-entries`
-- `tdc fs-journal read-journal-entries`
-- `tdc fs-journal search-journal-entries`
-- `tdc fs-journal verify-journal`
-- `tdc fs-git clone-git-workspace`
-- `tdc fs-git hydrate-git-workspace`
-- `tdc fs-git add-git-worktree`
-- `tdc fs-git remove-git-worktree`
+- `ti update --check`
+- `ti update`
+- `ti organization list-projects`
+- `ti db create-db-cluster`
+- `ti db list-db-clusters`
+- `ti db describe-db-cluster`
+- `ti db update-db-cluster`
+- `ti db delete-db-cluster`
+- `ti db create-db-cluster-branch`
+- `ti db list-db-cluster-branches`
+- `ti db describe-db-cluster-branch`
+- `ti db delete-db-cluster-branch`
+- `ti db create-db-sql-users`
+- `ti db format-db-connection-string`
+- `ti db execute-sql-statement`
+- `ti fs create-file-system`
+- `ti fs import-file-system-token`
+- `ti fs delete-file-system`
+- `ti fs list-file-systems`
+- `ti fs describe-file-system`
+- `ti fs check-file-system`
+- `ti fs copy-file`
+- `ti fs read-file`
+- `ti fs list-files`
+- `ti fs describe-file`
+- `ti fs move-file`
+- `ti fs delete-file`
+- `ti fs create-directory`
+- `ti fs chmod-file`
+- `ti fs create-symlink`
+- `ti fs create-hardlink`
+- `ti fs search-file-content`
+- `ti fs find-files`
+- `ti fs create-layer`
+- `ti fs list-layers`
+- `ti fs describe-layer`
+- `ti fs diff-layer`
+- `ti fs create-layer-checkpoint`
+- `ti fs rollback-layer`
+- `ti fs commit-layer`
+- `ti fs pack-file-system`
+- `ti fs unpack-file-system`
+- `ti fs mount-file-system`
+- `ti fs drain-file-system`
+- `ti fs unmount-file-system`
+- `ti fs cp` aliases `ti fs copy-file`
+- `ti fs cat` aliases `ti fs read-file`
+- `ti fs ls` aliases `ti fs list-files`
+- `ti fs stat` aliases `ti fs describe-file`
+- `ti fs mv` aliases `ti fs move-file`
+- `ti fs rm` aliases `ti fs delete-file`
+- `ti fs mkdir` aliases `ti fs create-directory`
+- `ti fs chmod` aliases `ti fs chmod-file`
+- `ti fs symlink` aliases `ti fs create-symlink`
+- `ti fs hardlink` aliases `ti fs create-hardlink`
+- `ti fs grep` aliases `ti fs search-file-content`
+- `ti fs find` aliases `ti fs find-files`
+- `ti fs mount` aliases `ti fs mount-file-system`
+- `ti fs drain` aliases `ti fs drain-file-system`
+- `ti fs umount` aliases `ti fs unmount-file-system`
+- `ti fs-vault create-secret`
+- `ti fs-vault replace-secret`
+- `ti fs-vault read-secret`
+- `ti fs-vault list-secrets`
+- `ti fs-vault delete-secret`
+- `ti fs-vault create-grant`
+- `ti fs-vault delete-grant`
+- `ti fs-vault list-audit-events`
+- `ti fs-vault run-with-secret`
+- `ti fs-vault mount-vault`
+- `ti fs-vault unmount-vault`
+- `ti fs-journal create-journal`
+- `ti fs-journal append-journal-entries`
+- `ti fs-journal read-journal-entries`
+- `ti fs-journal search-journal-entries`
+- `ti fs-journal verify-journal`
+- `ti fs-git clone-git-workspace`
+- `ti fs-git hydrate-git-workspace`
+- `ti fs-git add-git-worktree`
+- `ti fs-git remove-git-worktree`
 
 Do not rename commands without updating specs, README, e2e tests, and AGENTS.
 Any code change that changes user-visible behavior must keep README.md in sync.
-It must also update the matching English tdc pages under
+It must also update the matching English ti pages under
 `docs/pingcap-docs/docs/` when the published behavior changes. Use globally
-unique `tdc-` basenames, preserve the standard Preview note on every page, and
+unique `ti-` basenames, preserve the standard Preview note on every page, and
 update `TOC-ai.md` and `ai/_index.md` when adding or removing a document.
 Validate command names and flags against the compiled CLI help, not historical
 specs or demos.
 
 ## Configuration And Credentials
 
-All tdc local state belongs under `~/.tdc/`.
+All ti local state belongs under `~/.ti/`.
 
-- `~/.tdc/config` stores profile-scoped non-sensitive TOML values.
-- `~/.tdc/credentials` stores profile-scoped sensitive TOML values.
+For v0.2.x, `internal/config/homemigration` performs a one-way migration when
+only `~/.tdc` exists. It copies only durable config, credential, preferences,
+telemetry identity, DB-user, and filesystem-registry state through a sibling
+staging directory, validates it, then atomically publishes `~/.ti`. It never
+modifies or deletes `~/.tdc`. Both homes, unsafe source files, or an active old
+mount are hard errors unless the new home contains the valid owner-only
+`.migrated-from-tdc` marker produced by the atomic migration. Runtime logs,
+caches, local data, mount locators, and the old Drive9 home are not migrated.
+Normal non-update commands and both installers use the same Go implementation;
+every update mode bypasses it.
+
+Canonical environment variables use `TI_*`, except TiDB Cloud API credentials
+which use `TIDB_CLOUD_PUBLIC_KEY` and `TIDB_CLOUD_PRIVATE_KEY`. During v0.2.x,
+the corresponding `TDC_*` variables are accepted only as deterministic legacy
+fallbacks. If both names are present with different values, fail with
+`config.environment_conflict` before local or remote mutation. Never print a
+legacy-variable warning into command output; operation logs may record only
+the deprecated variable name.
+
+- `~/.ti/config` stores profile-scoped non-sensitive TOML values.
+- `~/.ti/credentials` stores profile-scoped sensitive TOML values.
 - Both files use profile sections such as `[default]` and `[stage]`.
-- `~/.tdc/.preferences` is optional hidden global TOML configuration and is
-  never selected by profile. Fresh installs and `tdc configure` do not create
-  it. Do not create or migrate the unshipped intermediate `~/.tdc/settings`
+- `~/.ti/.preferences` is optional hidden global TOML configuration and is
+  never selected by profile. Fresh installs and `ti configure` do not create
+  it. Do not create or migrate the unshipped intermediate `~/.ti/settings`
   path.
-- `~/.tdc/.telemetry-installation-id` is a machine-generated pseudonymous
+- `~/.ti/.telemetry-installation-id` is a machine-generated pseudonymous
   telemetry identity, not TOML configuration. It is created lazily with mode
   `0600` only for an eligible, effectively enabled invocation with a
   build-configured endpoint. Users can delete it to reset the identity.
@@ -687,15 +719,15 @@ All tdc local state belongs under `~/.tdc/`.
 - The global `--profile` flag selects a profile when explicitly provided.
 - The global `--region` flag selects command-scope placement when explicitly
   provided and must reject an explicit empty value.
-- `tdc configure` writes canonical `region_code`, discovers the unique
-  `tidbx_virtual` project as `project_id`, and writes `tdc_public_key` and
-  `tdc_private_key`.
-- `tdc configure --non-interactive` must not prompt. It reads values from flags
-  first, then `TDC_REGION_CODE`, `TDC_PUBLIC_KEY`, and `TDC_PRIVATE_KEY`.
+- `ti configure` writes canonical `region_code`, discovers the unique
+  `tidbx_virtual` project as `project_id`, and writes
+  `tidb_cloud_public_key` and `tidb_cloud_private_key`.
+- `ti configure --non-interactive` must not prompt. It reads values from flags
+  first, then `TI_REGION_CODE`, `TIDB_CLOUD_PUBLIC_KEY`, and `TIDB_CLOUD_PRIVATE_KEY`.
   Missing values fail with an actionable error.
 - For CI/CD, prefer environment variables for private keys over command-line
   secret flags.
-- Interactive `tdc configure` must respond to Ctrl+C and surface an
+- Interactive `ti configure` must respond to Ctrl+C and surface an
   `interrupted` error with exit code 130.
 - The credentials file is restricted to owner read/write permissions where
   POSIX mode bits are meaningful.
@@ -703,42 +735,42 @@ All tdc local state belongs under `~/.tdc/`.
 Typical configured profile keys:
 
 ```toml
-# ~/.tdc/config
+# ~/.ti/config
 [default]
 region_code = "aws-us-east-1"
 project_id = "..."
 
-# ~/.tdc/credentials
+# ~/.ti/credentials
 [default]
-tdc_public_key = "..."
-tdc_private_key = "..."
+tidb_cloud_public_key = "..."
+tidb_cloud_private_key = "..."
 ```
 
-`project_id` is written by `tdc configure` but is not required to create a
+`project_id` is written by `ti configure` but is not required to create a
 Starter cluster. If it is absent and `--project-id` is not provided, the create
 request omits the project label and TiDB Cloud selects the account default.
 
-One profile can access multiple remotely inventoried tdc fs resources. The main
+One profile can access multiple remotely inventoried ti fs resources. The main
 config stores neither a default resource nor resource credentials.
 
 New local credentials are keyed by the server-assigned file system ID:
 
 ```text
-~/.tdc/fs_credentials/<profile-key>/<file-system-id-key>/credentials
+~/.ti/fs_credentials/<profile-key>/<file-system-id-key>/credentials
 ```
 
 Credential files contain `file_system_id`, canonical `region_code`, and
 `api_key`, use mode `0600`, and must never be written to the main
-`~/.tdc/credentials` file. Profile and ID path segments are safely encoded.
+`~/.ti/credentials` file. Profile and ID path segments are safely encoded.
 Remote Drive9 list/get is authoritative for inventory and status; local state
 only determines `has_local_token` and data-plane access.
 
-`tdc fs create-file-system` returns the stored owner credential as `fs_token`;
+`ti fs create-file-system` returns the stored owner credential as `fs_token`;
 this is the only ordinary command result that may reveal it. Treat `fs_token`
 as a secret and never include it in logs, telemetry, debug output, errors,
 mount locators, non-secret config, or test diagnostics.
 
-Legacy flat fields and name-keyed `~/.tdc/fs_resources` entries are migration
+Legacy flat fields and name-keyed `~/.ti/fs_resources` entries are migration
 input only. The first FS command copies complete credentials into the ID-keyed
 store without deleting name-keyed source files or old companion homes.
 Incomplete or conflicting state fails closed.
@@ -746,22 +778,22 @@ Incomplete or conflicting state fails closed.
 DB SQL user credentials live outside the main credentials file:
 
 ```text
-~/.tdc/db_users/<cluster-id>/credentials
+~/.ti/db_users/<cluster-id>/credentials
 ```
 
 That file uses role sections:
 
 ```toml
 [read_only]
-username = "prefix.tdc_ro"
+username = "prefix.ti_ro"
 password = "..."
 
 [read_write]
-username = "prefix.tdc_rw"
+username = "prefix.ti_rw"
 password = "..."
 
 [admin]
-username = "prefix.tdc_admin"
+username = "prefix.ti_admin"
 password = "..."
 ```
 
@@ -772,8 +804,8 @@ overrides, if added later, must be hidden from ordinary user workflows and must
 not be required by MVP usage.
 
 TiDB Cloud control-plane API calls use HTTP Digest auth through
-`internal/api/transport`; never send `tdc_private_key` as Basic Auth for those
-APIs. SQL HTTPS API execution and tdc fs data-plane auth are separate
+`internal/api/transport`; never send `tidb_cloud_private_key` as Basic Auth for those
+APIs. SQL HTTPS API execution and ti fs data-plane auth are separate
 authentication schemes. SQL HTTPS API execution uses the prepared DB SQL
 username/password as Basic Auth against
 `https://http-<cluster-host>/v1beta/sql`; TiDB Cloud API keys must not be used
@@ -782,41 +814,41 @@ for SQL execution Basic Auth.
 Use `internal/api/endpoints` for Starter, IAM/account, and fs endpoint
 selection. Do not add service URLs to user config. The default Starter host is
 `https://serverless.tidbapi.com`; the default IAM host is
-`https://iam.tidbapi.com`. The tdc fs host is resolved from the hosted tdc fs
+`https://iam.tidbapi.com`. The ti fs host is resolved from the hosted ti fs
 region manifest at
 `https://drive9.ai/manifest/regions/drive9-regions.json`, matching the active
 profile's cloud provider and region against `tidb_cloud_native` entries. If the
 manifest does not contain the profile placement, return a clear unsupported
 endpoint error; do not add a user-facing raw server URL flag or config key.
-Tests may override the IAM base URL with `TDC_TEST_IAM_BASE_URL` and the fs
-manifest URL with `TDC_TEST_FS_MANIFEST_URL`, only when
-`TDC_ALLOW_TEST_ENDPOINTS=1`; these are hidden test controls, not supported
+Tests may override the IAM base URL with `TI_TEST_IAM_BASE_URL` and the fs
+manifest URL with `TI_TEST_FS_MANIFEST_URL`, only when
+`TI_ALLOW_TEST_ENDPOINTS=1`; these are hidden test controls, not supported
 user configuration.
 
 Local profile namespace lookup order for authenticated commands:
 
 1. If `--profile <name>` is explicitly provided, use that profile name.
-2. If `TDC_PROFILE` is set, use that profile name.
+2. If `TI_PROFILE` is set, use that profile name.
 3. Otherwise use `default`.
 
 TiDB Cloud API key lookup order:
 
-1. If either `TDC_PUBLIC_KEY` or `TDC_PRIVATE_KEY` is set, read the API key pair
+1. If either `TIDB_CLOUD_PUBLIC_KEY` or `TIDB_CLOUD_PRIVATE_KEY` is set, read the API key pair
    from environment variables. Both are required in this mode.
-2. Otherwise read `tdc_public_key` and `tdc_private_key` from the selected
-   local profile in `~/.tdc/credentials`.
+2. Otherwise read `tidb_cloud_public_key` and `tidb_cloud_private_key` from the
+   selected local profile in `~/.ti/credentials`.
 
 Placement lookup order for authenticated commands:
 
 1. If `--region <canonical-region-code>` is explicitly provided, use it for
    this command only.
-2. If `TDC_REGION_CODE` is set, use it for this command only.
+2. If `TI_REGION_CODE` is set, use it for this command only.
 3. Otherwise use the selected profile's `region_code`.
 
 Starter DB cluster creation project lookup order is:
 
 1. Explicit non-empty `--project-id`.
-2. The selected profile's `project_id`, discovered by `tdc configure` from the
+2. The selected profile's `project_id`, discovered by `ti configure` from the
    unique accessible project whose type is `tidbx_virtual`.
 3. Otherwise omit the `tidb.cloud/project` label and let the Starter API select
    the account's default project.
@@ -825,48 +857,48 @@ An explicitly empty `--project-id` is an error and must not use the profile
 or server fallback. When no project ID resolves, omit the label entirely; do
 not send `tidb.cloud/project` with an empty value. Other DB commands identify
 existing resources by cluster or branch ID and do not send `project_id`.
-Drive9-backed tdc fs commands do not consume this DB project default.
+Drive9-backed ti fs commands do not consume this DB project default.
 
 Environment credentials are a credential source only; they must not change the
-local profile namespace and must not cause tdc to write local `[env]` sections.
-Generated tdc fs state is always stored under the selected local profile:
-`--profile`, `TDC_PROFILE`, or `default`.
+local profile namespace and must not cause ti to write local `[env]` sections.
+Generated ti fs state is always stored under the selected local profile:
+`--profile`, `TI_PROFILE`, or `default`.
 
-tdc fs data-plane resource selection order is:
+ti fs data-plane resource selection order is:
 
-1. Explicit `--file-system-id` or `TDC_FS_FILE_SYSTEM_ID`.
-2. If an explicit `--fs-token` or `TDC_FS_TOKEN` exists, derive the ID from its
+1. Explicit `--file-system-id` or `TI_FS_FILE_SYSTEM_ID`.
+2. If an explicit `--fs-token` or `TI_FS_TOKEN` exists, derive the ID from its
    structured token claim and require any separately supplied ID to match.
 3. Otherwise fail with `fs.missing_file_system_id` before endpoint resolution,
    companion startup, or a remote request.
 
-Never infer a tdc fs resource from profile state, credential-store cardinality,
-creation order, or deletion side effects. `TDC_FS_FILE_SYSTEM_ID` is an
+Never infer a ti fs resource from profile state, credential-store cardinality,
+creation order, or deletion side effects. `TI_FS_FILE_SYSTEM_ID` is an
 explicit process-scoped assertion and must not be persisted.
 
-Remote tdc fs, fs-git, fs-journal, and owner fs-vault commands use this FS
+Remote ti fs, fs-git, fs-journal, and owner fs-vault commands use this FS
 credential lookup order:
 
 1. Explicit command-local `--fs-token`.
-2. `TDC_FS_TOKEN`.
+2. `TI_FS_TOKEN`.
 3. The selected ID's `api_key` in its ID-keyed credentials file.
 
 Those commands do not require TiDB Cloud public/private keys. A clean machine
 can use an existing resource with only a canonical region and FS token; the ID
 is derived in memory from the token. Do not
 persist ephemeral flag/environment credentials or create a synthetic `[env]`
-profile. `tdc fs create-file-system`, remote list/describe, and
-`tdc fs delete-file-system` remain TiDB Cloud-authenticated. Delete requires an
+profile. `ti fs create-file-system`, remote list/describe, and
+`ti fs delete-file-system` remain TiDB Cloud-authenticated. Delete requires an
 ID but does not require a locally stored owner token.
 
-The ID selector is available on tdc fs data-plane/runtime commands and all
+The ID selector is available on ti fs data-plane/runtime commands and all
 `fs-git`, `fs-journal`, and `fs-vault` subcommands. Creation accepts no ID;
 description and deletion require an ID. Drain and unmount resolve an existing
 mount through its mount path and locator instead of selecting a resource again.
 
 When implementing command handlers, detect whether `--profile` was explicitly
 set before calling `config.Load`; the root flag has a default value, but that
-default must not suppress `TDC_PROFILE`. Also pass the explicit `--region`
+default must not suppress `TI_PROFILE`. Also pass the explicit `--region`
 value into profile loading so endpoint selection sees the override.
 
 Supported MVP placement values:
@@ -888,12 +920,12 @@ Do not store secrets in logs, telemetry, generated docs examples, or test
 fixtures.
 
 Local operation logs are enabled by default and live at
-`~/.tdc/logs/tdc.jsonl`. They are local audit/debug summaries, not telemetry.
-`TDC_LOGGING=off` disables them for the current process, and global settings
+`~/.ti/logs/ti.jsonl`. They are local audit/debug summaries, not telemetry.
+`TI_LOGGING=off` disables them for the current process, and global settings
 can disable them with:
 
 ```toml
-# ~/.tdc/.preferences
+# ~/.ti/.preferences
 schema_version = 1
 
 [logging]
@@ -902,72 +934,72 @@ enabled = false
 
 Environment values `off`, `false`, `0`, and `no` disable logging; `on`,
 `true`, `1`, and `yes` enable it. The environment variable takes precedence
-over settings. Do not add a `tdc logging status` command. Invalid settings or
+over settings. Do not add a `ti logging status` command. Invalid settings or
 environment values fail closed for logging without failing the requested
-command. Legacy `[logging]` in `~/.tdc/config` is migrated atomically into
-`~/.tdc/.preferences`; config and credentials remain profile-only afterward.
-Every `tdc update` form must bypass settings, migration, profiles, credentials,
-operation logs, and all other `~/.tdc/` state. The operation log may
+command. Legacy `[logging]` in `~/.ti/config` is migrated atomically into
+`~/.ti/.preferences`; config and credentials remain profile-only afterward.
+Every `ti update` form must bypass settings, migration, profiles, credentials,
+operation logs, and all other `~/.ti/` state. The operation log may
 record command paths, flag names, profile names, region codes, duration, exit
 code, app error code/category, service name, HTTP method/status, operation, and
 request id. It must never record flag values, SQL text, SQL results, file
-contents, raw request/response bodies, connection strings, local paths, tdc fs
-raw paths, API keys, DB passwords, or tdc fs API keys.
+contents, raw request/response bodies, connection strings, local paths, ti fs
+raw paths, API keys, DB passwords, or ti fs API keys.
 
 Generated DB SQL usernames and passwords live in
-`~/.tdc/db_users/<cluster-id>/credentials`, not in the main
-`~/.tdc/credentials` file. Do not add nested
+`~/.ti/db_users/<cluster-id>/credentials`, not in the main
+`~/.ti/credentials` file. Do not add nested
 `[profile.db_users."<cluster-id>".role]` TOML sections to
-`~/.tdc/credentials`. TiDB Cloud cluster IDs are globally unique, so DB SQL
-credentials are cluster-scoped rather than profile-scoped. `tdc db
+`~/.ti/credentials`. TiDB Cloud cluster IDs are globally unique, so DB SQL
+credentials are cluster-scoped rather than profile-scoped. `ti db
 create-db-sql-users` owns those credentials and must be idempotent: it
-creates or repairs the stable tdc-managed read-only, read-write, and admin
+creates or repairs the stable ti-managed read-only, read-write, and admin
 users for a cluster instead of creating a new group every time.
 
-Generated `tdc fs` resource API keys live only in the ID-keyed credentials
-files under `~/.tdc/fs_credentials/`. User-facing docs and commands must call
-these `tdc fs` API keys or resource credentials, never reference implementation
+Generated `ti fs` resource API keys live only in the ID-keyed credentials
+files under `~/.ti/fs_credentials/`. User-facing docs and commands must call
+these `ti fs` API keys or resource credentials, never reference implementation
 API keys. Filesystem data-plane
 commands route through the installer-managed Drive9 companion binary named
-`tdc-drive9`. tdc owns profile loading, region resolution, credential storage,
+`ti-drive9`. ti owns profile loading, region resolution, credential storage,
 preflight errors, output/query handling, and command naming; Drive9 owns the
 filesystem runtime semantics for data-plane file operations, FUSE/WebDAV mount,
 FUSE mount drain, layer behavior, pack/unpack, Git workflows, journal, and vault.
-Do not reintroduce a runtime fallback to tdc-native fs behavior. Public fs
+Do not reintroduce a runtime fallback to ti-native fs behavior. Public fs
 service methods must route through the Drive9 companion path unconditionally;
 do not add switches such as `UseDrive9Companion` or hidden environment flags
-that select old tdc HTTP/FUSE/WebDAV implementations.
+that select old ti HTTP/FUSE/WebDAV implementations.
 The companion runs with resource-scoped isolated state under
-`~/.tdc/drive9-home/<profile-key>/<resource-key>`; do not write or require user
+`~/.ti/drive9-home/<profile-key>/<resource-key>`; do not write or require user
 edits to `~/.drive9`. Never use a shared Drive9 `current_context` as the source
-of truth for tdc resource selection.
+of truth for ti resource selection.
 
 Background FS and vault mounts write only a non-secret locator under
-`~/.tdc/mounts/`. Drain and unmount must route through that locator to the
+`~/.ti/mounts/`. Drain and unmount must route through that locator to the
 original resource-scoped companion HOME without requiring the FS token again.
 Successful unmount removes the locator; failed unmount preserves it for retry.
 
-Do not implement or expose tdc commands for Drive9 internal APIs that are not
+Do not implement or expose ti commands for Drive9 internal APIs that are not
 part of Drive9's public CLI. In particular, do not reintroduce low-level layer
 entry/object/event commands, low-level Git workspace/tree/state/object-pack/
 overlay commands, or legacy vault token commands unless Drive9 exposes a
-matching public command and the tdc command surface is intentionally updated in
-README, specs, tests, and AGENTS. Use `TDC_DRIVE9_BIN` only as a developer/test
+matching public command and the ti command surface is intentionally updated in
+README, specs, tests, and AGENTS. Use `TI_DRIVE9_BIN` only as a developer/test
 override for a compatible companion; normal installs should rely on the
-installer-managed `tdc-drive9`.
+installer-managed `ti-drive9`.
 
-`tdc fs create-directory --mode` is a compatibility flag only in the Drive9
+`ti fs create-directory --mode` is a compatibility flag only in the Drive9
 companion path: validate the octal value, but do not emulate directory chmod
-with a non-public backend call. `tdc fs chmod-file` remains the explicit chmod
+with a non-public backend call. `ti fs chmod-file` remains the explicit chmod
 command and should follow Drive9 public CLI behavior.
 
-`tdc fs-vault mount-vault` requires a delegated vault token from
-`tdc fs-vault create-grant`; the selected resource's owner API key is used for
+`ti fs-vault mount-vault` requires a delegated vault token from
+`ti fs-vault create-grant`; the selected resource's owner API key is used for
 `create-secret`, `read-secret`, `list-secrets`, `replace-secret`,
 `delete-secret`, grants, audit, and `run-with-secret`, but not for the vault
 mount consumption path.
 
-`tdc fs drain-file-system` is meaningful only for FUSE mounts where the
+`ti fs drain-file-system` is meaningful only for FUSE mounts where the
 companion records a drain control socket. WebDAV mounts flush through normal
 file close semantics and should not be expected to support drain.
 
@@ -976,11 +1008,11 @@ sanitized environment: `HOME` from that resource's scoped companion directory,
 `DRIVE9_SERVER` from its resolved endpoint, `DRIVE9_REGION_CODE` from its
 canonical resource region, `DRIVE9_API_KEY` from its per-resource credentials,
 and TiDB Cloud public/private keys only for remote inventory/create/describe/delete flows. Strip
-inherited `DRIVE9_*` values so user shell state cannot override tdc selection.
-Debug and error output must redact TiDB Cloud keys, tdc fs API keys, vault tokens, SQL
+inherited `DRIVE9_*` values so user shell state cannot override ti selection.
+Debug and error output must redact TiDB Cloud keys, ti fs API keys, vault tokens, SQL
 credentials, file contents, and secret values.
 
-`tdc db format-db-connection-string` and `tdc db execute-sql-statement` use
+`ti db format-db-connection-string` and `ti db execute-sql-statement` use
 read-write credentials by default. `--read-write`, `--read-only`, and `--admin`
 must be mutually exclusive explicit selections. Do not add SQL-text
 classification or an automatic access mode.
@@ -1003,7 +1035,7 @@ Use structured output contracts from the start.
 - Errors follow this shape:
 
 ```text
-tdc [ERROR]: <actionable message>
+ti [ERROR]: <actionable message>
 ```
 
 Library code returns errors instead of printing or exiting. Only the CLI
@@ -1012,12 +1044,12 @@ boundary writes to stdout/stderr and maps errors to exit codes.
 ## Telemetry Rules
 
 The product-owned telemetry backend is implemented as the independent
-`tdc-telemetry-backend` process. The CLI collection and delivery path is
+`ti-telemetry-backend` process. The CLI collection and delivery path is
 implemented by `internal/telemetry` under
 `docs/spec/done/0022-telemetry.md`. Release archives contain a build-configured
-product endpoint; local builds and CI default to disabled. `TDC_TELEMETRY`
-overrides `[telemetry].enabled` in `~/.tdc/.preferences`. Help, version,
-commandless usage, and all `tdc update` forms must be excluded before telemetry
+product endpoint; local builds and CI default to disabled. `TI_TELEMETRY`
+overrides `[telemetry].enabled` in `~/.ti/.preferences`. Help, version,
+commandless usage, and all `ti update` forms must be excluded before telemetry
 reads preferences or installation state. Allowed fields:
 
 - command and subcommand invoked
@@ -1026,8 +1058,8 @@ reads preferences or installation state. Allowed fields:
 - TiDB Cloud provider and canonical region
 - CLI version, OS, architecture, and install source
 - anonymous installation ID and profile source category, never profile name
-- an explicit process-scoped `TDC_TELEMETRY_TAG` value, bounded to 128 UTF-8 bytes
-- an explicit process-scoped `TDC_TELEMETRY_EXTRA` JSON value, accepted only when complete, bounded to 2 KiB, depth-limited, and free of prohibited field names
+- an explicit process-scoped `TI_TELEMETRY_TAG` value, bounded to 128 UTF-8 bytes
+- an explicit process-scoped `TI_TELEMETRY_EXTRA` JSON value, accepted only when complete, bounded to 2 KiB, depth-limited, and free of prohibited field names
 
 Never collect credentials, tokens, resource IDs, file contents, SQL text, query
 output, flag values, raw errors, profile names, local or remote paths, host
@@ -1036,8 +1068,8 @@ best-effort HTTPS POST with a three-second hard timeout, no foreground retry, no
 redirect following, and no local durable queue. Any failure must preserve the
 command's stdout, stderr, output format, and exit status.
 
-`TDC_TELEMETRY_TAG` and `TDC_TELEMETRY_EXTRA` are read only after telemetry is
-eligible and enabled, are never persisted under `~/.tdc/`, and must never appear
+`TI_TELEMETRY_TAG` and `TI_TELEMETRY_EXTRA` are read only after telemetry is
+eligible and enabled, are never persisted under `~/.ti/`, and must never appear
 in normal output, errors, debug diagnostics, or operation logs. The CLI emits
 schema version 2; the backend must continue to accept schema version 1 without
 metadata during rollout.
@@ -1068,8 +1100,8 @@ Current expectations:
   packages directly.
 - Unit tests should use temp home directories for config and credentials.
 - E2E tests should use temp `HOME` values and must not touch the user's real
-  `~/.tdc/`.
-- Unit/e2e helpers should set `TDC_LOGGING=off` by default unless the test is
+  `~/.ti/`.
+- Unit/e2e helpers should set `TI_LOGGING=off` by default unless the test is
   explicitly verifying operation logging.
 - API client tests should use mock HTTP servers once API specs are implemented.
 - Live cloud tests are opt-in, skipped by default, and run through

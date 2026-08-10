@@ -8,9 +8,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/tidbcloud/tdc/internal/api/transport"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/api/transport"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
 type Credentials struct {
@@ -36,9 +36,9 @@ func LoadProfile(ctx context.Context, opts config.LoadOptions) (*config.Profile,
 			if profileName == "" {
 				profileName = config.DefaultProfile
 			}
-			return nil, MissingCredentials(profileName, "tdc_public_key", "tdc_private_key")
+			return nil, MissingCredentials(profileName, "tidb_cloud_public_key", "tidb_cloud_private_key")
 		case "config.env_missing":
-			if strings.Contains(appErr.Message, "TDC_PUBLIC_KEY") || strings.Contains(appErr.Message, "TDC_PRIVATE_KEY") {
+			if strings.Contains(appErr.Message, "TIDB_CLOUD_PUBLIC_KEY") || strings.Contains(appErr.Message, "TIDB_CLOUD_PRIVATE_KEY") {
 				return nil, MissingEnvironmentCredentials()
 			}
 		}
@@ -49,7 +49,7 @@ func LoadProfile(ctx context.Context, opts config.LoadOptions) (*config.Profile,
 
 func ValidateProfile(profile *config.Profile) (Credentials, error) {
 	if profile == nil {
-		return Credentials{}, MissingCredentials(config.DefaultProfile, "tdc_public_key", "tdc_private_key")
+		return Credentials{}, MissingCredentials(config.DefaultProfile, "tidb_cloud_public_key", "tidb_cloud_private_key")
 	}
 
 	profileName := profile.Name
@@ -58,27 +58,27 @@ func ValidateProfile(profile *config.Profile) (Credentials, error) {
 	}
 
 	missing := make([]string, 0, 2)
-	if strings.TrimSpace(profile.TDCPublicKey) == "" {
-		missing = append(missing, "tdc_public_key")
+	if strings.TrimSpace(profile.TiDBCloudPublicKey) == "" {
+		missing = append(missing, "tidb_cloud_public_key")
 	}
-	if strings.TrimSpace(profile.TDCPrivateKey) == "" {
-		missing = append(missing, "tdc_private_key")
+	if strings.TrimSpace(profile.TiDBCloudPrivateKey) == "" {
+		missing = append(missing, "tidb_cloud_private_key")
 	}
 	if len(missing) > 0 {
 		return Credentials{}, MissingCredentials(profileName, missing...)
 	}
 
-	if malformedCredential(profile.TDCPublicKey) || strings.Contains(profile.TDCPublicKey, ":") {
-		return Credentials{}, MalformedCredentials(profileName, "tdc_public_key")
+	if malformedCredential(profile.TiDBCloudPublicKey) || strings.Contains(profile.TiDBCloudPublicKey, ":") {
+		return Credentials{}, MalformedCredentials(profileName, "tidb_cloud_public_key")
 	}
-	if malformedCredential(profile.TDCPrivateKey) {
-		return Credentials{}, MalformedCredentials(profileName, "tdc_private_key")
+	if malformedCredential(profile.TiDBCloudPrivateKey) {
+		return Credentials{}, MalformedCredentials(profileName, "tidb_cloud_private_key")
 	}
 
 	return Credentials{
 		ProfileName: profileName,
-		PublicKey:   profile.TDCPublicKey,
-		PrivateKey:  profile.TDCPrivateKey,
+		PublicKey:   profile.TiDBCloudPublicKey,
+		PrivateKey:  profile.TiDBCloudPrivateKey,
 	}, nil
 }
 
@@ -91,14 +91,14 @@ func MissingCredentials(profileName string, keys ...string) error {
 		profileName = config.DefaultProfile
 	}
 	if len(keys) == 0 {
-		keys = []string{"tdc_public_key", "tdc_private_key"}
+		keys = []string{"tidb_cloud_public_key", "tidb_cloud_private_key"}
 	}
 	return apperr.New(
 		"auth.missing_credentials",
 		"authentication",
 		3,
 		fmt.Sprintf(
-			"authentication required: missing %s for profile %q. Run `tdc configure` or set TDC_PUBLIC_KEY and TDC_PRIVATE_KEY.",
+			"authentication required: missing %s for profile %q. Run `ti configure` or set TIDB_CLOUD_PUBLIC_KEY and TIDB_CLOUD_PRIVATE_KEY.",
 			joinKeys(keys),
 			profileName,
 		),
@@ -110,7 +110,7 @@ func MissingEnvironmentCredentials() error {
 		"auth.missing_environment_credentials",
 		"authentication",
 		3,
-		"authentication required: missing environment credentials. Set both TDC_PUBLIC_KEY and TDC_PRIVATE_KEY, or unset them to use profile credentials.",
+		"authentication required: missing environment credentials. Set both TIDB_CLOUD_PUBLIC_KEY and TIDB_CLOUD_PRIVATE_KEY, or unset them to use profile credentials.",
 	)
 }
 
@@ -122,7 +122,7 @@ func MalformedCredentials(profileName, key string) error {
 		"auth.malformed_credentials",
 		"authentication",
 		3,
-		fmt.Sprintf("authentication failed: malformed %s for profile %q. Check ~/.tdc/credentials or create a new API key.", key, profileName),
+		fmt.Sprintf("authentication failed: malformed %s for profile %q. Check ~/.ti/credentials or create a new API key.", key, profileName),
 	)
 }
 

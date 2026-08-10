@@ -14,13 +14,13 @@ import (
 	"strings"
 	"time"
 
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/region"
-	"github.com/tidbcloud/tdc/internal/fs/fscred"
-	"github.com/tidbcloud/tdc/internal/fs/mountlocator"
-	"github.com/tidbcloud/tdc/internal/fswrap"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
+	"github.com/tidbcloud/ti-cli/internal/fswrap"
 )
 
 const (
@@ -180,9 +180,9 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 	if err := fscred.PrepareCredentialStore(homeDir, opts.Profile.Name); err != nil {
 		return FileSystemResult{}, err
 	}
-	createHome, err := os.MkdirTemp("", "tdc-fs-create-*")
+	createHome, err := os.MkdirTemp("", "ti-fs-create-*")
 	if err != nil {
-		return FileSystemResult{}, apperr.Wrap("fs.companion_home", "runtime", 1, "prepare temporary tdc fs create state", err)
+		return FileSystemResult{}, apperr.Wrap("fs.companion_home", "runtime", 1, "prepare temporary ti fs create state", err)
 	}
 	defer os.RemoveAll(createHome)
 	runner := s.drive9Runner()
@@ -193,7 +193,7 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 		ResourceName:    "_create",
 		Args:            args,
 		CaptureStdout:   true,
-		IncludeTDCKeys:  true,
+		IncludeTIKeys:   true,
 		IncludeFSAPIKey: false,
 	})
 	if err != nil {
@@ -201,7 +201,7 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 	}
 	var out drive9CreateOutput
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
-		return FileSystemResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs provision response", err)
+		return FileSystemResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs provision response", err)
 	}
 	status := strings.TrimSpace(out.Status)
 	if status == "" {
@@ -209,10 +209,10 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 	}
 	fileSystemID, err := fscred.ValidateFileSystemID(out.TenantID)
 	if err != nil {
-		return FileSystemResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "tdc fs create response did not include a valid tenant_id", err)
+		return FileSystemResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "ti fs create response did not include a valid tenant_id", err)
 	}
 	if strings.TrimSpace(out.APIKey) == "" {
-		return FileSystemResult{}, apperr.New("fs.companion_decode", "runtime", 1, "tdc fs create response did not include api_key")
+		return FileSystemResult{}, apperr.New("fs.companion_decode", "runtime", 1, "ti fs create response did not include api_key")
 	}
 	regionCode := opts.Profile.PlacementRegionCode
 	if regionCode == "" {
@@ -227,7 +227,7 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 	}
 	if _, storeErr := fscred.StoreCredential(homeDir, opts.Profile, fileSystemID, regionCode, out.APIKey, false); storeErr != nil {
 		if s.Stderr != nil {
-			_, _ = fmt.Fprintf(s.Stderr, "tdc [WARNING]: file system %s was created, but its one-time token could not be stored locally: %s\n", fileSystemID, apperr.MessageFor(storeErr))
+			_, _ = fmt.Fprintf(s.Stderr, "ti [WARNING]: file system %s was created, but its one-time token could not be stored locally: %s\n", fileSystemID, apperr.MessageFor(storeErr))
 		}
 		return fileSystem, nil
 	}
@@ -259,7 +259,7 @@ func (s Service) drive9DeleteFileSystem(ctx context.Context, opts DeleteFileSyst
 		ResourceName:    "_control-plane",
 		Args:            args,
 		CaptureStdout:   true,
-		IncludeTDCKeys:  true,
+		IncludeTIKeys:   true,
 		IncludeFSAPIKey: false,
 	})
 	if err != nil {
@@ -270,10 +270,10 @@ func (s Service) drive9DeleteFileSystem(ctx context.Context, opts DeleteFileSyst
 	}
 	var out drive9DeleteOutput
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
-		return DeleteResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs deletion response", err)
+		return DeleteResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs deletion response", err)
 	}
 	if out.TenantID != "" && out.TenantID != fileSystemID {
-		return DeleteResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("tdc fs deletion response identified file system %q instead of %q", out.TenantID, fileSystemID))
+		return DeleteResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("ti fs deletion response identified file system %q instead of %q", out.TenantID, fileSystemID))
 	}
 	status := strings.TrimSpace(out.Status)
 	if status == "" {
@@ -317,28 +317,28 @@ func (s Service) drive9ListFileSystems(ctx context.Context, profile *config.Prof
 	fileSystems := make([]FileSystemSummary, 0)
 	for {
 		if page <= 0 || seenPages[page] {
-			return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, "tdc fs inventory returned a repeated or invalid page")
+			return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, "ti fs inventory returned a repeated or invalid page")
 		}
 		seenPages[page] = true
 		args := []string{"admin", "tenant", "list", "--json", "--region-code", profile.PlacementRegionCode, "--page-size", strconv.Itoa(pageSize), "--page", strconv.Itoa(page)}
-		result, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{Profile: profile, ResourceName: "_control-plane", Args: args, CaptureStdout: true, IncludeTDCKeys: true})
+		result, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{Profile: profile, ResourceName: "_control-plane", Args: args, CaptureStdout: true, IncludeTIKeys: true})
 		if err != nil {
 			return ListFileSystemsResult{}, err
 		}
 		var out drive9AdminTenantListOutput
 		if err := json.Unmarshal(result.Stdout, &out); err != nil {
-			return ListFileSystemsResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs inventory response", err)
+			return ListFileSystemsResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs inventory response", err)
 		}
 		if out.Page != page {
-			return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("tdc fs inventory returned page %d while page %d was requested", out.Page, page))
+			return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("ti fs inventory returned page %d while page %d was requested", out.Page, page))
 		}
 		for _, tenant := range out.Tenants {
 			id, err := fscred.ValidateFileSystemID(tenant.TenantID)
 			if err != nil {
-				return ListFileSystemsResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "tdc fs inventory included an invalid tenant_id", err)
+				return ListFileSystemsResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "ti fs inventory included an invalid tenant_id", err)
 			}
 			if seenIDs[id] {
-				return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("tdc fs inventory returned duplicate file system ID %q", id))
+				return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("ti fs inventory returned duplicate file system ID %q", id))
 			}
 			seenIDs[id] = true
 			fileSystems = append(fileSystems, FileSystemSummary{FileSystemID: id, RegionCode: profile.PlacementRegionCode, Status: tenant.Status, Kind: tenant.Kind, Quota: tenant.Quota, HasLocalToken: hasToken[id]})
@@ -347,7 +347,7 @@ func (s Service) drive9ListFileSystems(ctx context.Context, profile *config.Prof
 			break
 		}
 		if out.NextPage <= page {
-			return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, "tdc fs inventory returned a repeated or regressing next_page")
+			return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, "ti fs inventory returned a repeated or regressing next_page")
 		}
 		page = out.NextPage
 	}
@@ -373,7 +373,7 @@ func (s Service) drive9DescribeFileSystem(ctx context.Context, profile *config.P
 	result, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{
 		Profile: profile, ResourceName: "_control-plane",
 		Args:          []string{"admin", "tenant", "get", "--json", "--region-code", profile.PlacementRegionCode, "--tenant-id", id},
-		CaptureStdout: true, IncludeTDCKeys: true,
+		CaptureStdout: true, IncludeTIKeys: true,
 	})
 	if err != nil {
 		if isDrive9NotFound(err) {
@@ -383,10 +383,10 @@ func (s Service) drive9DescribeFileSystem(ctx context.Context, profile *config.P
 	}
 	var tenant drive9AdminTenant
 	if err := json.Unmarshal(result.Stdout, &tenant); err != nil {
-		return DescribeFileSystemResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs describe response", err)
+		return DescribeFileSystemResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs describe response", err)
 	}
 	if tenant.TenantID != id {
-		return DescribeFileSystemResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("tdc fs describe response identified file system %q instead of %q", tenant.TenantID, id))
+		return DescribeFileSystemResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("ti fs describe response identified file system %q instead of %q", tenant.TenantID, id))
 	}
 	_, credentialErr := fscred.GetCredential(homeDir, profile.Name, id)
 	if credentialErr != nil && apperr.CodeFor(credentialErr) != "fs.credential_not_found" {
@@ -425,7 +425,7 @@ func (s Service) importFileSystemToken(ctx context.Context, opts ImportFileSyste
 	selected.FSCloudProvider = placement.Provider
 	selected.FSRegionCode = placement.NativeCode
 	selected.FSAPIKey = opts.Token
-	validationHome, err := os.MkdirTemp("", "tdc-fs-token-validation-*")
+	validationHome, err := os.MkdirTemp("", "ti-fs-token-validation-*")
 	if err != nil {
 		return ImportFileSystemTokenResult{}, apperr.Wrap("fs.token_validation", "runtime", 1, "prepare temporary FS token validation state", err)
 	}
@@ -482,7 +482,7 @@ func (s Service) waitUntilFileSystemReady(ctx context.Context, homeDir string, p
 				"fs.ready_wait_failed",
 				"runtime",
 				1,
-				fmt.Sprintf("tdc fs resource %q was provisioned and its credentials were stored, but its Drive9 data plane readiness check failed", fileSystemID),
+				fmt.Sprintf("ti fs resource %q was provisioned and its credentials were stored, but its Drive9 data plane readiness check failed", fileSystemID),
 				err,
 			)
 		}
@@ -501,7 +501,7 @@ func fsReadyWaitContextError(parent, waitCtx context.Context, name string, timeo
 			"fs.ready_wait_canceled",
 			"runtime",
 			1,
-			fmt.Sprintf("waiting for tdc fs resource %q to become ready was canceled; the resource and its local credentials were not deleted", name),
+			fmt.Sprintf("waiting for ti fs resource %q to become ready was canceled; the resource and its local credentials were not deleted", name),
 			parent.Err(),
 		)
 	}
@@ -510,7 +510,7 @@ func fsReadyWaitContextError(parent, waitCtx context.Context, name string, timeo
 			"fs.ready_wait_timeout",
 			"runtime",
 			1,
-			fmt.Sprintf("tdc fs resource %q did not become ready within %s; the resource and its local credentials were not deleted", name, timeout),
+			fmt.Sprintf("ti fs resource %q did not become ready within %s; the resource and its local credentials were not deleted", name, timeout),
 		)
 	}
 	return nil
@@ -554,11 +554,11 @@ func (s Service) drive9CheckFileSystem(ctx context.Context, opts CheckFileSystem
 		return CheckResult{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
 	checks := []Check{
-		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("tdc fs credentials for profile namespace %q loaded", profileName(opts.Profile))},
+		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("ti fs credentials for profile namespace %q loaded", profileName(opts.Profile))},
 	}
 	resource := fscred.Credential{FileSystemID: opts.Profile.FSTenantID, RegionCode: opts.Profile.FSPlacementRegionCode, HasLocalToken: strings.TrimSpace(opts.Profile.FSAPIKey) != "", APIKey: opts.Profile.FSAPIKey}
 	if resource.FileSystemID == "" || !resource.HasLocalToken {
-		checks = append(checks, Check{Name: "fs_resource_credentials", Status: "warning", Message: "tdc fs file system ID or token is missing"})
+		checks = append(checks, Check{Name: "fs_resource_credentials", Status: "warning", Message: "ti fs file system ID or token is missing"})
 	} else {
 		checks = append(checks, Check{Name: "fs_resource_credentials", Status: "passed", Message: resource.FileSystemID})
 	}
@@ -572,7 +572,7 @@ func (s Service) drive9CheckFileSystem(ctx context.Context, opts CheckFileSystem
 		checks = append(checks, Check{Name: "companion_binary", Status: "failed", Message: apperr.MessageFor(err)})
 		return checkResult(opts.Profile, resource, &endpoint, nil, checks), nil
 	}
-	checks = append(checks, Check{Name: "companion_binary", Status: "passed", Message: "tdc-drive9"})
+	checks = append(checks, Check{Name: "companion_binary", Status: "passed", Message: "ti-drive9"})
 	if !resource.HasLocalToken {
 		checks = append(checks, Check{Name: "remote_status", Status: "warning", Message: "remote status requires an FS token; create or import local credentials first"})
 		return checkResult(opts.Profile, resource, &endpoint, nil, checks), nil
@@ -581,7 +581,7 @@ func (s Service) drive9CheckFileSystem(ctx context.Context, opts CheckFileSystem
 		checks = append(checks, Check{Name: "remote_status", Status: "failed", Message: apperr.MessageFor(err)})
 		return checkResult(opts.Profile, resource, &endpoint, nil, checks), nil
 	}
-	remote := apifs.StatusResponse{Status: "reachable", TenantID: resource.FileSystemID, Kind: "tdc fs"}
+	remote := apifs.StatusResponse{Status: "reachable", TenantID: resource.FileSystemID, Kind: "ti fs"}
 	checks = append(checks, Check{Name: "remote_status", Status: "passed", Message: "reachable"})
 	return checkResult(opts.Profile, resource, &endpoint, &remote, checks), nil
 }
@@ -655,7 +655,7 @@ func (s Service) drive9DescribeFile(ctx context.Context, opts DescribeFileOption
 	}
 	var metadata drive9StatMetadata
 	if err := json.Unmarshal(result.Stdout, &metadata); err != nil {
-		return DescribeFileResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs stat response", err)
+		return DescribeFileResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs stat response", err)
 	}
 	mtime := int64(0)
 	if metadata.Mtime != nil {
@@ -845,7 +845,7 @@ func (s Service) drive9CreateLayer(ctx context.Context, opts CreateLayerOptions)
 	}
 	var layer apifs.FSLayer
 	if err := json.Unmarshal(result.Stdout, &layer); err != nil {
-		return LayerResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs layer response", err)
+		return LayerResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs layer response", err)
 	}
 	return LayerResult{FSLayer: layer}, nil
 }
@@ -857,7 +857,7 @@ func (s Service) drive9ListLayers(ctx context.Context, opts ListLayersOptions) (
 	}
 	var out LayerListResult
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
-		return LayerListResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs layer list response", err)
+		return LayerListResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs layer list response", err)
 	}
 	return out, nil
 }
@@ -869,7 +869,7 @@ func (s Service) drive9DescribeLayer(ctx context.Context, opts DescribeLayerOpti
 	}
 	var layer apifs.FSLayer
 	if err := json.Unmarshal(result.Stdout, &layer); err != nil {
-		return LayerResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs layer response", err)
+		return LayerResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs layer response", err)
 	}
 	return LayerResult{FSLayer: layer}, nil
 }
@@ -882,7 +882,7 @@ func (s Service) drive9DiffLayer(ctx context.Context, opts LayerEntriesOptions) 
 	}
 	var out LayerEntriesResult
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
-		return LayerEntriesResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs layer diff response", err)
+		return LayerEntriesResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs layer diff response", err)
 	}
 	out.LayerID = layerID
 	if opts.MaxSeq > 0 {
@@ -908,7 +908,7 @@ func (s Service) drive9CreateLayerCheckpoint(ctx context.Context, opts CreateLay
 	}
 	var checkpoint apifs.FSLayerCheckpoint
 	if err := json.Unmarshal(result.Stdout, &checkpoint); err != nil {
-		return LayerCheckpointResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs layer checkpoint response", err)
+		return LayerCheckpointResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs layer checkpoint response", err)
 	}
 	return LayerCheckpointResult{FSLayerCheckpoint: checkpoint}, nil
 }
@@ -1006,7 +1006,7 @@ func (s Service) drive9CreateJournal(ctx context.Context, opts JournalCreateOpti
 	}
 	var journal apifs.Journal
 	if err := json.Unmarshal(result.Stdout, &journal); err != nil {
-		return JournalResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs journal response", err)
+		return JournalResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs journal response", err)
 	}
 	return JournalResult(journal), nil
 }
@@ -1044,7 +1044,7 @@ func (s Service) drive9AppendJournalEntries(ctx context.Context, opts JournalApp
 	}
 	var out apifs.JournalAppendResponse
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
-		return JournalAppendResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs journal append response", err)
+		return JournalAppendResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs journal append response", err)
 	}
 	return JournalAppendResult(out), nil
 }
@@ -1073,7 +1073,7 @@ func (s Service) drive9ReadJournalEntries(ctx context.Context, opts JournalReadO
 		}
 		var entry apifs.JournalEntry
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
-			return JournalEntriesResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs journal entry", err)
+			return JournalEntriesResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs journal entry", err)
 		}
 		entries = append(entries, entry)
 	}
@@ -1115,7 +1115,7 @@ func (s Service) drive9SearchJournal(ctx context.Context, opts JournalSearchOpti
 		}
 		var match apifs.JournalSearchMatch
 		if err := json.Unmarshal([]byte(line), &match); err != nil {
-			return JournalSearchResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs journal search response", err)
+			return JournalSearchResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs journal search response", err)
 		}
 		matches = append(matches, match)
 	}
@@ -1133,7 +1133,7 @@ func (s Service) drive9VerifyJournal(ctx context.Context, opts JournalVerifyOpti
 	}
 	var out apifs.JournalVerifyResult
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
-		return JournalVerifyResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs journal verify response", err)
+		return JournalVerifyResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs journal verify response", err)
 	}
 	return JournalVerifyResult(out), nil
 }
@@ -1213,13 +1213,13 @@ func (s Service) drive9ReadVaultSecret(ctx context.Context, opts VaultReadSecret
 	if opts.Field != "" {
 		var fields map[string]string
 		if err := json.Unmarshal(result.Stdout, &fields); err != nil {
-			return nil, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs-vault secret", err)
+			return nil, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs-vault secret", err)
 		}
 		return VaultReadSecretResult{SecretName: name, Field: opts.Field, Value: fields[opts.Field]}, nil
 	}
 	var fields map[string]string
 	if err := json.Unmarshal(result.Stdout, &fields); err != nil {
-		return nil, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs-vault secret", err)
+		return nil, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs-vault secret", err)
 	}
 	return VaultReadSecretResult{SecretName: name, Fields: fields}, nil
 }
@@ -1231,7 +1231,7 @@ func (s Service) drive9ListVaultSecrets(ctx context.Context, opts VaultListSecre
 	}
 	var out VaultListSecretsResult
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
-		return VaultListSecretsResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs-vault list response", err)
+		return VaultListSecretsResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs-vault list response", err)
 	}
 	return out, nil
 }
@@ -1269,7 +1269,7 @@ func (s Service) drive9CreateVaultGrant(ctx context.Context, opts VaultCreateGra
 	}
 	var out VaultTokenResult
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
-		return VaultTokenResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs-vault grant response", err)
+		return VaultTokenResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs-vault grant response", err)
 	}
 	return out, nil
 }
@@ -1297,7 +1297,7 @@ func (s Service) drive9ListVaultAuditEvents(ctx context.Context, opts VaultAudit
 	}
 	var out VaultAuditResult
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
-		return VaultAuditResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode tdc fs-vault audit response", err)
+		return VaultAuditResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs-vault audit response", err)
 	}
 	return out, nil
 }
@@ -1317,7 +1317,7 @@ func (s Service) drive9RunWithVaultSecret(ctx context.Context, opts VaultRunWith
 
 func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (MountResult, error) {
 	if strings.TrimSpace(opts.VaultToken) == "" {
-		return MountResult{}, apperr.New("vault.missing_token", "usage", 2, "tdc fs-vault mount-vault requires --vault-token or TDC_VAULT_TOKEN; use create-grant to mint a delegated vault token first")
+		return MountResult{}, apperr.New("vault.missing_token", "usage", 2, "ti fs-vault mount-vault requires --vault-token or TI_VAULT_TOKEN; use create-grant to mint a delegated vault token first")
 	}
 	args := []string{"mount", "vault"}
 	if opts.Foreground {
@@ -1480,7 +1480,7 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 				return UnmountResult{}, homeErr
 			}
 			if removeErr := mountlocator.Remove(homeDir, opts.MountPath); removeErr != nil {
-				return UnmountResult{}, apperr.Wrap("fs.remove_mount_locator", "runtime", 1, "remove stale tdc fs mount locator", removeErr)
+				return UnmountResult{}, apperr.Wrap("fs.remove_mount_locator", "runtime", 1, "remove stale ti fs mount locator", removeErr)
 			}
 			return UnmountResult{Status: "absent", MountPath: opts.MountPath}, nil
 		}
@@ -1491,7 +1491,7 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 		return UnmountResult{}, err
 	}
 	if err := mountlocator.Remove(homeDir, opts.MountPath); err != nil {
-		return UnmountResult{}, apperr.Wrap("fs.remove_mount_locator", "runtime", 1, "remove tdc fs mount locator", err)
+		return UnmountResult{}, apperr.Wrap("fs.remove_mount_locator", "runtime", 1, "remove ti fs mount locator", err)
 	}
 	return UnmountResult{Status: "unmounted", MountPath: opts.MountPath}, nil
 }
@@ -1510,10 +1510,10 @@ func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kin
 	}
 	locator, err := mountlocator.New(profile.Name, profile.FSResourceName, profile.FSPlacementRegionCode, companionHome, mountPath, kind)
 	if err != nil {
-		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "construct tdc fs mount locator", err)
+		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "construct ti fs mount locator", err)
 	}
 	if _, err := mountlocator.Write(homeDir, locator); err != nil {
-		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "write tdc fs mount locator", err)
+		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "write ti fs mount locator", err)
 	}
 	return nil
 }
@@ -1526,20 +1526,20 @@ func (s Service) drive9MountLocatorProfile(base *config.Profile, mountPath strin
 	locator, _, err := mountlocator.Read(homeDir, mountPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, apperr.New("fs.mount_locator_not_found", "runtime", 1, fmt.Sprintf("no tdc fs mount locator found for %q", mountPath))
+			return nil, apperr.New("fs.mount_locator_not_found", "runtime", 1, fmt.Sprintf("no ti fs mount locator found for %q", mountPath))
 		}
-		return nil, apperr.Wrap("fs.read_mount_locator", "runtime", 1, fmt.Sprintf("read tdc fs mount locator for %q", mountPath), err)
+		return nil, apperr.Wrap("fs.read_mount_locator", "runtime", 1, fmt.Sprintf("read ti fs mount locator for %q", mountPath), err)
 	}
 	expectedHome, err := fscred.CompanionHome(homeDir, locator.Profile, locator.FileSystemName)
 	if err != nil {
 		return nil, err
 	}
 	if filepath.Clean(expectedHome) != filepath.Clean(locator.CompanionHome) {
-		return nil, apperr.New("fs.mount_locator_invalid", "config", 2, "tdc fs mount locator companion home does not match its profile and file system")
+		return nil, apperr.New("fs.mount_locator_invalid", "config", 2, "ti fs mount locator companion home does not match its profile and file system")
 	}
 	placement, err := region.ParsePlacementCode(locator.RegionCode)
 	if err != nil {
-		return nil, apperr.Wrap("fs.mount_locator_invalid", "config", 2, "tdc fs mount locator has an invalid region", err)
+		return nil, apperr.Wrap("fs.mount_locator_invalid", "config", 2, "ti fs mount locator has an invalid region", err)
 	}
 	profile := config.Profile{HomeDir: homeDir}
 	if base != nil {

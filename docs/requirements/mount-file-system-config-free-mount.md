@@ -1,75 +1,63 @@
-# `tdc fs mount-file-system` Configuration\-Free Mount
+# `ti fs mount-file-system` Configuration-Free Mount
 
 ## Problem
 
-Today `tdc fs mount-file-system` requires an initialized `~/.tdc/credentials` file, which in turn requires `tdc configure` with TiDB Cloud API public/private keys\. This makes the mount command unusable in ephemeral environments \(CI/CD pipelines, E2B sandboxes, Docker containers\) where provisioning long\-lived API credentials is undesirable\. Users want a "mount and go" experience with only the information intrinsic to the filesystem itself\.
+Ephemeral environments such as CI jobs, E2B sandboxes, and containers should not require `ti configure`, TiDB Cloud API keys, or a persistent `~/.ti` profile merely to mount an existing file system.
 
 ## Solution
 
-Make `tdc fs mount-file-system --file-system-name my-workspace --mount-path ~/my-workspace` work without any prior `tdc configure` by accepting three pieces of information directly:
+An FS token contains the Drive9 tenant ID that is the canonical `file_system_id`. A clean environment therefore needs only:
 
-1. **file\-system\-name** — identifies the target File System
+1. `--fs-token` or `TI_FS_TOKEN` for filesystem-scoped authentication and identity.
+2. `--region` or `TI_REGION_CODE` for endpoint routing.
+3. `--mount-path` for the local mount target.
 
-2. **\-\-region\-code** flag or **TDC\_REGION\_CODE** environment variable — specifies the deployment region
-
-3. **\-\-fs\-token** flag or **TDC\_FS\_TOKEN** environment variable — the filesystem\-scoped authentication token
-
-With these three variables, the CLI has everything it needs to mount the filesystem — region for the API endpoint, FS identity, and a scoped credential — without a credentials file or API key pair\.
+`--file-system-id` and `TI_FS_FILE_SYSTEM_ID` remain optional. When supplied with a token, they are consistency assertions and must match the tenant ID embedded in that token.
 
 ## CLI Interface
 
 ```bash
-# Minimal mount — everything via flags
-tdc fs mount-file-system \
-  --file-system-name my-workspace \
-  --mount-path ~/my-workspace \
-  --region-code aws-us-east-1 \
-  --fs-token tdc_fs_v1_abc123...xyz
+# Minimal sandbox mount using environment variables.
+export TI_REGION_CODE=aws-us-east-1
+export TI_FS_TOKEN=drive9_abc123...xyz
+ti fs mount-file-system --mount-path ~/my-workspace
 
-# Mount using env vars for region and token
-export TDC_REGION_CODE=aws-us-east-1
-export TDC_FS_TOKEN=tdc_fs_v1_abc123...xyz
-tdc fs mount-file-system \
-  --file-system-name my-workspace \
-  --mount-path ~/my-workspace
-
-# Mount with mixed sources — pick what suits the environment
-tdc fs mount-file-system \
-  --file-system-name my-workspace \
+# Supply all authentication and routing values as flags.
+ti fs mount-file-system \
   --mount-path ~/my-workspace \
-  --region-code aws-us-east-1
+  --region aws-us-east-1 \
+  --fs-token drive9_abc123...xyz
+
+# Optionally assert the expected file system ID.
+ti fs mount-file-system \
+  --file-system-id tnt_abc123 \
+  --mount-path ~/my-workspace \
+  --region aws-us-east-1 \
+  --fs-token drive9_abc123...xyz
 ```
 
 ## Variable Precedence
 
-When multiple sources provide the same variable, the priority is \(highest wins\):
+For each value independently, the priority is:
 
-1. CLI flag \(`--region-code`, `--fs-token`\)
+1. Explicit CLI flag.
+2. Canonical environment variable.
+3. Locally stored ID-keyed credential in the selected profile.
+4. Profile region for endpoint routing.
 
-2. Environment variable \(`TDC_REGION_CODE`, `TDC_FS_TOKEN`\)
-
-3. `~/.tdc/credentials` \(existing config, if any\)
-
-This means existing configured setups continue to work unchanged — the new flags and env vars are purely additive\.
+Canonical and legacy environment variables with different values fail explicitly. Values from different precedence layers can be combined, so a flag may provide the ID while the environment provides the token and the profile provides the region.
 
 ## Behavior
 
-1. CLI resolves `region-code` and `fs-token` from flags → env vars → credentials file \(in order of precedence\)
-
-2. If either `region-code` or `fs-token` is missing after resolution, CLI prints a clear error telling the user which variable is missing and the available sources
-
-3. CLI connects to the Drive9 API endpoint using the region code and authenticates directly with the FS token
-
-4. Mount proceeds as normal — FUSE mount \(Linux/macOS\) or WebDAV \(fallback\)
-
-5. No `~/.tdc/credentials` file is **pre\-required** before this mount command
+1. Resolve the optional explicit ID, token, and region independently.
+2. Parse the token and derive its tenant ID.
+3. Reject an explicit ID that does not match the token.
+4. Resolve the Drive9 endpoint from the canonical region code.
+5. Mount through the bundled `ti-drive9` companion without requiring or creating profile files.
 
 ## Use Cases
 
-- **E2B sandboxes:** pass `TDC_FS_TOKEN` and `TDC_REGION_CODE` as sandbox environment variables — no config step needed
-
-- **CI/CD pipelines:** inject token and region via CI secrets, mount in one command
-
-- **Docker containers:** pass via `--env` flags, no volume\-mounting credentials
-
-- **Quick trials:** a new user with only a token can mount immediately without API key setup
+- **E2B sandboxes:** inject `TI_FS_TOKEN` and `TI_REGION_CODE` and mount immediately.
+- **CI/CD pipelines:** keep the token in CI secrets without distributing TiDB Cloud account keys.
+- **Docker containers:** pass two environment variables without mounting the host credentials directory.
+- **Configured machines:** select an ID-keyed local credential and omit repeated token input.

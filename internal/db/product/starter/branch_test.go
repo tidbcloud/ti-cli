@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 func TestCreateBranch(t *testing.T) {
@@ -314,7 +314,7 @@ func TestDryRunCreateBranchDoesNotSendRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := testService(server.URL).DryRunCreateBranch(context.Background(), "tdc db create-db-cluster-branch", CreateBranchOptions{
+	result, err := testService(server.URL).DryRunCreateBranch(context.Background(), "ti db create-db-cluster-branch", CreateBranchOptions{
 		Profile:         testProfile(),
 		ClusterID:       "cluster-1",
 		DisplayName:     "dev",
@@ -351,7 +351,7 @@ func TestDryRunDeleteBranchDoesNotSendRequest(t *testing.T) {
 	}))
 	defer server.Close()
 
-	result, err := testService(server.URL).DryRunDeleteBranch(context.Background(), "tdc db delete-db-cluster-branch", DeleteBranchOptions{
+	result, err := testService(server.URL).DryRunDeleteBranch(context.Background(), "ti db delete-db-cluster-branch", DeleteBranchOptions{
 		Profile:   testProfile(),
 		ClusterID: "cluster-1",
 		BranchID:  "branch-1",
@@ -374,7 +374,7 @@ func TestDryRunDeleteBranchDoesNotSendRequest(t *testing.T) {
 }
 
 func TestCreateBranchRequiresName(t *testing.T) {
-	_, err := Service{}.DryRunCreateBranch(context.Background(), "tdc db create-db-cluster-branch", CreateBranchOptions{
+	_, err := Service{}.DryRunCreateBranch(context.Background(), "ti db create-db-cluster-branch", CreateBranchOptions{
 		Profile:   testProfile(),
 		ClusterID: "cluster-1",
 	})

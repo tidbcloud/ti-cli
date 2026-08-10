@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
 type GitWorkspaceRequest struct {

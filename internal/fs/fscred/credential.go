@@ -12,10 +12,10 @@ import (
 	"sync"
 
 	"github.com/pelletier/go-toml/v2"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/region"
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 const (
@@ -89,7 +89,7 @@ func StoreCredential(homeDir string, profile *config.Profile, fileSystemID, regi
 		return Credential{}, err
 	}
 	if err := ensureCredentialDirs(homeDir, profile.Name, fileSystemID); err != nil {
-		return Credential{}, fmt.Errorf("create tdc fs credential directory: %w", err)
+		return Credential{}, fmt.Errorf("create ti fs credential directory: %w", err)
 	}
 	if err := writeTOML(filepath.Join(dir, credsFileName), credential, 0o600); err != nil {
 		return Credential{}, err
@@ -199,27 +199,27 @@ func CredentialPath(homeDir, profileName, fileSystemID string) (CredentialPaths,
 }
 
 func PrepareCredentialStore(homeDir, profileName string) error {
-	root := filepath.Join(homeDir, store.TDCDirName, credentialsDirName)
+	root := filepath.Join(homeDir, store.TIDirName, credentialsDirName)
 	profilePath := credentialProfileDir(homeDir, profileName)
 	for _, path := range []string{root, profilePath} {
 		if err := os.MkdirAll(path, 0o700); err != nil {
-			return fmt.Errorf("prepare tdc fs credential directory: %w", err)
+			return fmt.Errorf("prepare ti fs credential directory: %w", err)
 		}
 		if err := os.Chmod(path, 0o700); err != nil {
-			return fmt.Errorf("restrict tdc fs credential directory: %w", err)
+			return fmt.Errorf("restrict ti fs credential directory: %w", err)
 		}
 	}
 	probe, err := os.CreateTemp(profilePath, ".write-probe-*")
 	if err != nil {
-		return fmt.Errorf("verify tdc fs credential directory is writable: %w", err)
+		return fmt.Errorf("verify ti fs credential directory is writable: %w", err)
 	}
 	probePath := probe.Name()
 	if closeErr := probe.Close(); closeErr != nil {
 		_ = os.Remove(probePath)
-		return fmt.Errorf("verify tdc fs credential directory is writable: %w", closeErr)
+		return fmt.Errorf("verify ti fs credential directory is writable: %w", closeErr)
 	}
 	if err := os.Remove(probePath); err != nil {
-		return fmt.Errorf("remove tdc fs credential write probe: %w", err)
+		return fmt.Errorf("remove ti fs credential write probe: %w", err)
 	}
 	return nil
 }
@@ -233,14 +233,22 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 		return nil, Credential{}, apperr.New("fs.empty_file_system_id", "usage", 2, "--file-system-id cannot be empty")
 	}
 	if id == "" {
-		id = strings.TrimSpace(fsEnvValue(opts.Env, "TDC_FS_FILE_SYSTEM_ID"))
+		value, err := fsEnvValue(opts.Env, "TI_FS_FILE_SYSTEM_ID")
+		if err != nil {
+			return nil, Credential{}, err
+		}
+		id = strings.TrimSpace(value)
 	}
 	token := strings.TrimSpace(opts.Token)
 	if opts.TokenExplicit && token == "" {
 		return nil, Credential{}, apperr.New("fs.empty_token", "usage", 2, "--fs-token cannot be empty")
 	}
 	if token == "" {
-		token = strings.TrimSpace(fsEnvValue(opts.Env, "TDC_FS_TOKEN"))
+		value, err := fsEnvValue(opts.Env, "TI_FS_TOKEN")
+		if err != nil {
+			return nil, Credential{}, err
+		}
+		token = strings.TrimSpace(value)
 	}
 	explicitToken := token != ""
 	if explicitToken {
@@ -291,7 +299,7 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 			"auth.missing_fs_api_key",
 			"authentication",
 			3,
-			fmt.Sprintf("authentication required: no local FS token is stored for file system %q; pass --fs-token, set TDC_FS_TOKEN, or import a known token with `tdc fs import-file-system-token`. Token regeneration is not available yet", id),
+			fmt.Sprintf("authentication required: no local FS token is stored for file system %q; pass --fs-token, set TI_FS_TOKEN, or import a known token with `ti fs import-file-system-token`. Token regeneration is not available yet", id),
 		)
 	}
 	placementCode := strings.TrimSpace(opts.RegionOverride)
@@ -302,7 +310,7 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 		placementCode = strings.TrimSpace(profile.PlacementRegionCode)
 	}
 	if placementCode == "" {
-		return nil, Credential{}, apperr.New("fs.missing_region", "config", 2, "tdc fs region is required; pass --region, set TDC_REGION_CODE, or use locally stored credentials with region_code")
+		return nil, Credential{}, apperr.New("fs.missing_region", "config", 2, "ti fs region is required; pass --region, set TI_REGION_CODE, or use locally stored credentials with region_code")
 	}
 	placement, err := region.ParsePlacementCode(placementCode)
 	if err != nil {
@@ -480,7 +488,7 @@ func writeMigrationState(homeDir, profileName string, migrated map[string]bool) 
 }
 
 func missingFileSystemID() error {
-	return apperr.New("fs.missing_file_system_id", "usage", 2, "file system ID is required; pass --file-system-id, set TDC_FS_FILE_SYSTEM_ID, or supply an FS token")
+	return apperr.New("fs.missing_file_system_id", "usage", 2, "file system ID is required; pass --file-system-id, set TI_FS_FILE_SYSTEM_ID, or supply an FS token")
 }
 
 func credentialDir(homeDir, profileName, fileSystemID string) (string, error) {
@@ -492,11 +500,11 @@ func credentialDir(homeDir, profileName, fileSystemID string) (string, error) {
 }
 
 func credentialProfileDir(homeDir, profileName string) string {
-	return filepath.Join(homeDir, store.TDCDirName, credentialsDirName, encodeKey(normalizedProfile(profileName)))
+	return filepath.Join(homeDir, store.TIDirName, credentialsDirName, encodeKey(normalizedProfile(profileName)))
 }
 
 func ensureCredentialDirs(homeDir, profileName, fileSystemID string) error {
-	root := filepath.Join(homeDir, store.TDCDirName, credentialsDirName)
+	root := filepath.Join(homeDir, store.TIDirName, credentialsDirName)
 	profilePath := credentialProfileDir(homeDir, profileName)
 	credentialPath, err := credentialDir(homeDir, profileName, fileSystemID)
 	if err != nil {

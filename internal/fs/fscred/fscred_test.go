@@ -7,9 +7,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 func TestRegistryStoreListAndFileModes(t *testing.T) {
@@ -23,7 +23,7 @@ func TestRegistryStoreListAndFileModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, path := range []string{
-		filepath.Join(home, store.TDCDirName, resourcesDirName),
+		filepath.Join(home, store.TIDirName, resourcesDirName),
 		profileDir(home, profile.Name),
 		dir,
 	} {
@@ -48,7 +48,7 @@ func TestRegistryStoreListAndFileModes(t *testing.T) {
 		t.Fatalf("registry store wrote main config: %v", err)
 	}
 	if runtime.GOOS != "windows" {
-		assertMode(t, filepath.Join(home, store.TDCDirName, resourcesDirName), 0o700)
+		assertMode(t, filepath.Join(home, store.TIDirName, resourcesDirName), 0o700)
 		assertMode(t, profileDir(home, profile.Name), 0o700)
 		assertMode(t, dir, 0o700)
 		assertMode(t, filepath.Join(dir, configFileName), 0o644)
@@ -75,11 +75,11 @@ func TestResolveSelectionPrecedence(t *testing.T) {
 	if err := Store(home, profile, "scratch", "tenant-2", "aws", "aws-us-west-2", "key-2"); err != nil {
 		t.Fatal(err)
 	}
-	selected, _, err := Resolve(home, profile, "scratch", true, map[string]string{"TDC_FS_FILE_SYSTEM_NAME": "workspace"})
+	selected, _, err := Resolve(home, profile, "scratch", true, map[string]string{"TI_FS_FILE_SYSTEM_NAME": "workspace"})
 	if err != nil || selected.FSResourceName != "scratch" || selected.FSAPIKey != "key-2" || selected.FSRegionCode != "us-west-2" {
 		t.Fatalf("flag selection failed: selected=%#v err=%v", selected, err)
 	}
-	selected, _, err = Resolve(home, profile, "", false, map[string]string{"TDC_FS_FILE_SYSTEM_NAME": "scratch"})
+	selected, _, err = Resolve(home, profile, "", false, map[string]string{"TI_FS_FILE_SYSTEM_NAME": "scratch"})
 	if err != nil || selected.FSResourceName != "scratch" {
 		t.Fatalf("environment selection failed: selected=%#v err=%v", selected, err)
 	}
@@ -117,9 +117,9 @@ func TestResolveAuthenticatedConfigurationFree(t *testing.T) {
 	selected, resource, err := ResolveAuthenticated(home, profile, ResolveAuthOptions{
 		TokenRequired: true,
 		Env: map[string]string{
-			"TDC_FS_FILE_SYSTEM_NAME": "workspace",
-			"TDC_FS_TOKEN":            "drive9-secret",
-			"TDC_REGION_CODE":         "aws-us-east-1",
+			"TI_FS_FILE_SYSTEM_NAME": "workspace",
+			"TI_FS_TOKEN":            "drive9-secret",
+			"TI_REGION_CODE":         "aws-us-east-1",
 		},
 		RegionOverride: "aws-us-east-1",
 	})
@@ -132,7 +132,7 @@ func TestResolveAuthenticatedConfigurationFree(t *testing.T) {
 	if resource.TenantID != "" || !resource.HasAPIKey {
 		t.Fatalf("unexpected ephemeral resource: %#v", resource)
 	}
-	if _, err := os.Stat(filepath.Join(home, store.TDCDirName)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, store.TIDirName)); !os.IsNotExist(err) {
 		t.Fatalf("configuration-free resolution wrote local state: %v", err)
 	}
 }
@@ -153,8 +153,8 @@ func TestResolveAuthenticatedPrecedenceAndMixedSources(t *testing.T) {
 		RegionOverride:   "aws-ap-southeast-1",
 		TokenRequired:    true,
 		Env: map[string]string{
-			"TDC_FS_TOKEN":    "env-token",
-			"TDC_REGION_CODE": "aws-us-east-1",
+			"TI_FS_TOKEN":    "env-token",
+			"TI_REGION_CODE": "aws-us-east-1",
 		},
 	})
 	if err != nil {
@@ -167,8 +167,8 @@ func TestResolveAuthenticatedPrecedenceAndMixedSources(t *testing.T) {
 	selected, _, err = ResolveAuthenticated(home, profile, ResolveAuthOptions{
 		TokenRequired: true,
 		Env: map[string]string{
-			"TDC_FS_FILE_SYSTEM_NAME": "workspace",
-			"TDC_FS_TOKEN":            "env-token",
+			"TI_FS_FILE_SYSTEM_NAME": "workspace",
+			"TI_FS_TOKEN":            "env-token",
 		},
 	})
 	if err != nil {
@@ -188,7 +188,7 @@ func TestResolveAuthenticatedErrorsAndDelegatedTokenMode(t *testing.T) {
 	}{
 		{
 			name: "missing name",
-			opts: ResolveAuthOptions{TokenRequired: true, RegionOverride: "aws-us-east-1", Env: map[string]string{"TDC_FS_TOKEN": "token"}},
+			opts: ResolveAuthOptions{TokenRequired: true, RegionOverride: "aws-us-east-1", Env: map[string]string{"TI_FS_TOKEN": "token"}},
 			code: "fs.missing_file_system_name",
 		},
 		{
@@ -203,7 +203,7 @@ func TestResolveAuthenticatedErrorsAndDelegatedTokenMode(t *testing.T) {
 		},
 		{
 			name: "empty selector flag",
-			opts: ResolveAuthOptions{SelectorExplicit: true, Token: "token", TokenExplicit: true, TokenRequired: true, RegionOverride: "aws-us-east-1", Env: map[string]string{"TDC_FS_FILE_SYSTEM_NAME": "workspace"}},
+			opts: ResolveAuthOptions{SelectorExplicit: true, Token: "token", TokenExplicit: true, TokenRequired: true, RegionOverride: "aws-us-east-1", Env: map[string]string{"TI_FS_FILE_SYSTEM_NAME": "workspace"}},
 			code: "fs.empty_file_system_name",
 		},
 		{
@@ -243,7 +243,7 @@ func TestLegacyFlatResourceMigration(t *testing.T) {
 		FSTenantID:      "tenant-1",
 		FSCloudProvider: "aws",
 		FSRegionCode:    "aws-us-east-1",
-	}, store.CredentialsProfile{TDCPublicKey: "public", TDCPrivateKey: "private", FSAPIKey: "key-1"}); err != nil {
+	}, store.CredentialsProfile{TiDBCloudPublicKey: "public", TiDBCloudPrivateKey: "private", FSAPIKey: "key-1"}); err != nil {
 		t.Fatal(err)
 	}
 	profile := registryProfile(home)
@@ -265,7 +265,7 @@ func TestLegacyFlatResourceMigration(t *testing.T) {
 	if got := configDoc["stage"]; got.FSResourceName != "" || got.FSTenantID != "" {
 		t.Fatalf("legacy config not cleared: %#v", got)
 	}
-	if got := credentialsDoc["stage"]; got.FSAPIKey != "" || got.TDCPublicKey != "public" {
+	if got := credentialsDoc["stage"]; got.FSAPIKey != "" || got.TiDBCloudPublicKey != "public" {
 		t.Fatalf("legacy credentials not cleared safely: %#v", got)
 	}
 }
@@ -375,7 +375,7 @@ func TestResolveDryRunUsesLegacyResourceWithoutMigrating(t *testing.T) {
 	if err != nil || selected.FSAPIKey != "key-1" {
 		t.Fatalf("dry-run legacy selection failed: selected=%#v err=%v", selected, err)
 	}
-	if _, err := os.Stat(filepath.Join(home, store.TDCDirName, resourcesDirName)); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(home, store.TIDirName, resourcesDirName)); !os.IsNotExist(err) {
 		t.Fatalf("dry-run created registry state: %v", err)
 	}
 }
@@ -460,7 +460,7 @@ func TestResourceNameCannotEscapeRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := filepath.Join(home, store.TDCDirName, resourcesDirName)
+	root := filepath.Join(home, store.TIDirName, resourcesDirName)
 	rel, err := filepath.Rel(root, dir)
 	if err != nil || rel == ".." || len(rel) >= 3 && rel[:3] == ".."+string(os.PathSeparator) {
 		t.Fatalf("resource escaped registry: dir=%s rel=%s err=%v", dir, rel, err)
@@ -474,8 +474,8 @@ func registryProfile(home string) *config.Profile {
 		PlacementRegionCode: "aws-us-east-1",
 		CloudProvider:       "aws",
 		RegionCode:          "us-east-1",
-		TDCPublicKey:        "public",
-		TDCPrivateKey:       "private",
+		TiDBCloudPublicKey:  "public",
+		TiDBCloudPrivateKey: "private",
 	}
 }
 

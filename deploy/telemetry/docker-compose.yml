@@ -5,7 +5,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/telemetry/Dockerfile
-    entrypoint: ["/usr/local/bin/tdc-telemetry-migrate"]
+    entrypoint: ["/usr/local/bin/ti-telemetry-migrate"]
     env_file:
       - ${TELEMETRY_ENV_FILE:-.env}
     restart: "no"

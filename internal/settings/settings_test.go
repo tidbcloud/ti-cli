@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/config/store"
 )
 
 func TestLoadMissingSettingsDoesNotCreateFile(t *testing.T) {
@@ -34,11 +34,11 @@ func TestLoadMissingSettingsDoesNotCreateFile(t *testing.T) {
 
 func TestPathUsesHiddenPreferencesAndIgnoresUnshippedSettingsPath(t *testing.T) {
 	home := t.TempDir()
-	wantPath := filepath.Join(home, ".tdc", ".preferences")
+	wantPath := filepath.Join(home, ".ti", ".preferences")
 	if got := Path(home); got != wantPath {
 		t.Fatalf("Path(%q) = %q, want %q", home, got, wantPath)
 	}
-	writeFile(t, filepath.Join(home, ".tdc", "settings"), "[logging]\nenabled = false\n", 0o600)
+	writeFile(t, filepath.Join(home, ".ti", "settings"), "[logging]\nenabled = false\n", 0o600)
 
 	cfg, err := ResolveLogging(home, map[string]string{})
 	if err != nil {
@@ -110,7 +110,7 @@ max_files = 3
 		{value: "no", want: false},
 	} {
 		t.Run(test.value, func(t *testing.T) {
-			cfg, err := ResolveLogging(home, map[string]string{"TDC_LOGGING": test.value})
+			cfg, err := ResolveLogging(home, map[string]string{"TI_LOGGING": test.value})
 			if err != nil {
 				t.Fatalf("override failed: %v", err)
 			}
@@ -128,7 +128,7 @@ func TestResolveLoggingDisabledEnvironmentDoesNotReadMalformedSettings(t *testin
 	home := t.TempDir()
 	writeFile(t, Path(home), "not valid toml = [", 0o600)
 	writeFile(t, store.ConfigPath(home), "not valid toml = [", 0o644)
-	cfg, err := ResolveLogging(home, map[string]string{"TDC_LOGGING": "off"})
+	cfg, err := ResolveLogging(home, map[string]string{"TI_LOGGING": "off"})
 	if err != nil {
 		t.Fatalf("disabled environment should short-circuit settings: %v", err)
 	}
@@ -141,8 +141,8 @@ func TestResolveLoggingInvalidEnvironmentFailsClosed(t *testing.T) {
 	home := t.TempDir()
 	writeFile(t, Path(home), "not valid toml = [", 0o600)
 	writeFile(t, store.ConfigPath(home), "not valid toml = [", 0o644)
-	cfg, err := ResolveLogging(home, map[string]string{"TDC_LOGGING": "sometimes"})
-	if err == nil || !strings.Contains(err.Error(), "invalid TDC_LOGGING") {
+	cfg, err := ResolveLogging(home, map[string]string{"TI_LOGGING": "sometimes"})
+	if err == nil || !strings.Contains(err.Error(), "invalid TI_LOGGING") {
 		t.Fatalf("expected invalid environment error, got %v", err)
 	}
 	if cfg.Enabled {
@@ -188,7 +188,7 @@ enabled = false
 max_file_mb = 3
 max_files = 2
 `, 0o644)
-	credentials := []byte("[default]\ntdc_public_key = 'public'\ntdc_private_key = 'private'\n")
+	credentials := []byte("[default]\ntidb_cloud_public_key = 'public'\ntidb_cloud_private_key = 'private'\n")
 	writeFile(t, store.CredentialsPath(home), string(credentials), 0o600)
 
 	doc, exists, err := Load(home)

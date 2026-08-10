@@ -1,26 +1,26 @@
-# Agentic CLI - tdc
+# Agentic CLI - ti
 
-tdc is the command-line interface for TiDB Cloud Starter and TiDB Cloud Filesystem. It is designed for people, scripts, and AI agents that need deterministic resource management without terminal-specific assumptions.
+ti is the command-line interface for TiDB Cloud Starter and TiDB Cloud Filesystem. It is designed for people, scripts, and AI agents that need deterministic resource management without terminal-specific assumptions.
 
-tdc is currently in Preview. Its feature and command contracts can change before GA.
+ti is currently in Preview. Its feature and command contracts can change before GA.
 
 ## Product Scope
 
-- `tdc organization` reads TiDB Cloud organization and project context.
-- `tdc db` manages TiDB Cloud Starter clusters and branches, prepares SQL users, formats connection strings, and executes one SQL statement per invocation.
-- `tdc fs` manages TiDB Cloud Filesystem resources, files, layers, packs, and mounts.
-- `tdc fs-git`, `tdc fs-journal`, and `tdc fs-vault` expose Filesystem-backed Git workspace, append-only journal, and secret-management workflows.
-- `tdc configure` initializes a local profile.
-- `tdc update` explicitly checks for or installs a release update.
+- `ti organization` reads TiDB Cloud organization and project context.
+- `ti db` manages TiDB Cloud Starter clusters and branches, prepares SQL users, formats connection strings, and executes one SQL statement per invocation.
+- `ti fs` manages TiDB Cloud Filesystem resources, files, layers, packs, and mounts.
+- `ti fs-git`, `ti fs-journal`, and `ti fs-vault` expose Filesystem-backed Git workspace, append-only journal, and secret-management workflows.
+- `ti configure` initializes a local profile.
+- `ti update` explicitly checks for or installs a release update.
 
-tdc implements only Starter database operations in the current Preview. Commands without a required cluster ID require the exact `--db-cluster-type starter` value and never default it. Commands with a cluster ID discover `servicePlan` from the resource and dispatch internally; they do not expose a type flag. Recognized but unimplemented products and unknown or conflicting plan metadata fail closed.
+ti implements only Starter database operations in the current Preview. Commands without a required cluster ID require the exact `--db-cluster-type starter` value and never default it. Commands with a cluster ID discover `servicePlan` from the resource and dispatch internally; they do not expose a type flag. Recognized but unimplemented products and unknown or conflicting plan metadata fail closed.
 
 ## Command Design
 
 The command tree has at most two command levels:
 
 ```text
-tdc <command> [subcommand]
+ti <command> [subcommand]
 ```
 
 `configure` and `update` are intentional top-level verb exceptions. Other top-level commands identify product domains: `organization`, `db`, `fs`, `fs-git`, `fs-journal`, and `fs-vault`.
@@ -28,9 +28,9 @@ tdc <command> [subcommand]
 - Commands and flags use complete, self-explanatory names.
 - Flags are long-only. Do not add one-letter flags.
 - Required flags appear before optional flags in help output.
-- `tdc fs` Unix-style aliases shorten only the command name. Their flags stay long and match the canonical command.
-- Only `tdc configure` may prompt.
-- Help works through `tdc help`, `tdc <command> help`, and `tdc <command> <subcommand> help`.
+- `ti fs` Unix-style aliases shorten only the command name. Their flags stay long and match the canonical command.
+- Only `ti configure` may prompt.
+- Help works through `ti help`, `ti <command> help`, and `ti <command> <subcommand> help`.
 - `--version` remains available at every command level.
 - A command does not infer access mode, resource selection, or mutation intent from SQL or other user content.
 
@@ -42,17 +42,17 @@ tdc <command> [subcommand]
 - Commands that stream raw bytes reject `--query`.
 - Mutating control-plane commands support `--dry-run`; read-only commands reject it.
 - Dry run validates local input, credentials, placement, and request construction without sending a mutation.
-- Errors use `tdc [ERROR]: <actionable message>` and stable exit categories.
+- Errors use `ti [ERROR]: <actionable message>` and stable exit categories.
 - Commands do not silently retry through a different SQL role, transport, resource, or filesystem implementation.
 
 ## Profiles And Placement
 
-All persistent tdc state belongs under `~/.tdc/`.
+All persistent ti state belongs under `~/.ti/`.
 
 The local profile namespace is selected in this order:
 
 1. Explicit `--profile`.
-2. `TDC_PROFILE`.
+2. `TI_PROFILE`.
 3. `default`.
 
 An explicit empty `--profile ""` is invalid. Omitting `--profile` selects `default`.
@@ -62,7 +62,7 @@ Users select placement with one canonical region code. They never provide separa
 Placement is selected in this order:
 
 1. Explicit global `--region`.
-2. `TDC_REGION_CODE`.
+2. `TI_REGION_CODE`.
 3. The selected profile's `region_code`.
 
 The command-scoped override does not change the profile, credential source, or persisted configuration.
@@ -84,16 +84,16 @@ Supported TiDB Cloud Starter placement values are:
 
 TiDB Cloud public/private API keys are selected independently from the profile namespace:
 
-1. If either `TDC_PUBLIC_KEY` or `TDC_PRIVATE_KEY` is set, both must be set and the pair is used.
-2. Otherwise use `tdc_public_key` and `tdc_private_key` from the selected profile in `~/.tdc/credentials`.
+1. If either `TIDB_CLOUD_PUBLIC_KEY` or `TIDB_CLOUD_PRIVATE_KEY` is set, both must be set and the pair is used.
+2. Otherwise use `tidb_cloud_public_key` and `tidb_cloud_private_key` from the selected profile in `~/.ti/credentials`.
 
-Environment credentials must not create or select a synthetic `[env]` profile. Any generated persistent state remains under the profile selected by `--profile`, `TDC_PROFILE`, or `default`.
+Environment credentials must not create or select a synthetic `[env]` profile. Any generated persistent state remains under the profile selected by `--profile`, `TI_PROFILE`, or `default`.
 
 TiDB Cloud control-plane requests use HTTP Digest authentication. API keys must not be used as SQL Basic Auth credentials or Filesystem data-plane credentials.
 
 ## Configure And Default Project
 
-`tdc configure` collects:
+`ti configure` collects:
 
 - a canonical `region_code`;
 - a TiDB Cloud public API key;
@@ -101,7 +101,7 @@ TiDB Cloud control-plane requests use HTTP Digest authentication. API keys must 
 
 After validating the keys, configure lists accessible projects, requires exactly one project whose type is `tidbx_virtual`, and stores its ID as the profile's `project_id`. It commits the profile only after discovery succeeds.
 
-`tdc configure --non-interactive` reads flags first, then `TDC_REGION_CODE`, `TDC_PUBLIC_KEY`, and `TDC_PRIVATE_KEY`, and fails instead of prompting for missing input. Interactive configure must handle Ctrl+C and exit with code 130.
+`ti configure --non-interactive` reads flags first, then `TI_REGION_CODE`, `TIDB_CLOUD_PUBLIC_KEY`, and `TIDB_CLOUD_PRIVATE_KEY`, and fails instead of prompting for missing input. Interactive configure must handle Ctrl+C and exit with code 130.
 
 Starter cluster creation resolves its project in this order:
 
@@ -116,8 +116,8 @@ Other DB operations identify existing resources by cluster or branch ID. Filesys
 Main profile files are:
 
 ```text
-~/.tdc/config
-~/.tdc/credentials
+~/.ti/config
+~/.ti/credentials
 ```
 
 `config` contains non-sensitive profile values. `credentials` contains only profile-scoped TiDB Cloud API keys. Sensitive files use owner-only permissions where the platform supports POSIX modes.
@@ -125,40 +125,40 @@ Main profile files are:
 Example:
 
 ```toml
-# ~/.tdc/config
+# ~/.ti/config
 [default]
 region_code = "aws-us-east-1"
 project_id = "..."
 
-# ~/.tdc/credentials
+# ~/.ti/credentials
 [default]
-tdc_public_key = "..."
-tdc_private_key = "..."
+tidb_cloud_public_key = "..."
+tidb_cloud_private_key = "..."
 ```
 
-One profile can store credentials for multiple Filesystem resources. Drive9 remains authoritative for remote inventory; tdc stores only the one-time token and its routing hint, keyed by the server-assigned file system ID:
+One profile can store credentials for multiple Filesystem resources. Drive9 remains authoritative for remote inventory; ti stores only the one-time token and its routing hint, keyed by the server-assigned file system ID:
 
 ```text
-~/.tdc/fs_credentials/<profile-key>/<file-system-id-key>/credentials
+~/.ti/fs_credentials/<profile-key>/<file-system-id-key>/credentials
 ```
 
 The credential file stores `file_system_id`, canonical `region_code`, and the owner `api_key`. The main profile never stores a default resource ID or resource API keys.
 
-Legacy flat `fs_*` fields and name-keyed `~/.tdc/fs_resources` records are migration input only. Complete legacy records are copied into the ID-keyed credential store without deleting the source, preserving rollback safety. Incomplete or conflicting legacy state fails explicitly.
+Legacy flat `fs_*` fields and name-keyed `~/.ti/fs_resources` records are migration input only. Complete legacy records are copied into the ID-keyed credential store without deleting the source, preserving rollback safety. Incomplete or conflicting legacy state fails explicitly.
 
 DB SQL credentials are cluster-scoped because TiDB Cloud cluster IDs are globally unique:
 
 ```text
-~/.tdc/db_users/<cluster-id>/credentials
+~/.ti/db_users/<cluster-id>/credentials
 ```
 
 The file contains `[read_only]`, `[read_write]`, and `[admin]` sections with generated username/password pairs. SQL credentials do not belong in the main profile credentials file.
 
-Background Filesystem and Vault mounts store only non-secret routing state under `~/.tdc/mounts/`. Operation logs live under `~/.tdc/logs/`.
+Background Filesystem and Vault mounts store only non-secret routing state under `~/.ti/mounts/`. Operation logs live under `~/.ti/logs/`.
 
 ## Starter SQL Access
 
-`tdc db create-db-sql-users` creates or repairs three stable managed users for a cluster:
+`ti db create-db-sql-users` creates or repairs three stable managed users for a cluster:
 
 - read-only;
 - read-write;
@@ -166,7 +166,7 @@ Background Filesystem and Vault mounts store only non-secret routing state under
 
 The command is idempotent and must not create a new set on every invocation.
 
-`tdc db format-db-connection-string` formats existing credentials; it does not create a remote resource. It supports common connection-string formats and `.env` components. `tdc db execute-sql-statement` executes exactly one statement.
+`ti db format-db-connection-string` formats existing credentials; it does not create a remote resource. It supports common connection-string formats and `.env` components. `ti db execute-sql-statement` executes exactly one statement.
 
 Both commands default to read-write. `--read-write`, `--read-only`, and `--admin` are mutually exclusive explicit choices. There is no automatic role classification.
 
@@ -174,41 +174,41 @@ SQL execution prefers the HTTPS SQL API and uses the selected SQL username/passw
 
 ## Filesystem Ownership Boundary
 
-tdc does not implement filesystem runtime semantics itself. Installed `tdc fs`, `tdc fs-git`, `tdc fs-journal`, and `tdc fs-vault` commands route through the bundled `tdc-drive9` companion.
+ti does not implement filesystem runtime semantics itself. Installed `ti fs`, `ti fs-git`, `ti fs-journal`, and `ti fs-vault` commands route through the bundled `ti-drive9` companion.
 
-- tdc owns command naming, profile and region resolution, resource selection, credential storage, preflight validation, output/query behavior, errors, installation, and updates.
+- ti owns command naming, profile and region resolution, resource selection, credential storage, preflight validation, output/query behavior, errors, installation, and updates.
 - Drive9 owns file data-plane semantics, layers, pack/unpack, FUSE and WebDAV mounts, drain, Git workspace behavior, journal behavior, and Vault behavior.
-- There is no native tdc filesystem fallback.
+- There is no native ti filesystem fallback.
 - `ref/drive9` is context only and is never imported, built, packaged, or used by tests.
-- tdc exposes only operations present in the Drive9 public CLI. It does not expose Drive9 internal APIs.
+- ti exposes only operations present in the Drive9 public CLI. It does not expose Drive9 internal APIs.
 
 Each resource runs the companion with isolated state under:
 
 ```text
-~/.tdc/drive9-home/<profile-key>/<resource-key>
+~/.ti/drive9-home/<profile-key>/<resource-key>
 ```
 
-tdc supplies a sanitized companion environment containing the resolved server, canonical region, and resource owner token. Inherited `DRIVE9_*` values must not override tdc's selection. Users do not edit `~/.drive9` for tdc workflows.
+ti supplies a sanitized companion environment containing the resolved server, canonical region, and resource owner token. Inherited `DRIVE9_*` values must not override ti's selection. Users do not edit `~/.drive9` for ti workflows.
 
 Filesystem resource selection is:
 
-1. Explicit `--file-system-id` or `TDC_FS_FILE_SYSTEM_ID`.
+1. Explicit `--file-system-id` or `TI_FS_FILE_SYSTEM_ID`.
 2. The file system ID embedded in an explicitly supplied FS token; any separate ID must match it.
 3. Otherwise fail with `fs.missing_file_system_id` before endpoint resolution, companion startup, or a remote call.
 
-tdc never infers a target from profile state, the number of local credentials, creation order, or deletion side effects. Creating the first resource does not select it for later commands, and deleting a resource does not promote another resource. `TDC_FS_FILE_SYSTEM_ID` is an explicit process-scoped selector, or a consistency assertion when a token is also supplied; it is not a persisted default.
+ti never infers a target from profile state, the number of local credentials, creation order, or deletion side effects. Creating the first resource does not select it for later commands, and deleting a resource does not promote another resource. `TI_FS_FILE_SYSTEM_ID` is an explicit process-scoped selector, or a consistency assertion when a token is also supplied; it is not a persisted default.
 
 Remote data-plane, mount, Git, journal, and owner Vault commands select their FS token in this order:
 
 1. Explicit command-local token flag.
-2. `TDC_FS_TOKEN`.
+2. `TI_FS_TOKEN`.
 3. The selected resource's credentials file.
 
 A clean agent sandbox can access an existing Filesystem using only:
 
 ```text
-TDC_FS_TOKEN
-TDC_REGION_CODE
+TI_FS_TOKEN
+TI_REGION_CODE
 ```
 
 These environment values form an in-memory command context and are not persisted. The ID is derived from the token. TiDB Cloud API keys remain required for remote FS create, list, describe, and delete; deletion requires an ID but no local owner token.
@@ -219,35 +219,35 @@ On macOS and Windows, automatic mounting selects WebDAV. On Linux, automatic mou
 
 ## Install And Update
 
-GitHub Releases and GoReleaser produce release archives and checksums. Supported shell and PowerShell installers place both `tdc` and `tdc-drive9` in the user-owned `~/.tdc/bin` directory by default.
+GitHub Releases and GoReleaser produce release archives and checksums. Supported shell and PowerShell installers place both `ti` and `ti-drive9` in the user-owned `~/.ti/bin` directory by default.
 
 - Installation and update do not require sudo.
-- Installers do not edit shell profiles automatically; they print the command that prepends `~/.tdc/bin` to `PATH`.
-- Installers support tdc release version pinning and checksum verification. The companion is currently downloaded and checksum-verified from Drive9's unversioned release endpoint; tdc does not yet negotiate a companion version range.
-- `tdc update --check` checks explicitly; there is no background update.
-- `tdc update` is itself explicit consent and does not require `--yes`.
-- The updater stages and verifies tdc and its companion before replacement.
-- Self-update is allowed only for tdc-owned installer/archive installations.
+- Installers do not edit shell profiles automatically; they print the command that prepends `~/.ti/bin` to `PATH`.
+- Installers support ti release version pinning and checksum verification. The companion is currently downloaded and checksum-verified from Drive9's unversioned release endpoint; ti does not yet negotiate a companion version range.
+- `ti update --check` checks explicitly; there is no background update.
+- `ti update` is itself explicit consent and does not require `--yes`.
+- The updater stages and verifies ti and its companion before replacement.
+- Self-update is allowed only for ti-owned installer/archive installations.
 - Package-manager, local-build, and unknown installations fail with actionable guidance.
 - Active mounts must be drained and unmounted before updating the companion.
 
 ## Logs, Telemetry, And Secret Safety
 
-Local operation logs are enabled by default at `~/.tdc/logs/tdc.jsonl`. They may include command path, flag names, profile, region, duration, exit code, application error category, service, HTTP method/status, operation, and request ID.
+Local operation logs are enabled by default at `~/.ti/logs/ti.jsonl`. They may include command path, flag names, profile, region, duration, exit code, application error category, service, HTTP method/status, operation, and request ID.
 
 Logs must never include flag values, SQL text or results, file contents, remote or local paths, request/response bodies, connection strings, API keys, FS tokens, DB passwords, Vault tokens, or secret values.
 
-Disable local logging for one process with `TDC_LOGGING=off`, or globally:
+Disable local logging for one process with `TI_LOGGING=off`, or globally:
 
 ```toml
-# ~/.tdc/.preferences
+# ~/.ti/.preferences
 schema_version = 1
 
 [logging]
 enabled = false
 ```
 
-`~/.tdc/.preferences` is optional, hidden from ordinary directory listings, global across profiles, and separate from the profile-only `~/.tdc/config` and `~/.tdc/credentials` files. Missing settings use in-memory defaults without creating the file. Existing legacy `[logging]` configuration in `~/.tdc/config` is migrated atomically. `tdc update` does not read or write any state under `~/.tdc/`, including settings and operation logs.
+`~/.ti/.preferences` is optional, hidden from ordinary directory listings, global across profiles, and separate from the profile-only `~/.ti/config` and `~/.ti/credentials` files. Missing settings use in-memory defaults without creating the file. Existing legacy `[logging]` configuration in `~/.ti/config` is migrated atomically. `ti update` does not read or write any state under `~/.ti/`, including settings and operation logs.
 
 Telemetry follows the same data-minimization rule and must be explicitly disclosed after installation. It can collect command/subcommand names, flag names, error codes, duration, region, CLI version, and OS type, but never credentials or user content. Telemetry must have documented settings-file and process-scoped environment opt-outs before collection is enabled.
 

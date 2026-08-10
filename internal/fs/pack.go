@@ -19,24 +19,24 @@ import (
 	"strings"
 	"time"
 
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	"github.com/tidbcloud/tdc/internal/fs/mountstate"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 )
 
 const (
 	defaultMountProfile     = "coding-agent"
 	noneMountProfile        = "none"
 	portableMountProfile    = "portable"
-	packArchiveFormat       = "tdc.pack.v1"
+	packArchiveFormat       = "ti.pack.v1"
 	drive9PackArchiveFormat = "drive9.pack.v1"
-	packManifestEntryName   = ".tdc-pack-manifest.json"
+	packManifestEntryName   = ".ti-pack-manifest.json"
 	drive9ManifestEntryName = ".drive9-pack-manifest.json"
 	packArchiveEntryPrefix  = "entries/"
-	defaultPackRoot         = "/.tdc/packs"
+	defaultPackRoot         = "/.ti/packs"
 )
 
 type PackFileSystemOptions struct {
@@ -161,14 +161,14 @@ func (s Service) DryRunPackFileSystem(ctx context.Context, commandPath string, o
 	if err != nil {
 		return dryrun.Result{}, err
 	}
-	if _, err := s.dataClient(opts.Profile, authz.FSFileWrite, "pack tdc fs local overlay"); err != nil {
+	if _, err := s.dataClient(opts.Profile, authz.FSFileWrite, "pack ti fs local overlay"); err != nil {
 		return dryrun.Result{}, err
 	}
 	return dryrun.New(
 		commandPath,
 		"pack_file_system",
 		dryrun.RequestSummary{
-			Description: "normal execution creates a tar.gz archive from local-root/overlay and uploads it as a tdc fs file",
+			Description: "normal execution creates a tar.gz archive from local-root/overlay and uploads it as a ti fs file",
 			Method:      "PUT",
 			Path:        request.ArchivePath,
 			Body: map[string]any{
@@ -191,14 +191,14 @@ func (s Service) DryRunUnpackFileSystem(ctx context.Context, commandPath string,
 	if err != nil {
 		return dryrun.Result{}, err
 	}
-	if _, err := s.dataClient(opts.Profile, authz.FSFileRead, "unpack tdc fs local overlay"); err != nil {
+	if _, err := s.dataClient(opts.Profile, authz.FSFileRead, "unpack ti fs local overlay"); err != nil {
 		return dryrun.Result{}, err
 	}
 	return dryrun.New(
 		commandPath,
 		"unpack_file_system",
 		dryrun.RequestSummary{
-			Description: "normal execution downloads a tdc fs pack archive and restores it into local-root/overlay",
+			Description: "normal execution downloads a ti fs pack archive and restores it into local-root/overlay",
 			Method:      "GET",
 			Path:        request.ArchivePath,
 			Body: map[string]any{
@@ -317,7 +317,7 @@ func (s Service) packMountState(mountPath string) (mountstate.State, error) {
 	state, _, err := mountstate.Read(homeDir, mountPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return mountstate.State{}, apperr.New("fs.mount_state_not_found", "runtime", 1, fmt.Sprintf("no tdc fs mount state found for %q", mountPath))
+			return mountstate.State{}, apperr.New("fs.mount_state_not_found", "runtime", 1, fmt.Sprintf("no ti fs mount state found for %q", mountPath))
 		}
 		return mountstate.State{}, apperr.Wrap("fs.read_mount_state", "runtime", 1, fmt.Sprintf("read mount state for %q", mountPath), err)
 	}
@@ -388,7 +388,7 @@ func writePackArchive(ctx context.Context, w io.Writer, opts packArchiveOptions)
 func readPackArchiveManifest(ctx context.Context, r io.Reader) (*packManifest, error) {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
-		return nil, apperr.Wrap("fs.pack_read_gzip", "runtime", 1, "open tdc fs pack gzip stream", err)
+		return nil, apperr.Wrap("fs.pack_read_gzip", "runtime", 1, "open ti fs pack gzip stream", err)
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
@@ -397,7 +397,7 @@ func readPackArchiveManifest(ctx context.Context, r io.Reader) (*packManifest, e
 		return nil, apperr.New("fs.invalid_pack_archive", "runtime", 1, "invalid pack archive: missing manifest")
 	}
 	if err != nil {
-		return nil, apperr.Wrap("fs.pack_read_manifest", "runtime", 1, "read tdc fs pack manifest entry", err)
+		return nil, apperr.Wrap("fs.pack_read_manifest", "runtime", 1, "read ti fs pack manifest entry", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -407,7 +407,7 @@ func readPackArchiveManifest(ctx context.Context, r io.Reader) (*packManifest, e
 	}
 	var manifest packManifest
 	if err := json.NewDecoder(tr).Decode(&manifest); err != nil {
-		return nil, apperr.Wrap("fs.pack_decode_manifest", "runtime", 1, "decode tdc fs pack manifest", err)
+		return nil, apperr.Wrap("fs.pack_decode_manifest", "runtime", 1, "decode ti fs pack manifest", err)
 	}
 	if !supportedPackFormat(manifest.Format) {
 		return nil, apperr.New("fs.unsupported_pack_format", "runtime", 1, fmt.Sprintf("unsupported pack format %q", manifest.Format))
@@ -424,7 +424,7 @@ func extractPackArchive(ctx context.Context, r io.Reader, opts unpackArchiveOpti
 	if err := os.MkdirAll(localParent, 0o755); err != nil {
 		return nil, apperr.Wrap("fs.unpack_prepare_local_root", "runtime", 1, fmt.Sprintf("prepare local root parent %q", localParent), err)
 	}
-	stageRoot, err := os.MkdirTemp(localParent, ".tdc-unpack-")
+	stageRoot, err := os.MkdirTemp(localParent, ".ti-unpack-")
 	if err != nil {
 		return nil, apperr.Wrap("fs.unpack_stage", "runtime", 1, "create staged unpack root", err)
 	}
@@ -434,7 +434,7 @@ func extractPackArchive(ctx context.Context, r io.Reader, opts unpackArchiveOpti
 	}
 	gz, err := gzip.NewReader(r)
 	if err != nil {
-		return nil, apperr.Wrap("fs.unpack_gzip", "runtime", 1, "open tdc fs pack gzip stream", err)
+		return nil, apperr.Wrap("fs.unpack_gzip", "runtime", 1, "open ti fs pack gzip stream", err)
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
@@ -450,12 +450,12 @@ func extractPackArchive(ctx context.Context, r io.Reader, opts unpackArchiveOpti
 			break
 		}
 		if err != nil {
-			return nil, apperr.Wrap("fs.unpack_read_entry", "runtime", 1, "read tdc fs pack entry", err)
+			return nil, apperr.Wrap("fs.unpack_read_entry", "runtime", 1, "read ti fs pack entry", err)
 		}
 		if hdr.Name == packManifestEntryName || hdr.Name == drive9ManifestEntryName {
 			sawManifest = true
 			if err := json.NewDecoder(tr).Decode(&manifest); err != nil {
-				return nil, apperr.Wrap("fs.unpack_decode_manifest", "runtime", 1, "decode tdc fs pack manifest", err)
+				return nil, apperr.Wrap("fs.unpack_decode_manifest", "runtime", 1, "decode ti fs pack manifest", err)
 			}
 			if !supportedPackFormat(manifest.Format) {
 				return nil, apperr.New("fs.unsupported_pack_format", "runtime", 1, fmt.Sprintf("unsupported pack format %q", manifest.Format))
@@ -1378,9 +1378,9 @@ func defaultPackArchivePath(remoteRoot, mountProfile string) (string, error) {
 }
 
 func packArchiveTags(mountProfile string) map[string]string {
-	tags := map[string]string{"tdc.pack.format": packArchiveFormat}
+	tags := map[string]string{"ti.pack.format": packArchiveFormat}
 	if mountProfile = strings.TrimSpace(mountProfile); mountProfile != "" {
-		tags["tdc.pack.profile"] = mountProfile
+		tags["ti.pack.profile"] = mountProfile
 	}
 	return tags
 }

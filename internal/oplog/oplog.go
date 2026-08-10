@@ -26,23 +26,24 @@ type Config struct {
 }
 
 type Event struct {
-	Timestamp     time.Time `json:"ts"`
-	Type          string    `json:"type"`
-	Version       string    `json:"version,omitempty"`
-	Commit        string    `json:"commit,omitempty"`
-	Profile       string    `json:"profile,omitempty"`
-	RegionCode    string    `json:"region_code,omitempty"`
-	Command       string    `json:"command,omitempty"`
-	FlagNames     []string  `json:"flag_names,omitempty"`
-	DurationMS    int64     `json:"duration_ms,omitempty"`
-	ExitCode      int       `json:"exit_code,omitempty"`
-	ErrorCode     string    `json:"error_code,omitempty"`
-	ErrorCategory string    `json:"error_category,omitempty"`
-	Service       string    `json:"service,omitempty"`
-	Operation     string    `json:"operation,omitempty"`
-	Method        string    `json:"method,omitempty"`
-	StatusCode    int       `json:"status_code,omitempty"`
-	RequestID     string    `json:"request_id,omitempty"`
+	Timestamp                      time.Time `json:"ts"`
+	Type                           string    `json:"type"`
+	Version                        string    `json:"version,omitempty"`
+	Commit                         string    `json:"commit,omitempty"`
+	Profile                        string    `json:"profile,omitempty"`
+	RegionCode                     string    `json:"region_code,omitempty"`
+	Command                        string    `json:"command,omitempty"`
+	FlagNames                      []string  `json:"flag_names,omitempty"`
+	DurationMS                     int64     `json:"duration_ms,omitempty"`
+	ExitCode                       int       `json:"exit_code,omitempty"`
+	ErrorCode                      string    `json:"error_code,omitempty"`
+	ErrorCategory                  string    `json:"error_category,omitempty"`
+	Service                        string    `json:"service,omitempty"`
+	Operation                      string    `json:"operation,omitempty"`
+	Method                         string    `json:"method,omitempty"`
+	StatusCode                     int       `json:"status_code,omitempty"`
+	RequestID                      string    `json:"request_id,omitempty"`
+	DeprecatedEnvironmentVariables []string  `json:"deprecated_environment_variables,omitempty"`
 }
 
 type Recorder interface {
@@ -56,7 +57,7 @@ func (noopRecorder) Record(context.Context, Event) {}
 type contextKey struct{}
 
 func Path(homeDir string) string {
-	return filepath.Join(homeDir, ".tdc", "logs", "tdc.jsonl")
+	return filepath.Join(homeDir, ".ti", "logs", "ti.jsonl")
 }
 
 func WithRecorder(ctx context.Context, recorder Recorder) context.Context {

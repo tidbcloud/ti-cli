@@ -12,7 +12,7 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/tidbcloud/tdc/internal/telemetrybackend"
+	"github.com/tidbcloud/ti-cli/internal/telemetrybackend"
 )
 
 func main() {

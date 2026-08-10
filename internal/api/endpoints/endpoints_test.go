@@ -7,8 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config/region"
 )
 
 func TestResolveStarterEndpoint(t *testing.T) {
@@ -39,8 +39,8 @@ func TestResolveStarterAlibabaRegion(t *testing.T) {
 }
 
 func TestResolveStarterTestOverrideRequiresOptIn(t *testing.T) {
-	t.Setenv("TDC_TEST_STARTER_BASE_URL", "https://starter.test")
-	t.Setenv("TDC_ALLOW_TEST_ENDPOINTS", "")
+	t.Setenv("TI_TEST_STARTER_BASE_URL", "https://starter.test")
+	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "")
 	endpoint, err := NewResolver().ResolveStarter(region.ProviderAWS, "us-east-1")
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestResolveStarterTestOverrideRequiresOptIn(t *testing.T) {
 		t.Fatalf("test override used without opt-in: %q", endpoint.BaseURL)
 	}
 
-	t.Setenv("TDC_ALLOW_TEST_ENDPOINTS", "1")
+	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "1")
 	endpoint, err = NewResolver().ResolveStarter(region.ProviderAWS, "us-east-1")
 	if err != nil {
 		t.Fatal(err)
@@ -70,8 +70,8 @@ func TestResolveIAMEndpoint(t *testing.T) {
 }
 
 func TestResolveIAMTestOverrideRequiresOptIn(t *testing.T) {
-	t.Setenv("TDC_TEST_IAM_BASE_URL", "https://iam.test")
-	t.Setenv("TDC_ALLOW_TEST_ENDPOINTS", "")
+	t.Setenv("TI_TEST_IAM_BASE_URL", "https://iam.test")
+	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "")
 	endpoint, err := NewResolver().ResolveIAM()
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestResolveIAMTestOverrideRequiresOptIn(t *testing.T) {
 		t.Fatalf("test override used without opt-in: %q", endpoint.BaseURL)
 	}
 
-	t.Setenv("TDC_ALLOW_TEST_ENDPOINTS", "1")
+	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "1")
 	endpoint, err = NewResolver().ResolveIAM()
 	if err != nil {
 		t.Fatal(err)
@@ -171,7 +171,7 @@ func TestResolveFSUnsupportedManifestRegion(t *testing.T) {
 		t.Fatalf("expected exit 2, got %d", got)
 	}
 	message := apperr.MessageFor(err)
-	if !strings.Contains(message, "tdc fs is not available") || !strings.Contains(message, "aws/us-east-1") {
+	if !strings.Contains(message, "ti fs is not available") || !strings.Contains(message, "aws/us-east-1") {
 		t.Fatalf("unexpected message: %q", message)
 	}
 }

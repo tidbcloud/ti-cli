@@ -8,9 +8,9 @@ import (
 	"strconv"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/db/sqlcred"
-	"github.com/tidbcloud/tdc/internal/db/sqlresult"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlresult"
 )
 
 type Options struct {

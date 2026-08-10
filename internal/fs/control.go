@@ -10,15 +10,15 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/auth"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/dryrun"
-	"github.com/tidbcloud/tdc/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/auth"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
+	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 )
 
 type Service struct {
@@ -148,7 +148,7 @@ func (s Service) DryRunImportFileSystemToken(ctx context.Context, commandPath st
 		"import_file_system_token",
 		dryrun.RequestSummary{
 			Method:      "EXEC",
-			Path:        "tdc-drive9 fs stat --output json :/",
+			Path:        "ti-drive9 fs stat --output json :/",
 			Description: "the companion verifies access to the remote root; normal execution then stores the token in the selected local profile namespace",
 		},
 		dryrun.Check{Name: "token_validation", Status: "passed", Message: result.FileSystemID},
@@ -297,7 +297,7 @@ func (s Service) bearerClient(profile *config.Profile, endpoint endpoints.Endpoi
 		Timeout:     s.Timeout,
 		Debug:       s.Debug,
 		DebugWriter: s.DebugWriter,
-		UserAgent:   "tdc fs legacy helper",
+		UserAgent:   "ti fs legacy helper",
 	})
 	if err != nil {
 		return nil, err
@@ -445,7 +445,7 @@ func (r DeleteResult) Human() string {
 		lines = append(lines, "Remote deletion state: "+r.RemoteDeletionState)
 	}
 	if r.CredentialsRemoved {
-		lines = append(lines, "Credentials: removed from ~/.tdc/fs_credentials")
+		lines = append(lines, "Credentials: removed from ~/.ti/fs_credentials")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -461,7 +461,7 @@ func (r ImportFileSystemTokenResult) Human() string {
 
 func (r CheckResult) Human() string {
 	var out strings.Builder
-	_, _ = fmt.Fprintf(&out, "tdc fs check: %s\n", r.Status)
+	_, _ = fmt.Fprintf(&out, "ti fs check: %s\n", r.Status)
 	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
 	_, _ = fmt.Fprintln(writer, "CHECK\tSTATUS\tMESSAGE")
 	for _, check := range r.Checks {

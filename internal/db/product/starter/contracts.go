@@ -1,6 +1,6 @@
 package starter
 
-import rootdb "github.com/tidbcloud/tdc/internal/db"
+import rootdb "github.com/tidbcloud/ti-cli/internal/db"
 
 type ListClustersOptions = rootdb.ListClustersOptions
 type CreateClusterOptions = rootdb.CreateClusterOptions

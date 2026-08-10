@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strings"
 
-	apistarter "github.com/tidbcloud/tdc/internal/api/starter"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/db/connectionstring"
-	"github.com/tidbcloud/tdc/internal/db/sqlresult"
-	"github.com/tidbcloud/tdc/internal/dryrun"
+	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/db/connectionstring"
+	"github.com/tidbcloud/ti-cli/internal/db/sqlresult"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
 )
 
 type Dispatcher struct {

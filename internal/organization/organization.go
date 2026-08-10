@@ -9,12 +9,12 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	apiiam "github.com/tidbcloud/tdc/internal/api/iam"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	apiiam "github.com/tidbcloud/ti-cli/internal/api/iam"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
 type Service struct {
@@ -58,7 +58,7 @@ func (s Service) ListProjects(ctx context.Context, opts ListProjectsOptions) (Li
 		Timeout:     s.Timeout,
 		Debug:       s.Debug,
 		DebugWriter: s.DebugWriter,
-		UserAgent:   "tdc organization list-projects",
+		UserAgent:   "ti organization list-projects",
 	})
 	if err != nil {
 		return ListProjectsResult{}, err

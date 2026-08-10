@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
 func TestCredentialStoreAndResolveByID(t *testing.T) {

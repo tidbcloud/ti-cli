@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const schema = "tdc.fs.mount-locator/v1"
+const schema = "ti.fs.mount-locator/v1"
 
 type Locator struct {
 	Schema         string `json:"schema"`
@@ -61,7 +61,7 @@ func Path(homeDir, mountPath string) (string, error) {
 		return "", err
 	}
 	sum := sha256.Sum256([]byte(canonical))
-	return filepath.Join(homeDir, ".tdc", "mounts", hex.EncodeToString(sum[:8])+".locator.json"), nil
+	return filepath.Join(homeDir, ".ti", "mounts", hex.EncodeToString(sum[:8])+".locator.json"), nil
 }
 
 func Write(homeDir string, locator Locator) (string, error) {

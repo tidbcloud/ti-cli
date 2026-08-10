@@ -10,9 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tidbcloud/tdc/internal/api"
-	"github.com/tidbcloud/tdc/internal/api/endpoints"
-	"github.com/tidbcloud/tdc/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/api"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
+	"github.com/tidbcloud/ti-cli/internal/authz"
 )
 
 func TestProvisionAndDeleteTenant(t *testing.T) {
@@ -134,7 +134,7 @@ func TestDataPlaneMethods(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(WriteResponse{Revision: 14})
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/fs/workspace/tagged.txt":
-			if got := r.Header.Values("X-Dat9-Tag"); strings.Join(got, ",") != "owner=alice,topic=tdc" {
+			if got := r.Header.Values("X-Dat9-Tag"); strings.Join(got, ",") != "owner=alice,topic=ti" {
 				t.Fatalf("X-Dat9-Tag = %v", got)
 			}
 			if got := r.Header.Get("X-Dat9-Description"); got != "demo file" {
@@ -248,7 +248,7 @@ func TestDataPlaneMethods(t *testing.T) {
 		t.Fatalf("unexpected conditional write response: %#v", conditional)
 	}
 	tagged, err := client.WriteFileWithOptions(ctx, "/workspace/tagged.txt", []byte("tagged"), WriteFileOptions{
-		Tags:        map[string]string{"topic": "tdc", "owner": "alice"},
+		Tags:        map[string]string{"topic": "ti", "owner": "alice"},
 		Description: "demo file",
 	})
 	if err != nil {
@@ -354,7 +354,7 @@ func TestReadFileRedirectsToPresignedURLWithoutBearer(t *testing.T) {
 			http.Redirect(w, r, server.URL+"/signed/large.bin", http.StatusFound)
 		case r.Method == http.MethodGet && r.URL.Path == "/signed/large.bin":
 			if got := r.Header.Get("Authorization"); got != "" {
-				t.Fatalf("presigned download should not receive tdc auth, got %q", got)
+				t.Fatalf("presigned download should not receive ti auth, got %q", got)
 			}
 			_, _ = w.Write([]byte("large bytes"))
 		default:
@@ -387,7 +387,7 @@ func TestReadFileRangeRedirectPreservesRangeWithoutBearer(t *testing.T) {
 			http.Redirect(w, r, server.URL+"/signed/large.bin", http.StatusFound)
 		case r.Method == http.MethodGet && r.URL.Path == "/signed/large.bin":
 			if got := r.Header.Get("Authorization"); got != "" {
-				t.Fatalf("presigned download should not receive tdc auth, got %q", got)
+				t.Fatalf("presigned download should not receive ti auth, got %q", got)
 			}
 			if got := r.Header.Get("Range"); got != "bytes=2-5" {
 				t.Fatalf("redirected Range = %q", got)

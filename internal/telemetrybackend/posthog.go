@@ -47,7 +47,7 @@ type postHogProperties struct {
 	Arch                 string          `json:"arch"`
 	InstallSource        string          `json:"install_source"`
 	ProfileSource        string          `json:"profile_source"`
-	TDCEnvironment       string          `json:"tdc_environment"`
+	TIEnvironment        string          `json:"ti_environment"`
 	Tag                  string          `json:"tag,omitempty"`
 	Extra                json.RawMessage `json:"extra,omitempty"`
 }
@@ -110,7 +110,7 @@ func (s *PostHogSink) Write(ctx context.Context, events []Event) error {
 				Arch:                 event.Arch,
 				InstallSource:        event.InstallSource,
 				ProfileSource:        event.ProfileSource,
-				TDCEnvironment:       s.environment,
+				TIEnvironment:        s.environment,
 				Tag:                  event.Tag,
 				Extra:                event.Extra,
 			},

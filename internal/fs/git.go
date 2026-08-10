@@ -21,11 +21,11 @@ import (
 	"strings"
 	"time"
 
-	apifs "github.com/tidbcloud/tdc/internal/api/fs"
-	"github.com/tidbcloud/tdc/internal/apperr"
-	"github.com/tidbcloud/tdc/internal/authz"
-	"github.com/tidbcloud/tdc/internal/config"
-	"github.com/tidbcloud/tdc/internal/fs/mountstate"
+	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
+	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
+	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 )
 
 const (
@@ -225,7 +225,7 @@ const (
 )
 
 func (s Service) CreateGitWorkspace(ctx context.Context, opts GitWorkspaceCreateOptions) (apifs.GitWorkspace, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "create tdc fs-git workspace")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "create ti fs-git workspace")
 	if err != nil {
 		return apifs.GitWorkspace{}, err
 	}
@@ -251,7 +251,7 @@ func (s Service) CreateGitWorkspace(ctx context.Context, opts GitWorkspaceCreate
 }
 
 func (s Service) ListGitWorkspaces(ctx context.Context, profile *config.Profile) (apifs.GitWorkspacesResponse, error) {
-	client, err := s.dataClient(profile, authz.FSGitWorkspaceRead, "list tdc fs-git workspaces")
+	client, err := s.dataClient(profile, authz.FSGitWorkspaceRead, "list ti fs-git workspaces")
 	if err != nil {
 		return apifs.GitWorkspacesResponse{}, err
 	}
@@ -259,7 +259,7 @@ func (s Service) ListGitWorkspaces(ctx context.Context, profile *config.Profile)
 }
 
 func (s Service) DescribeGitWorkspace(ctx context.Context, opts GitWorkspaceDescribeOptions) (apifs.GitWorkspace, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "describe tdc fs-git workspace")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "describe ti fs-git workspace")
 	if err != nil {
 		return apifs.GitWorkspace{}, err
 	}
@@ -270,7 +270,7 @@ func (s Service) DescribeGitWorkspace(ctx context.Context, opts GitWorkspaceDesc
 }
 
 func (s Service) DeleteGitWorkspace(ctx context.Context, opts GitWorkspaceDeleteOptions) (GitDeleteResult, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "delete tdc fs-git workspace")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "delete ti fs-git workspace")
 	if err != nil {
 		return GitDeleteResult{}, err
 	}
@@ -285,7 +285,7 @@ func (s Service) DeleteGitWorkspace(ctx context.Context, opts GitWorkspaceDelete
 }
 
 func (s Service) ReplaceGitTree(ctx context.Context, opts GitTreeReplaceOptions) (GitDeleteResult, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "replace tdc fs-git tree")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "replace ti fs-git tree")
 	if err != nil {
 		return GitDeleteResult{}, err
 	}
@@ -304,7 +304,7 @@ func (s Service) ReplaceGitTree(ctx context.Context, opts GitTreeReplaceOptions)
 }
 
 func (s Service) ListGitTree(ctx context.Context, opts GitTreeListOptions) (apifs.GitTreeResponse, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "list tdc fs-git tree")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "list ti fs-git tree")
 	if err != nil {
 		return apifs.GitTreeResponse{}, err
 	}
@@ -316,7 +316,7 @@ func (s Service) ListGitTree(ctx context.Context, opts GitTreeListOptions) (apif
 }
 
 func (s Service) UpsertGitState(ctx context.Context, opts GitStateUpsertOptions) (apifs.GitState, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "upsert tdc fs-git state")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "upsert ti fs-git state")
 	if err != nil {
 		return apifs.GitState{}, err
 	}
@@ -336,7 +336,7 @@ func (s Service) UpsertGitState(ctx context.Context, opts GitStateUpsertOptions)
 }
 
 func (s Service) DescribeGitState(ctx context.Context, opts GitWorkspaceIDOptions) (apifs.GitState, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "describe tdc fs-git state")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "describe ti fs-git state")
 	if err != nil {
 		return apifs.GitState{}, err
 	}
@@ -348,7 +348,7 @@ func (s Service) DescribeGitState(ctx context.Context, opts GitWorkspaceIDOption
 }
 
 func (s Service) PutGitObjectPack(ctx context.Context, opts GitObjectPackPutOptions) (apifs.GitObjectPack, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "put tdc fs-git object pack")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "put ti fs-git object pack")
 	if err != nil {
 		return apifs.GitObjectPack{}, err
 	}
@@ -360,7 +360,7 @@ func (s Service) PutGitObjectPack(ctx context.Context, opts GitObjectPackPutOpti
 }
 
 func (s Service) ListGitObjectPacks(ctx context.Context, opts GitWorkspaceIDOptions) (apifs.GitObjectPacksResponse, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "list tdc fs-git object packs")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "list ti fs-git object packs")
 	if err != nil {
 		return apifs.GitObjectPacksResponse{}, err
 	}
@@ -372,7 +372,7 @@ func (s Service) ListGitObjectPacks(ctx context.Context, opts GitWorkspaceIDOpti
 }
 
 func (s Service) DescribeGitObjectPack(ctx context.Context, opts GitObjectPackDescribeOptions) (apifs.GitObjectPack, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "describe tdc fs-git object pack")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "describe ti fs-git object pack")
 	if err != nil {
 		return apifs.GitObjectPack{}, err
 	}
@@ -387,7 +387,7 @@ func (s Service) DescribeGitObjectPack(ctx context.Context, opts GitObjectPackDe
 }
 
 func (s Service) PutGitOverlayEntry(ctx context.Context, opts GitOverlayPutOptions) (apifs.GitOverlayEntry, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "put tdc fs-git overlay entry")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceWrite, "put ti fs-git overlay entry")
 	if err != nil {
 		return apifs.GitOverlayEntry{}, err
 	}
@@ -414,7 +414,7 @@ func (s Service) PutGitOverlayEntry(ctx context.Context, opts GitOverlayPutOptio
 }
 
 func (s Service) DescribeGitOverlayEntry(ctx context.Context, opts GitOverlayDescribeOptions) (apifs.GitOverlayEntry, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "describe tdc fs-git overlay entry")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "describe ti fs-git overlay entry")
 	if err != nil {
 		return apifs.GitOverlayEntry{}, err
 	}
@@ -429,7 +429,7 @@ func (s Service) DescribeGitOverlayEntry(ctx context.Context, opts GitOverlayDes
 }
 
 func (s Service) ListGitOverlayEntries(ctx context.Context, opts GitWorkspaceIDOptions) (apifs.GitOverlayEntriesResponse, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "list tdc fs-git overlay entries")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "list ti fs-git overlay entries")
 	if err != nil {
 		return apifs.GitOverlayEntriesResponse{}, err
 	}
@@ -449,7 +449,7 @@ func (s Service) HydrateGitWorkspace(ctx context.Context, opts GitWorkspaceHydra
 }
 
 func (s Service) RestoreGitWorkspace(ctx context.Context, opts GitWorkspaceRestoreOptions) (GitRestoreResult, error) {
-	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "restore tdc fs-git workspace")
+	client, err := s.dataClient(opts.Profile, authz.FSGitWorkspaceRead, "restore ti fs-git workspace")
 	if err != nil {
 		return GitRestoreResult{}, err
 	}
@@ -578,7 +578,7 @@ func (s Service) resolveMountedGitTarget(target string) (mountedGitTarget, error
 		state, _, err := mountstate.Read(homeDir, candidate)
 		if err == nil {
 			if strings.TrimSpace(state.RemotePath) == "" {
-				return mountedGitTarget{}, apperr.New("git.mount_missing_remote_root", "runtime", 1, fmt.Sprintf("tdc fs mount metadata for %q does not include remote_path", candidate))
+				return mountedGitTarget{}, apperr.New("git.mount_missing_remote_root", "runtime", 1, fmt.Sprintf("ti fs mount metadata for %q does not include remote_path", candidate))
 			}
 			absMount, rel, ok, err := relToMountedTarget(absTarget, state.MountPath)
 			if err != nil {
@@ -591,7 +591,7 @@ func (s Service) resolveMountedGitTarget(target string) (mountedGitTarget, error
 				}
 			}
 			if !ok {
-				return mountedGitTarget{}, apperr.New("git.target_outside_mount", "usage", 2, fmt.Sprintf("target %q is outside tdc fs mount %q", target, candidate))
+				return mountedGitTarget{}, apperr.New("git.target_outside_mount", "usage", 2, fmt.Sprintf("target %q is outside ti fs mount %q", target, candidate))
 			}
 			localPath := "/"
 			if rel != "." {
@@ -618,7 +618,7 @@ func (s Service) resolveMountedGitTarget(target string) (mountedGitTarget, error
 		}
 		candidate = parent
 	}
-	return mountedGitTarget{}, apperr.New("git.target_not_mounted", "usage", 2, fmt.Sprintf("target %q is not inside a tdc fs mount with readable mount metadata", target))
+	return mountedGitTarget{}, apperr.New("git.target_not_mounted", "usage", 2, fmt.Sprintf("target %q is not inside a ti fs mount with readable mount metadata", target))
 }
 
 func relToMountedTarget(absTarget, mountPoint string) (absMount string, rel string, ok bool, err error) {
@@ -646,7 +646,7 @@ func localGitDirForMountedTarget(localRoot, rel string) (string, error) {
 		return "", nil
 	}
 	if !filepath.IsAbs(localRoot) {
-		return "", apperr.New("git.invalid_local_root", "runtime", 1, fmt.Sprintf("tdc fs mount metadata local_root must be absolute, got %q", localRoot))
+		return "", apperr.New("git.invalid_local_root", "runtime", 1, fmt.Sprintf("ti fs mount metadata local_root must be absolute, got %q", localRoot))
 	}
 	localPath := filepath.Join(localRoot, "overlay")
 	if rel != "" && rel != "." {
@@ -661,7 +661,7 @@ func localOverlayRootForMountedTarget(resolved mountedGitTarget) (string, error)
 		return "", nil
 	}
 	if !filepath.IsAbs(localRoot) {
-		return "", apperr.New("git.invalid_local_root", "runtime", 1, fmt.Sprintf("tdc fs mount metadata local_root must be absolute, got %q", localRoot))
+		return "", apperr.New("git.invalid_local_root", "runtime", 1, fmt.Sprintf("ti fs mount metadata local_root must be absolute, got %q", localRoot))
 	}
 	localPath := filepath.Join(localRoot, "overlay")
 	if resolved.MountRel != "" && resolved.MountRel != "." {
@@ -670,7 +670,7 @@ func localOverlayRootForMountedTarget(resolved mountedGitTarget) (string, error)
 	return localPath, nil
 }
 
-func sameTDCMount(a, b mountedGitTarget) bool {
+func sameTIMount(a, b mountedGitTarget) bool {
 	return filepath.Clean(a.MountPoint) == filepath.Clean(b.MountPoint) &&
 		strings.TrimRight(a.RemoteRoot, "/") == strings.TrimRight(b.RemoteRoot, "/") &&
 		filepath.Clean(a.LocalRoot) == filepath.Clean(b.LocalRoot)
