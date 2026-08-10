@@ -11,6 +11,7 @@ type Permission string
 
 const (
 	OrganizationProjectRead Permission = "organization.project.read"
+	DBClusterDiscover       Permission = "db.cluster.discover"
 	StarterClusterRead      Permission = "starter.cluster.read"
 	StarterClusterCreate    Permission = "starter.cluster.create"
 	StarterClusterUpdate    Permission = "starter.cluster.update"
@@ -46,18 +47,6 @@ const (
 
 var commandPermissions = map[string]Permission{
 	"tdc organization list-projects":        OrganizationProjectRead,
-	"tdc db create-db-cluster":              StarterClusterCreate,
-	"tdc db list-db-clusters":               StarterClusterRead,
-	"tdc db describe-db-cluster":            StarterClusterRead,
-	"tdc db update-db-cluster":              StarterClusterUpdate,
-	"tdc db delete-db-cluster":              StarterClusterDelete,
-	"tdc db create-db-cluster-branch":       StarterBranchCreate,
-	"tdc db list-db-cluster-branches":       StarterBranchRead,
-	"tdc db describe-db-cluster-branch":     StarterBranchRead,
-	"tdc db delete-db-cluster-branch":       StarterBranchDelete,
-	"tdc db create-db-sql-users":            StarterSQLUserCreate,
-	"tdc db format-db-connection-string":    StarterSQLUserRead,
-	"tdc db execute-sql-statement":          StarterSQLExecute,
 	"tdc fs create-file-system":             FSVolumeCreate,
 	"tdc fs delete-file-system":             FSVolumeDelete,
 	"tdc fs list-file-systems":              FSVolumeRead,

@@ -13,7 +13,7 @@ tdc is currently in Preview. Its feature and command contracts can change before
 - `tdc configure` initializes a local profile.
 - `tdc update` explicitly checks for or installs a release update.
 
-tdc is Starter-only in the current Preview. `--db-cluster-type starter` remains explicit so the command contract can accommodate other TiDB Cloud plans later.
+tdc implements only Starter database operations in the current Preview. Commands without a required cluster ID require the exact `--db-cluster-type starter` value and never default it. Commands with a cluster ID discover `servicePlan` from the resource and dispatch internally; they do not expose a type flag. Recognized but unimplemented products and unknown or conflicting plan metadata fail closed.
 
 ## Command Design
 
@@ -107,7 +107,7 @@ Starter cluster creation resolves its project in this order:
 
 1. Explicit non-empty `--project-id`.
 2. The selected profile's discovered `project_id`.
-3. Otherwise fail before making the create request.
+3. Otherwise omit the project label and let TiDB Cloud select the account default.
 
 Other DB operations identify existing resources by cluster or branch ID. Filesystem provisioning does not use the DB `project_id`.
 

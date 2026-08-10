@@ -1,4 +1,4 @@
-package db
+package starter
 
 import (
 	"context"
@@ -111,9 +111,6 @@ func TestListClustersFiltersNonStarterAndUnverifiableResources(t *testing.T) {
 	if result.NextPageToken != "token-2" {
 		t.Fatalf("next page token = %q", result.NextPageToken)
 	}
-	if result.TotalSize != 0 {
-		t.Fatalf("filtered list must omit unfiltered total size, got %d", result.TotalSize)
-	}
 	if human := result.Human(); !strings.Contains(human, "Starter") || strings.Contains(human, "essential") {
 		t.Fatalf("unexpected text output:\n%s", human)
 	}
@@ -129,7 +126,7 @@ func TestListClustersCanReturnEmptyFilteredPageWithNextToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListClusters failed: %v", err)
 	}
-	if len(result.Clusters) != 0 || result.NextPageToken != "token-2" || result.TotalSize != 0 {
+	if len(result.Clusters) != 0 || result.NextPageToken != "token-2" {
 		t.Fatalf("unexpected filtered result: %#v", result)
 	}
 }
@@ -141,7 +138,7 @@ func TestClusterMutationsRejectNonStarterBeforeMutation(t *testing.T) {
 	}{
 		{name: "update", run: func(service Service) error {
 			_, err := service.UpdateCluster(context.Background(), UpdateClusterOptions{
-				Profile: testProfile(), ClusterID: "cluster-1", DisplayName: "renamed", MonthlySpendingLimitUSDCents: -1,
+				Profile: testProfile(), ClusterID: "cluster-1", DisplayName: "renamed", Product: UpdateOptions{MonthlySpendingLimitUSDCents: -1},
 			})
 			return err
 		}},
@@ -181,7 +178,7 @@ func TestCreatePlanFailureRetainsAcceptedClusterIdentity(t *testing.T) {
 	defer server.Close()
 
 	_, err := testService(server.URL).CreateCluster(context.Background(), CreateClusterOptions{
-		Profile: testProfile(), DisplayName: "demo", ClusterType: "starter", ProjectID: "project-1", MonthlySpendingLimitUSDCents: -1,
+		Profile: testProfile(), DisplayName: "demo", ClusterType: "starter", ProjectID: "project-1", Product: CreateOptions{MonthlySpendingLimitUSDCents: -1},
 	})
 	if apperr.CodeFor(err) != "db.not_starter_cluster" {
 		t.Fatalf("unexpected error: %v", err)
@@ -206,7 +203,7 @@ func TestUpdateResponsePlanFailureReportsPossiblyAppliedUpdate(t *testing.T) {
 	defer server.Close()
 
 	_, err := testService(server.URL).UpdateCluster(context.Background(), UpdateClusterOptions{
-		Profile: testProfile(), ClusterID: "cluster-1", DisplayName: "renamed", MonthlySpendingLimitUSDCents: -1,
+		Profile: testProfile(), ClusterID: "cluster-1", DisplayName: "renamed", Product: UpdateOptions{MonthlySpendingLimitUSDCents: -1},
 	})
 	if apperr.CodeFor(err) != "db.not_starter_cluster" {
 		t.Fatalf("unexpected error: %v", err)
@@ -231,7 +228,7 @@ func TestCreateWaitPlanFailureRetainsAcceptedClusterIdentity(t *testing.T) {
 	service.ClusterWaitTimeout = time.Second
 	service.ClusterWaitPollInterval = time.Millisecond
 	_, err := service.CreateCluster(context.Background(), CreateClusterOptions{
-		Profile: testProfile(), DisplayName: "demo", ClusterType: "starter", ProjectID: "project-1", MonthlySpendingLimitUSDCents: -1, WaitUntilActive: true,
+		Profile: testProfile(), DisplayName: "demo", ClusterType: "starter", ProjectID: "project-1", Product: CreateOptions{MonthlySpendingLimitUSDCents: -1}, WaitUntilActive: true,
 	})
 	if apperr.CodeFor(err) != "db.not_starter_cluster" {
 		t.Fatalf("unexpected error: %v", err)

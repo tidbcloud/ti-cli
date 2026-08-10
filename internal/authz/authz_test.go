@@ -10,9 +10,6 @@ import (
 func TestForCommand(t *testing.T) {
 	tests := map[string]Permission{
 		"tdc organization list-projects": OrganizationProjectRead,
-		"tdc db create-db-cluster":       StarterClusterCreate,
-		"tdc db list-db-clusters":        StarterClusterRead,
-		"tdc db execute-sql-statement":   StarterSQLExecute,
 		"tdc fs create-file-system":      FSVolumeCreate,
 		"tdc fs search-file-content":     FSFileRead,
 		"tdc fs mount-file-system":       FSMount,
@@ -40,5 +37,12 @@ func TestPermissionDenied(t *testing.T) {
 	message := apperr.MessageFor(err)
 	if !strings.Contains(message, "permission denied") || !strings.Contains(message, string(StarterClusterCreate)) {
 		t.Fatalf("unexpected message %q", message)
+	}
+}
+
+func TestDBCommandsDoNotUseStaticCommandPermissions(t *testing.T) {
+	_, err := ForCommand("tdc db describe-db-cluster")
+	if apperr.CodeFor(err) != "authz.permission_mapping_missing" {
+		t.Fatalf("expected DB permission to be dynamically resolved, got %v", err)
 	}
 }

@@ -45,6 +45,9 @@ Implemented:
   `docs/spec/done/0023-starter-only-db-resource-guardrails.md`
 - Region-scoped Starter DB cluster listing from
   `docs/spec/done/0024-region-scoped-db-cluster-listing.md`
+- Product-aware DB dispatch, Starter package isolation, dynamic permissions,
+  and filtered pagination from
+  `docs/spec/done/0026-db-provider-dispatch-and-starter-refactor.md`
 - tdc fs Unix-style command aliases from
   `docs/spec/done/0014-tdc-fs-unix-command-aliases.md`
 - tdc fs control plane from
@@ -292,7 +295,9 @@ internal/config/configure/  interactive configure wizard
 internal/config/fsresource/ legacy flat tdc fs migration key names
 internal/config/region/     provider and region validation
 internal/config/store/      TOML read/write, file modes, atomic writes
-internal/db/                Starter DB cluster, branch, and SQL use cases
+internal/db/                DB type discovery, capability dispatch, and pagination
+internal/db/product/        concrete database product implementations
+internal/db/product/starter/ TiDB Cloud Starter cluster, branch, and SQL provider
 internal/db/connectionstring/ DB connection string formatters
 internal/db/sqlaccess/      DB SQL user preparation logic
 internal/db/sqlcred/        cluster-scoped DB SQL credential store
@@ -371,15 +376,23 @@ Follow these rules unless `docs/priciples.md` is updated:
 - Apply `--query` after command execution and before rendering.
 - Users provide cloud placement as one canonical `region_code`, never as
   separate provider/region fields or server URLs.
-- Every `tdc db` command must enforce the Starter-only product boundary from
-  API resource metadata. Treat `servicePlan` as canonical and `clusterPlan` as
-  a legacy fallback. Reject non-Starter, missing, or conflicting plans before
-  any cluster, branch, IAM SQL-user, local SQL-credential, or SQL mutation.
-- `tdc db list-db-clusters` adds an immutable API filter for the effective
-  provider and region, then defensively filters each API page to verified
-  Starter clusters in that same region. It preserves the API next-page token
-  and omits the API total size because that total can include resources outside
-  tdc's verified result. Missing or conflicting region metadata is excluded.
+- DB commands without a required cluster ID require exact lowercase
+  `--db-cluster-type starter`; there is no default. ID-based commands do not
+  expose that flag. They discover `servicePlan`, use `clusterPlan` only as a
+  legacy fallback, and dispatch through capability interfaces. Reject
+  recognized but unsupported products and missing, unknown, or conflicting
+  plans before the product operation.
+- Only `tdc db` uses dynamic operation-to-permission mapping. Keep FS and
+  organization command permissions static. The CLI composition root registers
+  product resolvers/providers; the root `internal/db` package must not import
+  child product packages.
+- `tdc db list-db-clusters --db-cluster-type starter` adds an immutable API
+  filter for the effective provider and region, scans upstream pages of 100,
+  and incrementally fills the requested tdc page with verified Starter
+  clusters. Never load all account clusters into memory. Return a tdc-owned
+  opaque cursor that binds profile, type, region, filter, and order and records
+  replay offset/fingerprint. Do not expose the upstream token or total size.
+  Missing or conflicting region metadata is excluded.
 - The global `--region <canonical-region-code>` flag overrides placement for
   the current command only. It has higher priority than `TDC_REGION_CODE` and
   profile `region_code`, but it must not change the selected profile or
@@ -440,12 +453,12 @@ Implemented command behavior:
 - `tdc organization list-projects`
 - `tdc organization list-projects --query 'projects[0].id'`
 - `tdc organization list-projects --output text`
-- `tdc db create-db-cluster --db-cluster-name demo`
-- `tdc db create-db-cluster --db-cluster-name demo --wait`
-- `tdc db create-db-cluster --db-cluster-name demo --dry-run`
-- `tdc db create-db-cluster --db-cluster-name demo --project-id <project-id>`
-- `tdc db list-db-clusters`
-- `tdc db list-db-clusters --query 'clusters[].id'`
+- `tdc db create-db-cluster --db-cluster-type starter --db-cluster-name demo`
+- `tdc db create-db-cluster --db-cluster-type starter --db-cluster-name demo --wait`
+- `tdc db create-db-cluster --db-cluster-type starter --db-cluster-name demo --dry-run`
+- `tdc db create-db-cluster --db-cluster-type starter --db-cluster-name demo --project-id <project-id>`
+- `tdc db list-db-clusters --db-cluster-type starter`
+- `tdc db list-db-clusters --db-cluster-type starter --query 'clusters[].id'`
 - `tdc db describe-db-cluster --db-cluster-id <cluster-id>`
 - `tdc db update-db-cluster --db-cluster-id <cluster-id> --db-cluster-name new-name`
 - `tdc db update-db-cluster --db-cluster-id <cluster-id> --monthly-spending-limit-usd-cents 1000 --dry-run`
