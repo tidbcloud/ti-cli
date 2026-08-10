@@ -146,7 +146,7 @@ Runtime update call chain from package-managed installs:
 ## Dependencies
 
 - `0012-install-and-update-distribution.md`
-- `0026-ti-cli-rename-and-migration.md`
+- `0027-ti-cli-rename-and-migration.md`
 - `0013-github-actions-ci-cd.md` if package-manager publishing is automated through the same release workflow hardening.
 
 ## Acceptance Criteria

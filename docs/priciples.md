@@ -13,7 +13,7 @@ ti is currently in Preview. Its feature and command contracts can change before 
 - `ti configure` initializes a local profile.
 - `ti update` explicitly checks for or installs a release update.
 
-ti is Starter-only in the current Preview. `--db-cluster-type starter` remains explicit so the command contract can accommodate other TiDB Cloud plans later.
+ti implements only Starter database operations in the current Preview. Commands without a required cluster ID require the exact `--db-cluster-type starter` value and never default it. Commands with a cluster ID discover `servicePlan` from the resource and dispatch internally; they do not expose a type flag. Recognized but unimplemented products and unknown or conflicting plan metadata fail closed.
 
 ## Command Design
 

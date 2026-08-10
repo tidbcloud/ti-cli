@@ -387,7 +387,7 @@ Platform notes:
 - `0001-cli-foundation.md` for command patterns.
 - `0002-local-config-and-credentials.md` for profile and local state rules.
 - `0003-output-error-query-dry-run.md` for output, query, and dry-run behavior.
-- `0026-ti-cli-rename-and-migration.md` for executable, state path, and
+- `0027-ti-cli-rename-and-migration.md` for executable, state path, and
   environment naming.
 - `0014-tdc-fs-unix-command-aliases.md` is unrelated but should remain
   unaffected.

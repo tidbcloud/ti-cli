@@ -1,4 +1,4 @@
-package db
+package starter
 
 import (
 	"context"
@@ -6,66 +6,30 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-	"text/tabwriter"
 	"time"
 
 	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/authz"
-	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/db/validate"
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 )
-
-type ListBranchesOptions struct {
-	Profile   *config.Profile
-	ClusterID string
-	PageSize  int32
-	PageToken string
-}
-
-type CreateBranchOptions struct {
-	Profile         *config.Profile
-	ClusterID       string
-	DisplayName     string
-	WaitUntilActive bool
-}
-
-type DescribeBranchOptions struct {
-	Profile   *config.Profile
-	ClusterID string
-	BranchID  string
-	View      string
-}
-
-type DeleteBranchOptions struct {
-	Profile   *config.Profile
-	ClusterID string
-	BranchID  string
-}
-
-type ListBranchesResult struct {
-	Branches      []apistarter.Branch `json:"branches"`
-	NextPageToken string              `json:"next_page_token,omitempty"`
-	TotalSize     int64               `json:"total_size,omitempty"`
-}
-
-type BranchResult struct {
-	apistarter.Branch
-}
 
 func (s Service) ListBranches(ctx context.Context, opts ListBranchesOptions) (ListBranchesResult, error) {
 	clusterID, err := validateListBranchesOptions(opts)
 	if err != nil {
 		return ListBranchesResult{}, err
 	}
-	client, err := s.starterClient(opts.Profile, authz.StarterBranchRead, "list Starter DB cluster branches")
+	permission := operationPermission(opts.Dispatch, authz.StarterBranchRead)
+	client, err := s.starterClient(opts.Profile, permission, "list Starter DB cluster branches")
 	if err != nil {
 		return ListBranchesResult{}, err
 	}
-	if err := ensureStarterClusterByID(ctx, client, clusterID); err != nil {
-		return ListBranchesResult{}, err
+	if opts.Dispatch.Resolved == nil {
+		if _, err := s.clusterFromDispatchOrRead(ctx, opts.Profile, opts.Dispatch, clusterID, "BASIC", permission, "list Starter DB cluster branches"); err != nil {
+			return ListBranchesResult{}, err
+		}
 	}
 	response, err := client.ListBranches(ctx, clusterID, apistarter.ListBranchesOptions{
 		PageSize:  opts.PageSize,
@@ -86,12 +50,15 @@ func (s Service) CreateBranch(ctx context.Context, opts CreateBranchOptions) (Br
 	if err != nil {
 		return BranchResult{}, err
 	}
-	client, err := s.starterClient(opts.Profile, authz.StarterBranchCreate, "create Starter DB cluster branch")
+	permission := operationPermission(opts.Dispatch, authz.StarterBranchCreate)
+	client, err := s.starterClient(opts.Profile, permission, "create Starter DB cluster branch")
 	if err != nil {
 		return BranchResult{}, err
 	}
-	if err := ensureStarterClusterByID(ctx, client, clusterID); err != nil {
-		return BranchResult{}, err
+	if opts.Dispatch.Resolved == nil {
+		if _, err := s.clusterFromDispatchOrRead(ctx, opts.Profile, opts.Dispatch, clusterID, "BASIC", permission, "create Starter DB cluster branch"); err != nil {
+			return BranchResult{}, err
+		}
 	}
 	branch, err := client.CreateBranch(ctx, clusterID, request)
 	if err != nil {
@@ -114,12 +81,15 @@ func (s Service) DescribeBranch(ctx context.Context, opts DescribeBranchOptions)
 	if err := validate.View(opts.View); err != nil {
 		return BranchResult{}, err
 	}
-	client, err := s.starterClient(opts.Profile, authz.StarterBranchRead, "describe Starter DB cluster branch")
+	permission := operationPermission(opts.Dispatch, authz.StarterBranchRead)
+	client, err := s.starterClient(opts.Profile, permission, "describe Starter DB cluster branch")
 	if err != nil {
 		return BranchResult{}, err
 	}
-	if err := ensureStarterClusterByID(ctx, client, clusterID); err != nil {
-		return BranchResult{}, err
+	if opts.Dispatch.Resolved == nil {
+		if _, err := s.clusterFromDispatchOrRead(ctx, opts.Profile, opts.Dispatch, clusterID, "BASIC", permission, "describe Starter DB cluster branch"); err != nil {
+			return BranchResult{}, err
+		}
 	}
 	branch, err := client.GetBranch(ctx, clusterID, branchID, apistarter.GetBranchOptions{View: opts.View})
 	if err != nil {
@@ -133,12 +103,15 @@ func (s Service) DeleteBranch(ctx context.Context, opts DeleteBranchOptions) (Br
 	if err != nil {
 		return BranchResult{}, err
 	}
-	client, err := s.starterClient(opts.Profile, authz.StarterBranchDelete, "delete Starter DB cluster branch")
+	permission := operationPermission(opts.Dispatch, authz.StarterBranchDelete)
+	client, err := s.starterClient(opts.Profile, permission, "delete Starter DB cluster branch")
 	if err != nil {
 		return BranchResult{}, err
 	}
-	if err := ensureStarterClusterByID(ctx, client, clusterID); err != nil {
-		return BranchResult{}, err
+	if opts.Dispatch.Resolved == nil {
+		if _, err := s.clusterFromDispatchOrRead(ctx, opts.Profile, opts.Dispatch, clusterID, "BASIC", permission, "delete Starter DB cluster branch"); err != nil {
+			return BranchResult{}, err
+		}
 	}
 	branch, err := client.GetBranch(ctx, clusterID, branchID, apistarter.GetBranchOptions{})
 	if err != nil {
@@ -159,7 +132,8 @@ func (s Service) DryRunCreateBranch(ctx context.Context, commandPath string, opt
 	checks := []dryrun.Check{
 		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)},
-		{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterBranchCreate)},
+		{Name: "cluster_discovery_permission", Status: "passed", Message: string(opts.Dispatch.DiscoveryPermission)},
+		{Name: "operation_permission", Status: "passed", Message: string(opts.Dispatch.OperationPermission)},
 		{Name: "cluster_id", Status: "passed", Message: clusterID},
 		{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the parent cluster is Starter before creating the branch"},
 	}
@@ -288,19 +262,12 @@ func (s Service) DryRunDeleteBranch(ctx context.Context, commandPath string, opt
 		},
 		dryrun.Check{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		dryrun.Check{Name: "endpoint_selection", Status: "passed", Message: fmt.Sprintf("%s %s", endpoint.Provider, endpoint.RegionCode)},
-		dryrun.Check{Name: "permission_requirement", Status: "passed", Message: string(authz.StarterBranchDelete)},
+		dryrun.Check{Name: "cluster_discovery_permission", Status: "passed", Message: string(opts.Dispatch.DiscoveryPermission)},
+		dryrun.Check{Name: "operation_permission", Status: "passed", Message: string(opts.Dispatch.OperationPermission)},
 		dryrun.Check{Name: "cluster_id", Status: "passed", Message: clusterID},
 		dryrun.Check{Name: "branch_id", Status: "passed", Message: branchID},
 		dryrun.Check{Name: "starter_cluster_precondition", Status: "passed", Message: "normal execution verifies the parent cluster is Starter before deleting the branch"},
 	), nil
-}
-
-func ensureStarterClusterByID(ctx context.Context, client *apistarter.Client, clusterID string) error {
-	cluster, err := client.GetCluster(ctx, clusterID, apistarter.GetClusterOptions{})
-	if err != nil {
-		return err
-	}
-	return ensureStarterCluster(cluster)
 }
 
 func (s Service) createBranchRequest(opts CreateBranchOptions) (string, apistarter.CreateBranchRequest, error) {
@@ -365,43 +332,4 @@ func validateBranchIdentity(clusterIDValue, branchIDValue string) (string, strin
 		return "", "", err
 	}
 	return clusterID, branchID, nil
-}
-
-func (r ListBranchesResult) Human() string {
-	var out strings.Builder
-	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(writer, "ID\tDISPLAY_NAME\tCLUSTER_ID\tSTATE\tPARENT\tCREATED")
-	for _, branch := range r.Branches {
-		_, _ = fmt.Fprintf(
-			writer,
-			"%s\t%s\t%s\t%s\t%s\t%s\n",
-			branch.ID,
-			branch.DisplayName,
-			branch.ClusterID,
-			branch.State,
-			branch.ParentID,
-			branch.CreateTime,
-		)
-	}
-	if r.NextPageToken != "" {
-		_, _ = fmt.Fprintf(writer, "next_page_token\t%s\t\t\t\t\n", r.NextPageToken)
-	}
-	_ = writer.Flush()
-	return strings.TrimRight(out.String(), "\n")
-}
-
-func (r BranchResult) Human() string {
-	lines := []string{
-		"ID: " + r.ID,
-		"Display name: " + r.DisplayName,
-		"Cluster ID: " + r.ClusterID,
-		"State: " + r.State,
-	}
-	if r.ParentID != "" {
-		lines = append(lines, "Parent: "+r.ParentID)
-	}
-	if r.CreateTime != "" {
-		lines = append(lines, "Created: "+r.CreateTime)
-	}
-	return strings.Join(lines, "\n")
 }

@@ -40,7 +40,7 @@ With `ti`, an agent can go from zero to live HTAP SQL (Hybrid Transaction / Anal
 1. Provision a serverless MySQL-compatible cluster, wait until it is active, and capture its ID
 
 ```shell
-export CLUSTER_ID="$(ti db create-db-cluster --db-cluster-name my-app-db --wait --query id --output text)"
+export CLUSTER_ID="$(ti db create-db-cluster --db-cluster-type starter --db-cluster-name my-app-db --wait --query id --output text)"
 ```
 
 2. Create the SQL users it needs to connect
@@ -189,12 +189,14 @@ ti fs mount-file-system --file-system-name agent-workspace --mount-path /path_to
 
 ### TiDB Cloud Starter
 
-`ti db` manages TiDB Cloud Starter clusters only. Cluster lists include only verified Starter clusters in the effective region and omit Essential, other service plans, cross-region resources, and resources whose region cannot be verified. Use global `--region`, for example `ti --region aws-us-west-2 db list-db-clusters`, to inspect another region without changing the stored profile. Every cluster, branch, SQL-user, connection-string, and SQL command verifies the cluster service plan before continuing. If TiDB Cloud does not return enough plan metadata to prove that a cluster is Starter, `ti` fails without issuing the requested mutation.
+`ti db` currently implements TiDB Cloud Starter only. Commands that do not identify an existing cluster require `--db-cluster-type starter`; there is no implicit default. Commands with `--db-cluster-id` discover the authoritative service plan and route internally without accepting a type flag. Essential, Premium, Dedicated, unknown, and conflicting plan metadata are rejected before the requested product operation.
+
+Cluster lists include only verified Starter clusters in the effective region and omit other service plans, cross-region resources, and resources whose region cannot be verified. Use global `--region`, for example `ti --region aws-us-west-2 db list-db-clusters --db-cluster-type starter`, to inspect another region without changing the stored profile. Listing incrementally fills the requested result page from TiDB Cloud API pages. Its opaque `next_page_token` belongs to `ti` and can be passed only to a later call with the same profile, type, region, filter, and ordering.
 
 `ti configure` discovers the account's virtual project and saves its ID in the selected profile. Cluster creation uses an explicit `--project-id` first, then that saved project ID. If neither is available, `ti` omits the project label and lets TiDB Cloud select the account's default project.
 
 ```shell
-ti db create-db-cluster --db-cluster-name my-distributed-mysql --wait
+ti db create-db-cluster --db-cluster-type starter --db-cluster-name my-distributed-mysql --wait
 ```
 
 ## Get Help
@@ -212,8 +214,8 @@ ti configure
 ti update
 ti organization list-projects
 
-ti db create-db-cluster
-ti db list-db-clusters
+ti db create-db-cluster --db-cluster-type starter
+ti db list-db-clusters --db-cluster-type starter
 ti db describe-db-cluster
 ti db update-db-cluster
 ti db delete-db-cluster

@@ -63,8 +63,8 @@ bin/ti db create-db-cluster \
 从 JSON 结果中找到 cluster ID：
 
 ```bash
-bin/ti db list-db-clusters --output text
-export CLUSTER_ID="$(bin/ti db list-db-clusters | jq -r --arg name "$CLUSTER_NAME" '.clusters[] | select(.display_name == $name) | .id' | head -n 1)"
+bin/ti db list-db-clusters --db-cluster-type starter --output text
+export CLUSTER_ID="$(bin/ti db list-db-clusters --db-cluster-type starter | jq -r --arg name "$CLUSTER_NAME" '.clusters[] | select(.display_name == $name) | .id' | head -n 1)"
 bin/ti db describe-db-cluster --db-cluster-id "$CLUSTER_ID" --output text
 ```
 

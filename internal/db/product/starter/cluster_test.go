@@ -1,4 +1,4 @@
-package db
+package starter
 
 import (
 	"context"
@@ -13,7 +13,6 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
-	"github.com/tidbcloud/ti-cli/internal/db/validate"
 )
 
 func TestCreateCluster(t *testing.T) {
@@ -41,11 +40,11 @@ func TestCreateCluster(t *testing.T) {
 	defer server.Close()
 
 	result, err := testService(server.URL).CreateCluster(context.Background(), CreateClusterOptions{
-		Profile:                      testProfile(),
-		DisplayName:                  "demo-cluster",
-		ClusterType:                  "starter",
-		ProjectID:                    "project-1",
-		MonthlySpendingLimitUSDCents: -1,
+		Profile:     testProfile(),
+		DisplayName: "demo-cluster",
+		ClusterType: "starter",
+		ProjectID:   "project-1",
+		Product:     CreateOptions{MonthlySpendingLimitUSDCents: -1},
 	})
 	if err != nil {
 		t.Fatalf("CreateCluster failed: %v", err)
@@ -83,12 +82,12 @@ func TestCreateClusterWaitsUntilActive(t *testing.T) {
 	service.ClusterWaitTimeout = time.Second
 	service.ClusterWaitPollInterval = time.Millisecond
 	result, err := service.CreateCluster(context.Background(), CreateClusterOptions{
-		Profile:                      testProfile(),
-		DisplayName:                  "demo-cluster",
-		ClusterType:                  "starter",
-		ProjectID:                    "project-1",
-		MonthlySpendingLimitUSDCents: -1,
-		WaitUntilActive:              true,
+		Profile:         testProfile(),
+		DisplayName:     "demo-cluster",
+		ClusterType:     "starter",
+		ProjectID:       "project-1",
+		Product:         CreateOptions{MonthlySpendingLimitUSDCents: -1},
+		WaitUntilActive: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateCluster failed: %v", err)
@@ -113,12 +112,12 @@ func TestCreateClusterWaitReturnsImmediatelyWhenCreateIsActive(t *testing.T) {
 	defer server.Close()
 
 	result, err := testService(server.URL).CreateCluster(context.Background(), CreateClusterOptions{
-		Profile:                      testProfile(),
-		DisplayName:                  "demo-cluster",
-		ClusterType:                  "starter",
-		ProjectID:                    "project-1",
-		MonthlySpendingLimitUSDCents: -1,
-		WaitUntilActive:              true,
+		Profile:         testProfile(),
+		DisplayName:     "demo-cluster",
+		ClusterType:     "starter",
+		ProjectID:       "project-1",
+		Product:         CreateOptions{MonthlySpendingLimitUSDCents: -1},
+		WaitUntilActive: true,
 	})
 	if err != nil {
 		t.Fatalf("CreateCluster failed: %v", err)
@@ -183,12 +182,12 @@ func TestCreateClusterWaitErrorsPreserveCreatedCluster(t *testing.T) {
 			service.ClusterWaitTimeout = tt.timeout
 			service.ClusterWaitPollInterval = time.Millisecond
 			_, err := service.CreateCluster(context.Background(), CreateClusterOptions{
-				Profile:                      testProfile(),
-				DisplayName:                  "demo-cluster",
-				ClusterType:                  "starter",
-				ProjectID:                    "project-1",
-				MonthlySpendingLimitUSDCents: -1,
-				WaitUntilActive:              true,
+				Profile:         testProfile(),
+				DisplayName:     "demo-cluster",
+				ClusterType:     "starter",
+				ProjectID:       "project-1",
+				Product:         CreateOptions{MonthlySpendingLimitUSDCents: -1},
+				WaitUntilActive: true,
 			})
 			if apperr.CodeFor(err) != tt.wantCode {
 				t.Fatalf("error code = %q, want %q: %v", apperr.CodeFor(err), tt.wantCode, err)
@@ -217,8 +216,8 @@ func TestCreateClusterUsesProfileProjectAndAllowsExplicitOverride(t *testing.T) 
 	profile := testProfile()
 	profile.ProjectID = "profile-project"
 	for _, opts := range []CreateClusterOptions{
-		{Profile: profile, DisplayName: "demo-cluster", ClusterType: "starter", MonthlySpendingLimitUSDCents: -1},
-		{Profile: profile, DisplayName: "demo-cluster", ClusterType: "starter", ProjectID: "explicit-project", ProjectIDExplicit: true, MonthlySpendingLimitUSDCents: -1},
+		{Profile: profile, DisplayName: "demo-cluster", ClusterType: "starter", Product: CreateOptions{MonthlySpendingLimitUSDCents: -1}},
+		{Profile: profile, DisplayName: "demo-cluster", ClusterType: "starter", ProjectID: "explicit-project", ProjectIDExplicit: true, Product: CreateOptions{MonthlySpendingLimitUSDCents: -1}},
 	} {
 		if _, err := testService(server.URL).CreateCluster(context.Background(), opts); err != nil {
 			t.Fatalf("CreateCluster failed: %v", err)
@@ -243,10 +242,10 @@ func TestCreateClusterAllowsServerDefaultProject(t *testing.T) {
 	defer server.Close()
 
 	if _, err := testService(server.URL).CreateCluster(context.Background(), CreateClusterOptions{
-		Profile:                      testProfile(),
-		DisplayName:                  "demo-cluster",
-		ClusterType:                  "starter",
-		MonthlySpendingLimitUSDCents: -1,
+		Profile:     testProfile(),
+		DisplayName: "demo-cluster",
+		ClusterType: "starter",
+		Product:     CreateOptions{MonthlySpendingLimitUSDCents: -1},
 	}); err != nil {
 		t.Fatalf("CreateCluster failed: %v", err)
 	}
@@ -257,7 +256,7 @@ func TestCreateClusterProjectResolutionErrors(t *testing.T) {
 		profile := testProfile()
 		profile.ProjectID = "profile-project"
 		_, err := Service{}.DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
-			Profile: profile, DisplayName: "demo", ClusterType: "starter", ProjectIDExplicit: true, MonthlySpendingLimitUSDCents: -1,
+			Profile: profile, DisplayName: "demo", ClusterType: "starter", ProjectIDExplicit: true, Product: CreateOptions{MonthlySpendingLimitUSDCents: -1},
 		})
 		if apperr.CodeFor(err) != "db.empty_project_id" {
 			t.Fatalf("unexpected error: %v", err)
@@ -339,10 +338,10 @@ func TestUpdateCluster(t *testing.T) {
 	defer server.Close()
 
 	result, err := testService(server.URL).UpdateCluster(context.Background(), UpdateClusterOptions{
-		Profile:                      testProfile(),
-		ClusterID:                    "cluster-1",
-		DisplayName:                  "renamed-cluster",
-		MonthlySpendingLimitUSDCents: 1000,
+		Profile:     testProfile(),
+		ClusterID:   "cluster-1",
+		DisplayName: "renamed-cluster",
+		Product:     UpdateOptions{MonthlySpendingLimitUSDCents: 1000},
 	})
 	if err != nil {
 		t.Fatalf("UpdateCluster failed: %v", err)
@@ -491,12 +490,12 @@ func TestDryRunCreateClusterDoesNotSendRequest(t *testing.T) {
 	defer server.Close()
 
 	result, err := testService(server.URL).DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
-		Profile:                      testProfile(),
-		DisplayName:                  "demo-cluster",
-		ClusterType:                  "starter",
-		ProjectID:                    "project-1",
-		MonthlySpendingLimitUSDCents: -1,
-		WaitUntilActive:              true,
+		Profile:         testProfile(),
+		DisplayName:     "demo-cluster",
+		ClusterType:     "starter",
+		ProjectID:       "project-1",
+		Product:         CreateOptions{MonthlySpendingLimitUSDCents: -1},
+		WaitUntilActive: true,
 	})
 	if err != nil {
 		t.Fatalf("DryRunCreateCluster failed: %v", err)
@@ -520,10 +519,10 @@ func TestDryRunCreateClusterDoesNotSendRequest(t *testing.T) {
 
 func TestDryRunCreateClusterOmitsProjectLabelWhenUnset(t *testing.T) {
 	result, err := testService("https://starter.test").DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
-		Profile:                      testProfile(),
-		DisplayName:                  "demo-cluster",
-		ClusterType:                  "starter",
-		MonthlySpendingLimitUSDCents: -1,
+		Profile:     testProfile(),
+		DisplayName: "demo-cluster",
+		ClusterType: "starter",
+		Product:     CreateOptions{MonthlySpendingLimitUSDCents: -1},
 	})
 	if err != nil {
 		t.Fatalf("DryRunCreateCluster failed: %v", err)
@@ -563,7 +562,7 @@ func TestDryRunDeleteClusterDescribesWait(t *testing.T) {
 
 func TestDryRunUpdateClusterDescribesStarterPrecondition(t *testing.T) {
 	result, err := testService("https://starter.test").DryRunUpdateCluster(context.Background(), "ti db update-db-cluster", UpdateClusterOptions{
-		Profile: testProfile(), ClusterID: "cluster-1", DisplayName: "renamed", MonthlySpendingLimitUSDCents: -1,
+		Profile: testProfile(), ClusterID: "cluster-1", DisplayName: "renamed", Product: UpdateOptions{MonthlySpendingLimitUSDCents: -1},
 	})
 	if err != nil {
 		t.Fatalf("DryRunUpdateCluster failed: %v", err)
@@ -576,18 +575,20 @@ func TestDryRunUpdateClusterDescribesStarterPrecondition(t *testing.T) {
 	t.Fatalf("dry-run should describe the Starter precondition: %#v", result.Checks)
 }
 
-func TestCreateDefaultsToStarterType(t *testing.T) {
+func TestCreateAcceptsExplicitStarterType(t *testing.T) {
 	result, err := Service{}.DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
 		Profile:     testProfile(),
 		DisplayName: "demo-cluster",
+		ClusterType: "starter",
 		ProjectID:   "project-1",
+		Product:     CreateOptions{MonthlySpendingLimitUSDCents: -1},
 	})
 	if err != nil {
-		t.Fatalf("expected missing cluster type to default to starter: %v", err)
+		t.Fatalf("expected explicit Starter type to pass: %v", err)
 	}
 	found := false
 	for _, check := range result.Checks {
-		if check.Name == "cluster_type" && check.Message == validate.ClusterTypeStarter {
+		if check.Name == "cluster_type" && check.Message == "starter" {
 			found = true
 		}
 	}
@@ -605,6 +606,17 @@ func TestCreateRejectsUnsupportedClusterType(t *testing.T) {
 	})
 	if apperr.CodeFor(err) != "db.unsupported_cluster_type" {
 		t.Fatalf("expected unsupported cluster type error, got %v", err)
+	}
+}
+
+func TestCreateRejectsMissingClusterType(t *testing.T) {
+	_, err := Service{}.DryRunCreateCluster(context.Background(), "ti db create-db-cluster", CreateClusterOptions{
+		Profile:     testProfile(),
+		DisplayName: "demo-cluster",
+		ProjectID:   "project-1",
+	})
+	if apperr.CodeFor(err) != "db.missing_required_flag" {
+		t.Fatalf("expected missing cluster type error, got %v", err)
 	}
 }
 

@@ -26,7 +26,15 @@ func Required(flagName, value string) error {
 
 func ClusterType(value string) error {
 	trimmed := strings.TrimSpace(value)
-	if trimmed != "" && trimmed != ClusterTypeStarter {
+	if trimmed == "" {
+		return apperr.New(
+			"db.missing_required_flag",
+			"usage",
+			2,
+			"--db-cluster-type is required",
+		)
+	}
+	if trimmed != ClusterTypeStarter {
 		return apperr.New(
 			"db.unsupported_cluster_type",
 			"usage",

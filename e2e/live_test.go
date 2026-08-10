@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -221,13 +222,10 @@ func TestLiveDBCommandSurface(t *testing.T) {
 		{"db", "list-db-clusters", "help"},
 	})
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
-		{"db", "create-db-cluster-branch", "--db-cluster-id", "cluster-1", "--db-cluster-branch-name", "dev", "--wait"},
-		{"db", "delete-db-cluster", "--db-cluster-id", "cluster-1", "--wait"},
-		{"db", "delete-db-cluster-branch", "--db-cluster-id", "cluster-1", "--db-cluster-branch-id", "branch-1"},
-		{"db", "create-db-sql-users", "--db-cluster-id", "cluster-1"},
+		{"db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "tdc-e2e-dry-run", "--wait"},
 	}, "remote_mutation")
 	testLiveReadOnlyDryRunRejections(t, bin, profileName, [][]string{
-		{"db", "list-db-clusters"},
+		{"db", "list-db-clusters", "--db-cluster-type", "starter"},
 		{"db", "describe-db-cluster"},
 		{"db", "list-db-cluster-branches"},
 		{"db", "describe-db-cluster-branch"},
@@ -235,7 +233,7 @@ func TestLiveDBCommandSurface(t *testing.T) {
 		{"db", "execute-sql-statement"},
 	})
 
-	clusters := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1")
+	clusters := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--db-cluster-type", "starter", "--page-size", "1")
 	clusters.wantExitCode(0)
 	clusters.wantStdoutContains(`"clusters"`)
 	var clusterList struct {
@@ -256,10 +254,10 @@ func TestLiveDBCommandSurface(t *testing.T) {
 		}
 	}
 
-	clusterQuery := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1", "--query", "clusters[].id")
+	clusterQuery := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--db-cluster-type", "starter", "--page-size", "1", "--query", "clusters[].id")
 	clusterQuery.wantExitCode(0)
 
-	clusterText := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--page-size", "1", "--output", "text")
+	clusterText := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--db-cluster-type", "starter", "--page-size", "1", "--output", "text")
 	clusterText.wantExitCode(0)
 	clusterText.wantStdoutContains("ID")
 
@@ -486,7 +484,14 @@ func testLiveMutatingDryRuns(t *testing.T, bin, profileName string, commands [][
 		result.wantExitCode(0)
 		result.wantStdoutContains("config_and_credentials")
 		result.wantStdoutContains("endpoint_selection")
-		result.wantStdoutContains("permission_requirement")
+		if len(args) > 0 && args[0] == "db" {
+			result.wantStdoutContains("operation_permission")
+			if slices.Contains(args, "--db-cluster-id") {
+				result.wantStdoutContains("cluster_discovery_permission")
+			}
+		} else {
+			result.wantStdoutContains("permission_requirement")
+		}
 		result.wantStdoutContains(finalCheck)
 	}
 }
@@ -1461,6 +1466,7 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 			"TIDB_CLOUD_PRIVATE_KEY=" + profile.TiDBCloudPrivateKey,
 		},
 		"db", "create-db-cluster",
+		"--db-cluster-type", "starter",
 		"--db-cluster-name", clusterName,
 		"--wait",
 	)
@@ -1487,6 +1493,12 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 	if strings.TrimSpace(described.Labels["tidb.cloud/project"]) == "" {
 		t.Fatalf("server-selected project label is empty: %#v", described)
 	}
+	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
+		{"db", "update-db-cluster", "--db-cluster-id", clusterID, "--db-cluster-name", updatedName},
+		{"db", "delete-db-cluster", "--db-cluster-id", clusterID, "--wait"},
+		{"db", "create-db-cluster-branch", "--db-cluster-id", clusterID, "--db-cluster-branch-name", "tdc-e2e-dry-run-branch", "--wait"},
+		{"db", "create-db-sql-users", "--db-cluster-id", clusterID},
+	}, "remote_mutation")
 
 	prepare := runTI(t, bin, "--profile", profileName, "db", "create-db-sql-users", "--db-cluster-id", clusterID)
 	prepare.wantExitCode(0)
@@ -1552,6 +1564,9 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 	if createdBranch.State != "ACTIVE" {
 		t.Fatalf("--wait returned branch in state %q: %#v", createdBranch.State, createdBranch)
 	}
+	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
+		{"db", "delete-db-cluster-branch", "--db-cluster-id", clusterID, "--db-cluster-branch-id", branchID},
+	}, "remote_mutation")
 
 	branches := runTI(t, bin, "--profile", profileName, "db", "list-db-cluster-branches", "--db-cluster-id", clusterID, "--page-size", "100")
 	branches.wantExitCode(0)

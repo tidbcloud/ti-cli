@@ -20,6 +20,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/config/homemigration"
 	"github.com/tidbcloud/ti-cli/internal/config/region"
 	"github.com/tidbcloud/ti-cli/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/db"
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	"github.com/tidbcloud/ti-cli/internal/oplog"
 	"github.com/tidbcloud/ti-cli/internal/output"
@@ -491,14 +492,15 @@ const (
 )
 
 type controlPlaneCommandSpec struct {
-	Use        string
-	Aliases    []string
-	Short      string
-	Long       string
-	Mutation   mutationMode
-	Permission authz.Permission
-	Run        func(commandContext) (any, error)
-	DryRun     func(commandContext) (dryrun.Result, error)
+	Use         string
+	Aliases     []string
+	Short       string
+	Long        string
+	Mutation    mutationMode
+	Permission  authz.Permission
+	DBOperation db.Operation
+	Run         func(commandContext) (any, error)
+	DryRun      func(commandContext) (dryrun.Result, error)
 }
 
 type commandContext struct {
@@ -515,11 +517,6 @@ func (c commandContext) LoadProfile() (*config.Profile, error) {
 
 func (c commandContext) LoadLocalProfile() (*config.Profile, error) {
 	return loadLocalProfileForCommand(c.cmd)
-}
-
-func (c commandContext) Permission() authz.Permission {
-	permission, _ := authz.ForCommand(c.cmd.CommandPath())
-	return permission
 }
 
 func (c commandContext) StringFlag(name string) (string, error) {
@@ -567,8 +564,11 @@ func newControlPlanePlaceholderCommand(use, short string, mutation mutationMode,
 }
 
 func newControlPlaneCommand(spec controlPlaneCommandSpec, info version.Info) *cobra.Command {
-	if spec.Permission == "" {
-		panic(fmt.Sprintf("control-plane command %s must declare a permission", spec.Use))
+	if (spec.Permission == "") == (spec.DBOperation == "") {
+		panic(fmt.Sprintf("control-plane command %s must declare exactly one static permission or DB operation", spec.Use))
+	}
+	if spec.DBOperation != "" && spec.Mutation == mutatingCommand && spec.DryRun == nil {
+		panic(fmt.Sprintf("dynamic DB mutation %s must declare a dry-run handler", spec.Use))
 	}
 	cmd := newCommand(commandSpec{
 		Use:     spec.Use,
