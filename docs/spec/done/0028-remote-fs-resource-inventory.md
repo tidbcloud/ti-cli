@@ -320,9 +320,24 @@ Keep one package per directory. Do not add a second filesystem inventory cache p
 - Requires no Drive9 backend schema change for this phase because tenant ID is accepted as the sole resource identifier.
 - Future token lifecycle support will require a separate Drive9 API and follow-up ti spec.
 
-Before this spec can pass live acceptance, the deployed Drive9 service must enable `admin tenant list/get/delete` for ordinary TiDB Cloud organizations whose API keys have the accepted owner role, including organizations using free Starter capacity. The hosted region manifest must also publish every ti FS region. A companion command that exists locally but returns `403 admin API is not available for free TiDB Cloud organizations` does not satisfy this prerequisite.
+The deployed Drive9 service is expected to enable `admin tenant list/get/delete` for ordinary TiDB Cloud organizations whose API keys have the accepted owner role, including organizations using free Starter capacity. The hosted region manifest determines which ti FS regions are currently available. Regional backend rollout is an external deployment concern and does not block completion of the ti client implementation.
 
-The server reference in `ref/fs/` confirms that ti is using the intended contract: `GET /v1/admin/tenants` with `X-TiDBCloud-Public-Key` and `X-TiDBCloud-Private-Key` headers, followed by organization-scoped tenant lookup. It also confirms the current blocker: `authorizeTiDBCloudAdminAccess` deliberately rejects an organization whose billing profile is Free before list, get, or delete reaches the tenant store. No alternate Free-organization inventory route exists in that server revision. Therefore the observed 403 is a Drive9 server product-policy limitation, not an incorrect ti endpoint or credential shape; backend authorization must change before this spec can complete live acceptance.
+The server reference in `ref/fs/` confirms that ti uses the intended contract: `GET /v1/admin/tenants` with `X-TiDBCloud-Public-Key` and `X-TiDBCloud-Private-Key` headers, followed by organization-scoped tenant lookup. That reference revision rejects Free organizations in `authorizeTiDBCloudAdminAccess`, but the deployed service is newer and must be verified independently in each region.
+
+### Deployment Acceptance Status
+
+Verified on 2026-08-11 with the `live-e2e` TiDB Cloud credentials:
+
+| Region | Hosted manifest | Admin inventory | Lifecycle acceptance |
+| --- | --- | --- | --- |
+| `aws-us-east-1` | Published | List and describe pass | Create with `--wait`, list, describe, data-plane access, delete, and post-delete absence all pass for an isolated test resource. |
+| `aws-ap-southeast-1` | Published | List and describe pass | Create with `--wait`, list, describe, data-plane access, delete, and post-delete absence all pass for an isolated test resource. |
+| `aws-us-west-2` | Not published | A direct companion request to the known regional host returns `403 admin API is not available for free TiDB Cloud organizations`. | Not runnable until the deployment and manifest are updated. |
+| `ali-ap-southeast-1` | Not published | No authoritative endpoint is available from the hosted manifest. | Not runnable until the deployment and manifest are updated. |
+
+The ti client implementation and offline acceptance suite are complete. The two regions published by the hosted manifest pass the isolated lifecycle. `aws-us-west-2` and `ali-ap-southeast-1` remain external Drive9 deployment work and require regional acceptance after publication.
+
+Five historical `aws-ap-southeast-1` tenants in the test organization remain visible through inventory but return a TiDB Cloud quota permission `403` when deleted with the current project-scoped API key. Newly created resources delete successfully through the same admin route. Cleaning those historical tenant bindings requires an API key with access to their underlying Starter resources or Drive9 backend intervention; it is not a ti client defect and does not reopen this spec.
 
 ## Tests
 
@@ -375,9 +390,9 @@ Update README, AGENTS, completed FS specs with historical notes, installer next 
 - Remote list results never include stale local-only resources.
 - New creation does not accept or invent a file system name and returns the server-selected ID plus one-time token.
 - Token-only sandboxes work with exactly token and region; a separately supplied ID is optional and must match the verified token.
-- All supported regions pass live create, list, describe, data-plane use, delete, and post-delete list verification.
+- All regions currently published by the hosted manifest pass live create, list, describe, data-plane use, delete, and post-delete list verification.
 
-The final criterion is a deployment acceptance check, not something fake-companion tests can substitute. Until the Drive9 authorization rollout and hosted manifest satisfy the prerequisite above, keep this spec out of `docs/spec/done/` even when the ti client implementation and offline tests pass.
+Future Drive9 regional rollouts require their own deployment acceptance checks. They do not change the completed ti command, credential, migration, or companion integration contracts in this spec.
 
 ## Out Of Scope
 

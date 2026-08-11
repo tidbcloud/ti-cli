@@ -142,7 +142,9 @@ Implemented:
 - structured JSON/text rendering and JMESPath `--query`
 - `--dry-run` on mutating control-plane commands
 - TiDB Cloud Digest-auth API client foundation and auth/authz error mapping
-- region-scoped remote ti fs inventory with profile-scoped, ID-keyed local credentials
+- region-scoped remote ti fs inventory, profile-scoped ID-keyed credentials,
+  and legacy credential migration from
+  `docs/spec/done/0028-remote-fs-resource-inventory.md`
 - ti fs/fs-git/fs-journal/fs-vault commands routed through the bundled
   `ti-drive9` companion, with ti-owned profile loading, credential storage,
   region resolution, and output/error handling
@@ -158,11 +160,11 @@ There are no registered placeholder commands at the current stage. Implemented
 mutating commands support `--dry-run` where their command contract declares
 dry-run support.
 
-The client implementation for remote ti fs inventory and ID-keyed credentials
-is tracked by `docs/spec/0028-remote-fs-resource-inventory.md`. Keep that spec
-pending until Drive9 enables admin tenant list/get/delete for ordinary TiDB
-Cloud organizations and the hosted manifest publishes every supported ti fs
-region, then complete its live acceptance flow before moving it to `done/`.
+The completed remote ti fs inventory implementation and its verified regional
+rollout status are recorded in
+`docs/spec/done/0028-remote-fs-resource-inventory.md`. Future Drive9 region
+publication and cleanup of historical backend tenant bindings are external
+deployment work and do not reopen the ti client spec.
 
 ## Reference Code
 

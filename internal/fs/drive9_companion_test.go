@@ -325,6 +325,7 @@ func TestDrive9RemoteInventoryAndDescribeJoinLocalToken(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_LIST_MODE", "mixed-local-token")
 	profile := testProfile()
 	if _, err := fscred.StoreCredential(home, profile, "tenant-1", "aws-us-east-1", fsTestToken(t, "tenant-1"), false); err != nil {
 		t.Fatal(err)
@@ -334,8 +335,11 @@ func TestDrive9RemoteInventoryAndDescribeJoinLocalToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(list.FileSystems) != 1 || list.FileSystems[0].FileSystemID != "tenant-1" || !list.FileSystems[0].HasLocalToken {
+	if len(list.FileSystems) != 2 || list.FileSystems[0].FileSystemID != "tenant-1" || !list.FileSystems[0].HasLocalToken {
 		t.Fatalf("list = %#v", list)
+	}
+	if list.FileSystems[1].FileSystemID != "tenant-2" || list.FileSystems[1].HasLocalToken {
+		t.Fatalf("remote resource without a local token was not preserved: %#v", list)
 	}
 	described, err := service.DescribeFileSystem(context.Background(), profile, "tenant-1")
 	if err != nil {
@@ -347,6 +351,43 @@ func TestDrive9RemoteInventoryAndDescribeJoinLocalToken(t *testing.T) {
 	listCall := requireFakeDrive9Call(t, recordPath, "admin", "tenant", "list")
 	if listCall.Env["DRIVE9_API_KEY"] != "" || listCall.Env["DRIVE9_PUBLIC_KEY"] != "public" {
 		t.Fatalf("inventory used wrong credentials: %#v", listCall.Env)
+	}
+}
+
+func TestDrive9RemoteInventoryCommandsRejectMissingTiDBCloudCredentials(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	profile := testProfile()
+	profile.TiDBCloudPublicKey = ""
+	profile.TiDBCloudPrivateKey = ""
+	service := testCompanionService(t.TempDir(), companion)
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "list", run: func() error {
+			_, err := service.ListFileSystems(context.Background(), profile)
+			return err
+		}},
+		{name: "describe", run: func() error {
+			_, err := service.DescribeFileSystem(context.Background(), profile, "tenant-1")
+			return err
+		}},
+		{name: "delete", run: func() error {
+			_, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1"})
+			return err
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.run(); apperr.CodeFor(err) != "auth.missing_credentials" {
+				t.Fatalf("error = %v, want auth.missing_credentials", err)
+			}
+		})
+	}
+	if _, err := os.Stat(recordPath); !os.IsNotExist(err) {
+		t.Fatalf("missing credentials invoked Drive9: %v", err)
 	}
 }
 
@@ -576,6 +617,60 @@ func TestImportFileSystemTokenRejectsRemoteValidationFailureWithoutWriting(t *te
 	}
 	if _, getErr := fscred.GetCredential(home, profile.Name, "tenant-rejected"); apperr.CodeFor(getErr) != "fs.credential_not_found" {
 		t.Fatalf("rejected import wrote credentials: %v", getErr)
+	}
+}
+
+func TestImportFileSystemTokenRejectsAssertedIDMismatchBeforeRemoteValidation(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	profile := testProfile()
+	profile.HomeDir = home
+	_, err := testCompanionService(home, companion).ImportFileSystemToken(context.Background(), ImportFileSystemTokenOptions{
+		Profile:      profile,
+		FileSystemID: "tenant-other",
+		Token:        fsTestToken(t, "tenant-import"),
+	})
+	if apperr.CodeFor(err) != "fs.token_file_system_mismatch" {
+		t.Fatalf("error = %v, want fs.token_file_system_mismatch", err)
+	}
+	if _, statErr := os.Stat(recordPath); !os.IsNotExist(statErr) {
+		t.Fatalf("ID mismatch invoked Drive9: %v", statErr)
+	}
+	if _, getErr := fscred.GetCredential(home, profile.Name, "tenant-import"); apperr.CodeFor(getErr) != "fs.credential_not_found" {
+		t.Fatalf("ID mismatch wrote credentials: %v", getErr)
+	}
+}
+
+func TestImportFileSystemTokenIsIdempotentWithoutRewritingCredential(t *testing.T) {
+	home := t.TempDir()
+	companion, _ := buildFakeDrive9(t)
+	token := fsTestToken(t, "tenant-import")
+	t.Setenv("TI_FAKE_DRIVE9_EXPECT_API_KEY", token)
+	profile := testProfile()
+	profile.HomeDir = home
+	service := testCompanionService(home, companion)
+	opts := ImportFileSystemTokenOptions{Profile: profile, Token: token}
+	if _, err := service.ImportFileSystemToken(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	paths, err := fscred.CredentialPath(home, profile.Name, "tenant-import")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantModTime := time.Unix(1, 0)
+	if err := os.Chtimes(paths.Credentials, wantModTime, wantModTime); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.ImportFileSystemToken(context.Background(), opts); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(paths.Credentials)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(wantModTime) {
+		t.Fatalf("idempotent import rewrote credentials: modtime=%s", info.ModTime())
 	}
 }
 
@@ -989,6 +1084,14 @@ func main() {
 		switch os.Getenv("TI_FAKE_DRIVE9_LIST_MODE") {
 		case "empty":
 			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"tenants": []any{}, "page": 1, "page_size": 100})
+		case "mixed-local-token":
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+				"tenants": []map[string]any{
+					{"tenant_id": "tenant-1", "status": "active", "kind": "live"},
+					{"tenant_id": "tenant-2", "status": "active", "kind": "live"},
+				},
+				"page": 1, "page_size": 100,
+			})
 		case "malformed":
 			fmt.Fprint(os.Stdout, "{")
 		case "paginate":

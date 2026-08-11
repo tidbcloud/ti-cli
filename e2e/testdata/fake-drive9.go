@@ -23,9 +23,10 @@ type call struct {
 }
 
 type tenant struct {
-	TenantID string `json:"tenant_id"`
-	Status   string `json:"status"`
-	Kind     string `json:"kind"`
+	TenantID   string `json:"tenant_id"`
+	Status     string `json:"status"`
+	Kind       string `json:"kind"`
+	RegionCode string `json:"region_code"`
 }
 
 func main() {
@@ -54,7 +55,7 @@ func main() {
 		region := flagValue(args, "--region-code")
 		id := "tenant-" + strings.ReplaceAll(region, "_", "-")
 		state := loadState()
-		state[id] = tenant{TenantID: id, Status: "active", Kind: "tidb_cloud"}
+		state[id] = tenant{TenantID: id, Status: "active", Kind: "tidb_cloud", RegionCode: region}
 		saveState(state)
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]string{
 			"tenant_id":      id,
@@ -69,7 +70,9 @@ func main() {
 		state := loadState()
 		tenants := make([]tenant, 0, len(state))
 		for _, item := range state {
-			tenants = append(tenants, item)
+			if item.RegionCode == os.Getenv("DRIVE9_REGION_CODE") {
+				tenants = append(tenants, item)
+			}
 		}
 		sort.Slice(tenants, func(i, j int) bool { return tenants[i].TenantID < tenants[j].TenantID })
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"tenants": tenants, "page": 1, "page_size": 100, "next_page": 0})
@@ -78,7 +81,7 @@ func main() {
 	if hasPrefix(args, "admin", "tenant", "get") {
 		id := flagValue(args, "--tenant-id")
 		item, ok := loadState()[id]
-		if !ok {
+		if !ok || item.RegionCode != os.Getenv("DRIVE9_REGION_CODE") {
 			fmt.Fprintln(os.Stderr, "tenant not found")
 			os.Exit(1)
 		}
@@ -87,7 +90,13 @@ func main() {
 	}
 	if hasPrefix(args, "admin", "tenant", "delete") {
 		state := loadState()
-		delete(state, flagValue(args, "--tenant-id"))
+		id := flagValue(args, "--tenant-id")
+		item, ok := state[id]
+		if !ok || item.RegionCode != os.Getenv("DRIVE9_REGION_CODE") {
+			fmt.Fprintln(os.Stderr, "tenant not found")
+			os.Exit(1)
+		}
+		delete(state, id)
 		saveState(state)
 		fmt.Println(`{"status":"deleting"}`)
 		return
