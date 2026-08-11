@@ -25,7 +25,7 @@ type ConfigDocument map[string]ConfigProfile
 type ConfigProfile struct {
 	CloudProvider   string `toml:"cloud_provider,omitempty"`
 	RegionCode      string `toml:"region_code,omitempty"`
-	ProjectID       string `toml:"project_id,omitempty"`
+	LegacyProjectID string `toml:"project_id,omitempty"`
 	FSResourceName  string `toml:"fs_resource_name,omitempty"`
 	FSTenantID      string `toml:"fs_tenant_id,omitempty"`
 	FSCloudProvider string `toml:"fs_cloud_provider,omitempty"`
@@ -175,6 +175,16 @@ func resolveCredentialField(path, profileName, canonicalName, canonicalValue, le
 }
 
 func WriteProfile(homeDir, profileName string, cfg ConfigProfile, creds CredentialsProfile) error {
+	return writeProfile(homeDir, profileName, cfg, creds, false)
+}
+
+// WriteConfiguredProfile updates one profile and removes the retired project
+// selector from that profile without changing legacy values in other profiles.
+func WriteConfiguredProfile(homeDir, profileName string, cfg ConfigProfile, creds CredentialsProfile) error {
+	return writeProfile(homeDir, profileName, cfg, creds, true)
+}
+
+func writeProfile(homeDir, profileName string, cfg ConfigProfile, creds CredentialsProfile, removeLegacyProject bool) error {
 	if profileName == "" {
 		profileName = "default"
 	}
@@ -197,8 +207,8 @@ func WriteProfile(homeDir, profileName string, cfg ConfigProfile, creds Credenti
 		existingConfig.RegionCode = cfg.RegionCode
 		existingConfig.CloudProvider = ""
 	}
-	if cfg.ProjectID != "" {
-		existingConfig.ProjectID = cfg.ProjectID
+	if removeLegacyProject {
+		existingConfig.LegacyProjectID = ""
 	}
 	if cfg.FSResourceName != "" {
 		existingConfig.FSResourceName = cfg.FSResourceName

@@ -29,7 +29,6 @@ type Profile struct {
 	PlacementRegionCode   string
 	CloudProvider         string
 	RegionCode            string
-	ProjectID             string
 	TiDBCloudPublicKey    string
 	TiDBCloudPrivateKey   string
 	FSResourceName        string
@@ -98,7 +97,6 @@ func Load(ctx context.Context, opts LoadOptions) (*Profile, error) {
 		PlacementRegionCode:   placement.Code,
 		CloudProvider:         placement.Provider,
 		RegionCode:            placement.NativeCode,
-		ProjectID:             cfg.ProjectID,
 		TiDBCloudPublicKey:    publicKey,
 		TiDBCloudPrivateKey:   privateKey,
 		FSResourceName:        cfg.FSResourceName,
@@ -162,7 +160,6 @@ func LoadLocal(ctx context.Context, opts LoadOptions) (*Profile, error) {
 		Name:                  profileName,
 		HomeDir:               opts.HomeDir,
 		Source:                source,
-		ProjectID:             cfg.ProjectID,
 		FSResourceName:        cfg.FSResourceName,
 		FSTenantID:            cfg.FSTenantID,
 		FSPlacementRegionCode: fsPlacement.Code,

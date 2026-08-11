@@ -38,16 +38,20 @@ Implemented:
   `docs/spec/done/0003-output-error-query-dry-run.md`
 - API client auth, authorization, and region routing from
   `docs/spec/done/0004-api-client-auth-and-region-routing.md`
-- Organization project listing from
-  `docs/spec/done/0005-organization-management.md`
+- Historical organization project listing from
+  `docs/spec/done/0005-organization-management.md`, superseded by project
+  selection and inventory removal in `docs/spec/done/0029-remove-db-project-selection.md`
 - Starter DB cluster lifecycle from
   `docs/spec/done/0006-starter-db-cluster-lifecycle.md`
 - Starter DB branch lifecycle from
   `docs/spec/done/0007-starter-db-branch-lifecycle.md`
 - Starter DB SQL access and query from
   `docs/spec/done/0008-starter-db-sql-access-and-query.md`
-- Default virtual project discovery and DB create resolution from
-  `docs/spec/done/0017-default-virtual-project-resolution.md`
+- Historical default virtual project discovery from
+  `docs/spec/done/0017-default-virtual-project-resolution.md`, superseded by
+  project selection and inventory removal
+- TiDB Cloud Project selection and inventory removal from
+  `docs/spec/done/0029-remove-db-project-selection.md`
 - Starter-only DB resource guardrails from
   `docs/spec/done/0023-starter-only-db-resource-guardrails.md`
 - Region-scoped Starter DB cluster listing from
@@ -78,7 +82,6 @@ Implemented:
 - `ti configure`
 - `ti update --check`
 - `ti update`
-- `ti organization list-projects`
 - `ti db create-db-cluster`
 - `ti db list-db-clusters`
 - `ti db describe-db-cluster`
@@ -204,7 +207,6 @@ make test
 make e2e
 make telemetry-e2e
 make live-e2e-configure
-make live-e2e-organization
 make live-e2e-db
 make live-e2e-fs
 make live-e2e-fs-git
@@ -233,7 +235,7 @@ delivery path before dropping only that temporary database. It must not run as
 part of `make test`, `make e2e`, or any live-e2e target.
 The `make live-e2e-<family>` targets build `bin/ti` and run only the selected
 top-level command family against the `live-e2e` profile by default. Keep
-configure, organization, db, fs, fs-git, fs-journal, and fs-vault tests
+configure, db, fs, fs-git, fs-journal, and fs-vault tests
 independently selectable. Do not make a focused family target run tests from a
 different family, and do not add separate mutating/non-mutating variants.
 `make live-e2e` runs every live family together in one test process and remains
@@ -243,10 +245,9 @@ Live e2e must strictly cover every implemented interface and command for the
 current project stage, including real create/update/delete flows when those
 commands are implemented. For Starter DB clusters, the live suite creates a
 uniquely named `ti-e2e-*` cluster with `--wait`, without a
-spending limit or explicit/configured project ID, verifies the returned state
-is `ACTIVE` and has a non-empty server-selected project label, and deletes only
-that cluster. The server-selected account default is not required to equal the
-`tidbx_virtual` project discovered by `ti configure`. For Starter DB branches,
+spending limit or project selection, verifies the returned state is `ACTIVE`,
+preserves any server-selected project metadata, and deletes only that cluster.
+For Starter DB branches,
 the live suite creates, reads, lists, and deletes only a `ti-e2e-branch-*`
 branch on the cluster created by the same test run. Branch creation must use
 `--wait`; cluster deletion must use `--wait`. For Starter DB SQL access, the live suite prepares ti-managed
@@ -326,7 +327,6 @@ internal/fs/fscred/         ID-keyed ti fs credentials, selection, and legacy mi
 internal/fs/mountlocator/   non-secret Drive9 background mount routing state
 internal/oplog/             local JSONL operation log writer
 internal/output/            structured JSON/text/raw rendering
-internal/organization/      organization project command use cases
 internal/query/             JMESPath query application
 internal/secretinput/       no-echo secret input helper
 internal/settings/          global settings parsing and legacy logging migration
@@ -354,7 +354,7 @@ Follow these rules unless `docs/priciples.md` is updated:
 - The command tree is at most two levels: `ti <command> [subcommand]`.
 - `ti configure` and `ti update` are the only intentional top-level verb
   exceptions. `ti configure` is the only interactive command.
-- Other top-level commands are nouns such as `db`, `fs`, and `organization`.
+- Other top-level commands are nouns such as `db` and `fs`.
 - Use long flags only, for example `--profile` and `--db-cluster-name`.
 - Do not add short flags or one-letter aliases. The current CLI rejects short
   flags before invoking Cobra.
@@ -363,7 +363,7 @@ Follow these rules unless `docs/priciples.md` is updated:
   handlers as their canonical commands.
 - Do not prompt for input except inside `ti configure`.
 - Successful structured control-plane commands output JSON by default.
-- Implement DB, organization, and fs control-plane commands through
+- Implement DB and fs control-plane commands through
   `controlPlaneCommandSpec` in `internal/cli`, so normal execution, dry-run,
   output rendering, and query handling stay on the shared path.
 - Non-DB control-plane commands must declare exactly one `authz.Permission` in
@@ -398,8 +398,8 @@ Follow these rules unless `docs/priciples.md` is updated:
   legacy fallback, and dispatch through capability interfaces. Reject
   recognized but unsupported products and missing, unknown, or conflicting
   plans before the product operation.
-- Only `ti db` uses dynamic operation-to-permission mapping. Keep FS and
-  organization command permissions static. The CLI composition root registers
+- Only `ti db` uses dynamic operation-to-permission mapping. Keep FS command
+  permissions static. The CLI composition root registers
   product resolvers/providers; the root `internal/db` package must not import
   child product packages.
 - `ti db list-db-clusters --db-cluster-type starter` adds an immutable API
@@ -469,13 +469,9 @@ Implemented command behavior:
 - `ti update --dry-run`
 - `ti update`
 - `ti update --target-version v0.1.1`
-- `ti organization list-projects`
-- `ti organization list-projects --query 'projects[0].id'`
-- `ti organization list-projects --output text`
 - `ti db create-db-cluster --db-cluster-type starter --db-cluster-name demo`
 - `ti db create-db-cluster --db-cluster-type starter --db-cluster-name demo --wait`
 - `ti db create-db-cluster --db-cluster-type starter --db-cluster-name demo --dry-run`
-- `ti db create-db-cluster --db-cluster-type starter --db-cluster-name demo --project-id <project-id>`
 - `ti db list-db-clusters --db-cluster-type starter`
 - `ti db list-db-clusters --db-cluster-type starter --query 'clusters[].id'`
 - `ti db describe-db-cluster --db-cluster-id <cluster-id>`
@@ -593,7 +589,6 @@ Registered command surface:
 
 - `ti update --check`
 - `ti update`
-- `ti organization list-projects`
 - `ti db create-db-cluster`
 - `ti db list-db-clusters`
 - `ti db describe-db-cluster`
@@ -721,9 +716,9 @@ the deprecated variable name.
 - The global `--profile` flag selects a profile when explicitly provided.
 - The global `--region` flag selects command-scope placement when explicitly
   provided and must reject an explicit empty value.
-- `ti configure` writes canonical `region_code`, discovers the unique
-  `tidbx_virtual` project as `project_id`, and writes
-  `tidb_cloud_public_key` and `tidb_cloud_private_key`.
+- `ti configure` writes canonical `region_code`, `tidb_cloud_public_key`, and
+  `tidb_cloud_private_key` without making a network request or discovering a
+  TiDB Cloud project.
 - `ti configure --non-interactive` must not prompt. It reads values from flags
   first, then `TI_REGION_CODE`, `TIDB_CLOUD_PUBLIC_KEY`, and `TIDB_CLOUD_PRIVATE_KEY`.
   Missing values fail with an actionable error.
@@ -740,7 +735,6 @@ Typical configured profile keys:
 # ~/.ti/config
 [default]
 region_code = "aws-us-east-1"
-project_id = "..."
 
 # ~/.ti/credentials
 [default]
@@ -748,9 +742,9 @@ tidb_cloud_public_key = "..."
 tidb_cloud_private_key = "..."
 ```
 
-`project_id` is written by `ti configure` but is not required to create a
-Starter cluster. If it is absent and `--project-id` is not provided, the create
-request omits the project label and TiDB Cloud selects the account default.
+Starter cluster creation never reads or sends project selection. It omits the
+project label and lets TiDB Cloud select its server-side default project.
+Project metadata returned by TiDB Cloud remains unchanged in command output.
 
 One profile can access multiple remotely inventoried ti fs resources. The main
 config stores neither a default resource nor resource credentials.
@@ -847,19 +841,11 @@ Placement lookup order for authenticated commands:
 2. If `TI_REGION_CODE` is set, use it for this command only.
 3. Otherwise use the selected profile's `region_code`.
 
-Starter DB cluster creation project lookup order is:
-
-1. Explicit non-empty `--project-id`.
-2. The selected profile's `project_id`, discovered by `ti configure` from the
-   unique accessible project whose type is `tidbx_virtual`.
-3. Otherwise omit the `tidb.cloud/project` label and let the Starter API select
-   the account's default project.
-
-An explicitly empty `--project-id` is an error and must not use the profile
-or server fallback. When no project ID resolves, omit the label entirely; do
-not send `tidb.cloud/project` with an empty value. Other DB commands identify
-existing resources by cluster or branch ID and do not send `project_id`.
-Drive9-backed ti fs commands do not consume this DB project default.
+Starter DB cluster creation omits project selection entirely. Do not expose a
+`--project-id` flag, read a legacy profile `project_id`, or send a
+`tidb.cloud/project` label. Preserve project-related fields and labels returned
+by TiDB Cloud as opaque API resource metadata. Other DB commands identify
+existing resources by cluster or branch ID.
 
 Environment credentials are a credential source only; they must not change the
 local profile namespace and must not cause ti to write local `[env]` sections.

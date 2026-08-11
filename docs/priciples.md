@@ -6,7 +6,6 @@ ti is currently in Preview. Its feature and command contracts can change before 
 
 ## Product Scope
 
-- `ti organization` reads TiDB Cloud organization and project context.
 - `ti db` manages TiDB Cloud Starter clusters and branches, prepares SQL users, formats connection strings, and executes one SQL statement per invocation.
 - `ti fs` manages TiDB Cloud Filesystem resources, files, layers, packs, and mounts.
 - `ti fs-git`, `ti fs-journal`, and `ti fs-vault` expose Filesystem-backed Git workspace, append-only journal, and secret-management workflows.
@@ -23,7 +22,7 @@ The command tree has at most two command levels:
 ti <command> [subcommand]
 ```
 
-`configure` and `update` are intentional top-level verb exceptions. Other top-level commands identify product domains: `organization`, `db`, `fs`, `fs-git`, `fs-journal`, and `fs-vault`.
+`configure` and `update` are intentional top-level verb exceptions. Other top-level commands identify product domains: `db`, `fs`, `fs-git`, `fs-journal`, and `fs-vault`.
 
 - Commands and flags use complete, self-explanatory names.
 - Flags are long-only. Do not add one-letter flags.
@@ -91,7 +90,7 @@ Environment credentials must not create or select a synthetic `[env]` profile. A
 
 TiDB Cloud control-plane requests use HTTP Digest authentication. API keys must not be used as SQL Basic Auth credentials or Filesystem data-plane credentials.
 
-## Configure And Default Project
+## Configure
 
 `ti configure` collects:
 
@@ -99,17 +98,11 @@ TiDB Cloud control-plane requests use HTTP Digest authentication. API keys must 
 - a TiDB Cloud public API key;
 - a TiDB Cloud private API key.
 
-After validating the keys, configure lists accessible projects, requires exactly one project whose type is `tidbx_virtual`, and stores its ID as the profile's `project_id`. It commits the profile only after discovery succeeds.
+Configure validates the local inputs and stores them atomically. It does not call TiDB Cloud, validate the keys remotely, discover projects, or persist a project ID. Authentication and authorization failures are reported by the first remote command that uses the keys.
 
 `ti configure --non-interactive` reads flags first, then `TI_REGION_CODE`, `TIDB_CLOUD_PUBLIC_KEY`, and `TIDB_CLOUD_PRIVATE_KEY`, and fails instead of prompting for missing input. Interactive configure must handle Ctrl+C and exit with code 130.
 
-Starter cluster creation resolves its project in this order:
-
-1. Explicit non-empty `--project-id`.
-2. The selected profile's discovered `project_id`.
-3. Otherwise omit the project label and let TiDB Cloud select the account default.
-
-Other DB operations identify existing resources by cluster or branch ID. Filesystem provisioning does not use the DB `project_id`.
+Starter cluster creation always omits project selection and lets TiDB Cloud select its server-side default project. Project-related fields and labels returned by TiDB Cloud remain unchanged in command output. Other DB operations identify existing resources by cluster or branch ID.
 
 ## Local State And Credentials
 
@@ -128,7 +121,6 @@ Example:
 # ~/.ti/config
 [default]
 region_code = "aws-us-east-1"
-project_id = "..."
 
 # ~/.ti/credentials
 [default]

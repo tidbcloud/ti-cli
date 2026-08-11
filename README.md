@@ -197,7 +197,7 @@ The token contains its file system ID, so a clean sandbox does not need `TI_FS_F
 
 Cluster lists include only verified Starter clusters in the effective region and omit other service plans, cross-region resources, and resources whose region cannot be verified. Use global `--region`, for example `ti --region aws-us-west-2 db list-db-clusters --db-cluster-type starter`, to inspect another region without changing the stored profile. Listing incrementally fills the requested result page from TiDB Cloud API pages. Its opaque `next_page_token` belongs to `ti` and can be passed only to a later call with the same profile, type, region, filter, and ordering.
 
-`ti configure` discovers the account's virtual project and saves its ID in the selected profile. Cluster creation uses an explicit `--project-id` first, then that saved project ID. If neither is available, `ti` omits the project label and lets TiDB Cloud select the account's default project.
+`ti configure` stores the selected profile's region and API keys locally without making a TiDB Cloud request. Cluster creation omits project selection and lets TiDB Cloud select its server-side default project. Project metadata returned by TiDB Cloud remains visible in the cluster response.
 
 ```shell
 ti db create-db-cluster --db-cluster-type starter --db-cluster-name my-distributed-mysql --wait
@@ -216,7 +216,6 @@ ti db create-db-cluster --db-cluster-type starter --db-cluster-name my-distribut
 ```text
 ti configure
 ti update
-ti organization list-projects
 
 ti db create-db-cluster --db-cluster-type starter
 ti db list-db-clusters --db-cluster-type starter
@@ -346,7 +345,6 @@ Run one live command family against the `live-e2e` profile:
 
 ```bash
 make live-e2e-configure
-make live-e2e-organization
 make live-e2e-db
 make live-e2e-fs
 make live-e2e-fs-git

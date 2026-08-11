@@ -20,7 +20,6 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	tifs "github.com/tidbcloud/ti-cli/internal/fs"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
-	"github.com/tidbcloud/ti-cli/internal/organization"
 	outputpkg "github.com/tidbcloud/ti-cli/internal/output"
 	"github.com/tidbcloud/ti-cli/internal/update"
 	"github.com/tidbcloud/ti-cli/internal/version"
@@ -65,10 +64,6 @@ func newConfigureCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			debug, err := cmd.Flags().GetBool("debug")
-			if err != nil {
-				return err
-			}
 			result, err := cfgconfigure.Run(cmd.Context(), cfgconfigure.Options{
 				Profile:             profile,
 				RegionCode:          regionCode,
@@ -77,8 +72,6 @@ func newConfigureCommand(info version.Info) *cobra.Command {
 				NonInteractive:      nonInteractive,
 				In:                  cmd.InOrStdin(),
 				Out:                 cmd.OutOrStdout(),
-				Debug:               debug,
-				DebugWriter:         cmd.ErrOrStderr(),
 			})
 			if err != nil {
 				return err
@@ -220,7 +213,6 @@ func newDBCreateClusterCommand(info version.Info) *cobra.Command {
 	}, info)
 	cmd.Flags().String("db-cluster-name", "", "Starter database cluster display name.")
 	cmd.Flags().String("db-cluster-type", "", "Database cluster type; must be starter.")
-	cmd.Flags().String("project-id", "", "TiDB Cloud project ID. Omit this value to use the default project for the profile.")
 	cmd.Flags().Int32("monthly-spending-limit-usd-cents", -1, "The monthly spending limit in USD cents; omit to use the default.")
 	cmd.Flags().Bool("wait", false, "Wait until the created cluster becomes ACTIVE before returning")
 	markUsageRequired(cmd, "db-cluster-type", "db-cluster-name")
@@ -665,10 +657,6 @@ func createClusterOptions(ctx commandContext, profile *config.Profile) (db.Creat
 	if err != nil {
 		return db.CreateClusterOptions{}, err
 	}
-	projectID, err := ctx.StringFlag("project-id")
-	if err != nil {
-		return db.CreateClusterOptions{}, err
-	}
 	spendingLimit, err := ctx.Int32Flag("monthly-spending-limit-usd-cents")
 	if err != nil {
 		return db.CreateClusterOptions{}, err
@@ -678,12 +666,10 @@ func createClusterOptions(ctx commandContext, profile *config.Profile) (db.Creat
 		return db.CreateClusterOptions{}, err
 	}
 	return db.CreateClusterOptions{
-		Profile:           profile,
-		DisplayName:       name,
-		ClusterType:       clusterType,
-		ProjectID:         projectID,
-		ProjectIDExplicit: ctx.FlagChanged("project-id"),
-		WaitUntilActive:   waitUntilActive,
+		Profile:         profile,
+		DisplayName:     name,
+		ClusterType:     clusterType,
+		WaitUntilActive: waitUntilActive,
 		Product: dbstarter.CreateOptions{
 			MonthlySpendingLimitUSDCents: spendingLimit,
 		},
@@ -3538,53 +3524,5 @@ func newJournalVerifyCommand(info version.Info) *cobra.Command {
 	}, info)
 	cmd.Flags().String("journal-id", "", "Journal ID")
 	markUsageRequired(cmd, "journal-id")
-	return cmd
-}
-
-func newOrganizationCommand(info version.Info) *cobra.Command {
-	cmd := newParentCommand("organization", "Inspect TiDB Cloud organization resources.", info)
-	cmd.AddCommand(
-		newOrganizationListProjectsCommand(info),
-	)
-	return cmd
-}
-
-func newOrganizationListProjectsCommand(info version.Info) *cobra.Command {
-	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "list-projects",
-		Short:      "List TiDB Cloud projects.",
-		Mutation:   readOnlyCommand,
-		Permission: authz.OrganizationProjectRead,
-		Run: func(ctx commandContext) (any, error) {
-			profile, err := ctx.LoadProfile()
-			if err != nil {
-				return nil, err
-			}
-			pageSize, err := ctx.Int32Flag("page-size")
-			if err != nil {
-				return nil, err
-			}
-			pageToken, err := ctx.StringFlag("page-token")
-			if err != nil {
-				return nil, err
-			}
-			debug, err := ctx.BoolFlag("debug")
-			if err != nil {
-				return nil, err
-			}
-			service := organization.Service{
-				Timeout:     30 * time.Second,
-				Debug:       debug,
-				DebugWriter: ctx.cmd.ErrOrStderr(),
-			}
-			return service.ListProjects(ctx.cmd.Context(), organization.ListProjectsOptions{
-				Profile:   profile,
-				PageSize:  pageSize,
-				PageToken: pageToken,
-			})
-		},
-	}, info)
-	cmd.Flags().Int32("page-size", 0, "The number of projects to request; 0 uses the default.")
-	cmd.Flags().String("page-token", "", "The page token returned by a previous list-projects call.")
 	return cmd
 }

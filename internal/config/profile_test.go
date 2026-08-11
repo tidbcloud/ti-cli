@@ -31,17 +31,23 @@ func TestLoadExplicitProfile(t *testing.T) {
 	}
 }
 
-func TestLoadReadsProjectID(t *testing.T) {
+func TestLoadIgnoresLegacyProjectID(t *testing.T) {
 	home := t.TempDir()
-	if err := store.WriteProfile(home, "stage", store.ConfigProfile{RegionCode: "aws-us-east-1", ProjectID: "virtual-1"}, store.CredentialsProfile{TiDBCloudPublicKey: "public", TiDBCloudPrivateKey: "private"}); err != nil {
+	if err := os.MkdirAll(filepath.Join(home, store.TIDirName), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.ConfigPath(home), []byte("[stage]\nregion_code = 'aws-us-east-1'\nproject_id = 'virtual-1'\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(store.CredentialsPath(home), []byte("[stage]\ntidb_cloud_public_key = 'public'\ntidb_cloud_private_key = 'private'\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	profile, err := Load(context.Background(), LoadOptions{Profile: "stage", ProfileExplicit: true, HomeDir: home})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profile.ProjectID != "virtual-1" {
-		t.Fatalf("project id = %q, want virtual-1", profile.ProjectID)
+	if profile.RegionCode != "us-east-1" || profile.TiDBCloudPublicKey != "public" {
+		t.Fatalf("legacy project id affected profile loading: %#v", profile)
 	}
 }
 

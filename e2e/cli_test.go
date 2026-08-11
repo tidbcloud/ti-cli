@@ -82,8 +82,13 @@ func TestHelpAndVersion(t *testing.T) {
 	createDBCluster.wantStdoutContains("--db-cluster-name <string> (required)")
 	createDBCluster.wantStdoutContains("--db-cluster-type <string> (required)")
 	createDBCluster.wantStdoutNotContains("[--db-cluster-type <string>]")
-	createDBCluster.wantStdoutContains("--project-id <string>")
-	createDBCluster.wantStdoutNotContains("--project-id <string> (required)")
+	createDBCluster.wantStdoutNotContains("--project-id")
+	removedProjectFlag := runTI(t, bin, "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "demo", "--project-id", "project-1", "--dry-run")
+	removedProjectFlag.wantExitCode(2)
+	removedProjectFlag.wantStderrContains("unknown flag: --project-id")
+	removedOrganization := runTI(t, bin, "organization", "list-projects")
+	removedOrganization.wantExitCode(2)
+	removedOrganization.wantStderrContains(`unknown command "organization"`)
 
 	configure := runTI(t, bin, "configure", "help")
 	configure.wantExitCode(0)
@@ -304,7 +309,7 @@ func TestTelemetryUsesFakeIngestionServer(t *testing.T) {
 		"TI_REGION_CODE=aws-us-east-1",
 		"TIDB_CLOUD_PUBLIC_KEY=must-not-appear-public-key",
 		"TIDB_CLOUD_PRIVATE_KEY=must-not-appear-private-key",
-	}, "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", secretName, "--project-id", "must-not-appear-project", "--dry-run")
+	}, "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", secretName, "--dry-run")
 	result.wantExitCode(0)
 	result.wantStdoutContains(`"dry_run": true`)
 
@@ -314,7 +319,7 @@ func TestTelemetryUsesFakeIngestionServer(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("ti did not send telemetry to the fake ingestion server")
 	}
-	for _, prohibited := range []string{secretName, "must-not-appear-public-key", "must-not-appear-private-key", "must-not-appear-project"} {
+	for _, prohibited := range []string{secretName, "must-not-appear-public-key", "must-not-appear-private-key"} {
 		if strings.Contains(string(body), prohibited) {
 			t.Fatalf("telemetry payload leaked %q: %s", prohibited, body)
 		}
@@ -322,7 +327,7 @@ func TestTelemetryUsesFakeIngestionServer(t *testing.T) {
 	if !strings.Contains(string(body), `"schema_version":2`) ||
 		!strings.Contains(string(body), `"command_path":"ti db create-db-cluster"`) ||
 		!strings.Contains(string(body), `"db-cluster-name"`) ||
-		!strings.Contains(string(body), `"project-id"`) ||
+		!strings.Contains(string(body), `"db-cluster-type"`) ||
 		!strings.Contains(string(body), `"tag":"e2b-preview"`) ||
 		!strings.Contains(string(body), `"extra":{"campaign":"launch","runtime":"e2b"}`) {
 		t.Fatalf("unexpected telemetry payload: %s", body)
@@ -482,11 +487,11 @@ func TestCreateDBClusterUsesServerDefaultProjectThroughBinary(t *testing.T) {
 			return
 		}
 		created = true
-		_, _ = w.Write([]byte(`{"clusterId":"starter-1","displayName":"server-default-project","servicePlan":"Starter","state":"CREATING"}`))
+		_, _ = w.Write([]byte(`{"clusterId":"starter-1","displayName":"server-default-project","servicePlan":"Starter","state":"CREATING","labels":{"tidb.cloud/project":"server-selected","custom":"preserved"}}`))
 	}))
 	defer server.Close()
 
-	writeE2EFile(t, filepath.Join(home, ".ti", "config"), "[default]\nregion_code = 'aws-us-east-1'\n", 0o600)
+	writeE2EFile(t, filepath.Join(home, ".ti", "config"), "[default]\nregion_code = 'aws-us-east-1'\nproject_id = 'legacy-must-not-be-sent'\n", 0o600)
 	writeE2EFile(t, filepath.Join(home, ".ti", "credentials"), "[default]\ntidb_cloud_public_key = 'public'\ntidb_cloud_private_key = 'private'\n", 0o600)
 	env := []string{
 		"HOME=" + home,
@@ -497,6 +502,8 @@ func TestCreateDBClusterUsesServerDefaultProjectThroughBinary(t *testing.T) {
 	result := runTIWithInput(t, bin, "", env, "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "server-default-project")
 	result.wantExitCode(0)
 	result.wantStdoutContains(`"id": "starter-1"`)
+	result.wantStdoutContains(`"tidb.cloud/project": "server-selected"`)
+	result.wantStdoutContains(`"custom": "preserved"`)
 	if !created {
 		t.Fatal("create request was not sent")
 	}
@@ -515,7 +522,6 @@ func createClusterDryRunArgs() []string {
 		"db", "create-db-cluster",
 		"--db-cluster-type", "starter",
 		"--db-cluster-name", "demo-cluster",
-		"--project-id", "project-1",
 		"--wait",
 		"--dry-run",
 	}
@@ -543,11 +549,11 @@ func artifactNameForRuntime(t *testing.T) string {
 func TestConfigureWritesLocalProfile(t *testing.T) {
 	bin := tiBinary(t)
 	home := t.TempDir()
-	env := append([]string{"HOME=" + home}, configureIAMEnv(t)...)
+	env := []string{"HOME=" + home}
 
 	result := runTIWithInput(t, bin, "aws-us-east-1\npublic-key\nprivate-key\n", env, "configure", "--profile", "stage")
 	result.wantExitCode(0)
-	result.wantStdoutContains(`"project_id": "virtual-e2e"`)
+	result.wantStdoutNotContains("project")
 	result.wantStdoutNotContains("private-key")
 
 	configBytes, err := os.ReadFile(filepath.Join(home, ".ti", "config"))
@@ -563,7 +569,7 @@ func TestConfigureWritesLocalProfile(t *testing.T) {
 	if !strings.Contains(string(configBytes), `[stage]`) ||
 		strings.Contains(string(configBytes), `cloud_provider`) ||
 		!strings.Contains(string(configBytes), `region_code = 'aws-us-east-1'`) ||
-		!strings.Contains(string(configBytes), `project_id = 'virtual-e2e'`) {
+		strings.Contains(string(configBytes), `project_id`) {
 		t.Fatalf("config did not contain expected stage profile:\n%s", string(configBytes))
 	}
 	if !strings.Contains(string(credentialsBytes), `tidb_cloud_public_key = 'public-key'`) ||
@@ -595,10 +601,9 @@ func TestConfigureNonInteractiveFromEnvironment(t *testing.T) {
 		"TIDB_CLOUD_PUBLIC_KEY=ci-public",
 		"TIDB_CLOUD_PRIVATE_KEY=ci-private",
 	}
-	env = append(env, configureIAMEnv(t)...)
 	result := runTIWithInput(t, bin, "", env, "configure", "--profile", "ci", "--non-interactive")
 	result.wantExitCode(0)
-	result.wantStdoutContains(`"project_id": "virtual-e2e"`)
+	result.wantStdoutNotContains("project")
 	result.wantStdoutNotContains("ci-private")
 
 	configBytes, err := os.ReadFile(filepath.Join(home, ".ti", "config"))
@@ -611,7 +616,7 @@ func TestConfigureNonInteractiveFromEnvironment(t *testing.T) {
 	}
 	if !strings.Contains(string(configBytes), `[ci]`) ||
 		!strings.Contains(string(configBytes), `region_code = 'aws-us-east-1'`) ||
-		!strings.Contains(string(configBytes), `project_id = 'virtual-e2e'`) ||
+		strings.Contains(string(configBytes), `project_id`) ||
 		strings.Contains(string(configBytes), `cloud_provider`) {
 		t.Fatalf("config did not contain expected ci profile:\n%s", string(configBytes))
 	}
@@ -647,7 +652,6 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 		"TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
 	}
-	baseEnv = append(baseEnv, configureIAMEnv(t)...)
 	configured := runTIWithInput(t, bin, "", append(baseEnv,
 		"TI_REGION_CODE=aws-us-east-1",
 		"TIDB_CLOUD_PUBLIC_KEY=e2e-public",
@@ -1052,7 +1056,6 @@ func TestOperationLogWritesSafeJSONL(t *testing.T) {
 		"TIDB_CLOUD_PUBLIC_KEY=ci-public-secret",
 		"TIDB_CLOUD_PRIVATE_KEY=ci-private-secret",
 	}
-	env = append(env, configureIAMEnv(t)...)
 	result := runTIWithInput(t, bin, "", env, "configure", "--profile", "ci", "--non-interactive")
 	result.wantExitCode(0)
 
@@ -1076,22 +1079,6 @@ func TestOperationLogWritesSafeJSONL(t *testing.T) {
 	}
 	if event["type"] != "command" || event["command"] != "ti configure" || event["profile"] != "ci" {
 		t.Fatalf("unexpected operation log event: %#v", event)
-	}
-}
-
-func configureIAMEnv(t *testing.T) []string {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1beta1/projects" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte(`{"projects":[{"id":"virtual-e2e","type":"tidbx_virtual"}]}`))
-	}))
-	t.Cleanup(server.Close)
-	return []string{
-		"TI_ALLOW_TEST_ENDPOINTS=1",
-		"TI_TEST_IAM_BASE_URL=" + server.URL,
 	}
 }
 
