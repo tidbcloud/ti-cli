@@ -1,5 +1,7 @@
 # tdc fs Mount Runtime
 
+> **Latest identity update:** `0028-remote-fs-resource-inventory.md` supersedes file system name selectors. Current mount commands select a server-assigned ID or derive it from an explicitly supplied FS token.
+
 > **Current status:** This is the historical tdc-native mount design. `0015-drive9-companion-wrapper-for-tdc-fs.md` transferred FUSE, WebDAV, cache, write-back, drain, and unmount semantics to `tdc-drive9`; tdc now owns only command validation, resource/auth resolution, companion invocation, output/errors, and a non-secret background-mount locator. Automatic driver selection is FUSE on Linux and WebDAV on macOS and Windows; macOS users can install macFUSE and explicitly select FUSE. There is no native mount fallback.
 
 ## Goal

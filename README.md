@@ -16,14 +16,14 @@ With `ti`, an agent can persist state between sessions, share files across sandb
 1. Create a file system and obtain the file system token (performed once, outside the sandbox).
 
 ```shell
-export TI_FS_TOKEN="$(ti fs create-file-system --file-system-name agent-workspace --region <REGION_CODE> --wait --query fs_token --output text)"
+export TI_FS_TOKEN="$(ti fs create-file-system --region <REGION_CODE> --wait --query fs_token --output text)"
 ```
 
 2. Mount the filesystem to a local path and use it as a normal POSIX-compliant filesystem (performed within the sandbox)
 
 ```shell
 export TI_FS_TOKEN="<FS_TOKEN>"
-ti fs mount-file-system --file-system-name agent-workspace --mount-path /path-to-workspace --region <REGION_CODE>
+ti fs mount-file-system --mount-path /path-to-workspace --region <REGION_CODE>
 echo "Hello Sandbox Workspace!" >> /path-to-workspace/hello.txt
 ```
 
@@ -103,7 +103,7 @@ Automation should move to `TI_*` and `TIDB_CLOUD_*` environment variables. The v
 
 - Authentication: a TiDB Cloud Public Key and a Private Key from the [TiDB Cloud API Keys](https://tidbcloud.com/org-settings/api-keys) console.
 - Default region: one of aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or ali-ap-southeast-1.
-    - Regions support TiDB Cloud Filesystem: aws-us-east-1, aws-us-west-2, aws-ap-southeast-1, and ali-ap-southeast-1.
+    - Regions support TiDB Cloud Filesystem: aws-us-east-1, aws-us-west-2, aws-ap-southeast-1, or ali-ap-southeast-1.
     - Regions support TiDB Cloud Starter: aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or ali-ap-southeast-1.
 
 Set up a default profile with one command:
@@ -156,36 +156,40 @@ An integration can add optional process-scoped attribution without changing a pr
 
 ### TiDB Cloud Filesystem
 
+The following example uses `jq` to extract the server-assigned ID and one-time token from one create response.
+
 ```shell
 mkdir ~/my-workspace
-ti fs create-file-system --file-system-name my-workspace --wait
-ti fs mount-file-system --file-system-name my-workspace --mount-path ~/my-workspace
+umask 077
+ti fs create-file-system --wait > ./filesystem.json
+export FILE_SYSTEM_ID="$(jq -r '.file_system_id' ./filesystem.json)"
+export TI_FS_TOKEN="$(jq -r '.fs_token' ./filesystem.json)"
+rm ./filesystem.json
+ti fs mount-file-system --file-system-id "$FILE_SYSTEM_ID" --mount-path ~/my-workspace
 ```
 
 Automatic mounting uses FUSE on Linux and WebDAV on macOS and Windows. macOS users can install macFUSE and explicitly add `--driver fuse` for the full FUSE experience.
 
-One profile can manage multiple file systems. ti never infers which resource a command targets, so provide `--file-system-name` for one-off commands or set `TI_FS_FILE_SYSTEM_NAME` for repeated commands:
+`ti fs list-file-systems` reads the region-scoped remote inventory through TiDB Cloud credentials. A profile can access multiple file systems, including resources created on another machine. Data-plane commands never infer a resource from the number of local credentials, so provide `--file-system-id` or set `TI_FS_FILE_SYSTEM_ID`:
 
 ```shell
-ti fs create-file-system --file-system-name scratch
 ti fs list-file-systems
-ti fs describe-file-system --file-system-name scratch
-export TI_FS_FILE_SYSTEM_NAME=scratch
+ti fs describe-file-system --file-system-id "$FILE_SYSTEM_ID"
+export TI_FS_FILE_SYSTEM_ID="$FILE_SYSTEM_ID"
 ti fs list-files
 ```
 
-`create-file-system` returns an file system token (`fs_token`) in its JSON result. This is the file system owner credential and should be handled as a secret. A configured machine can provision a file system and capture the token without printing the full result:
-
-```shell
-export TI_FS_TOKEN="$(ti fs create-file-system --file-system-name agent-workspace --wait --query fs_token --output text)"
-```
+`create-file-system` does not accept a user-defined name. Drive9 assigns the stable `file_system_id`, and the command returns the owner credential as `fs_token` once in its JSON result. Treat it as a secret. The example above captures both fields from one provisioning request and removes the temporary owner-only JSON file immediately.
 
 An agent sandbox can then use that existing file system without running `ti configure` or providing TiDB Cloud API keys:
 
 ```shell
 export TI_FS_TOKEN="<FS_TOKEN>"
-ti fs mount-file-system --file-system-name agent-workspace --mount-path /path_to_workspace --region aws-us-east-1
+export TI_REGION_CODE="aws-us-east-1"
+ti fs mount-file-system --mount-path /path_to_workspace
 ```
+
+The token contains its file system ID, so a clean sandbox does not need `TI_FS_FILE_SYSTEM_ID`. Set that variable only as an optional consistency assertion. To persist an existing token on another configured or unconfigured machine, run `ti fs import-file-system-token --from-file ./fs-token`; subsequent commands can select its ID without resupplying the token.
 
 ### TiDB Cloud Starter
 
@@ -228,6 +232,7 @@ ti db format-db-connection-string
 ti db execute-sql-statement
 
 ti fs create-file-system
+ti fs import-file-system-token
 ti fs delete-file-system
 ti fs list-file-systems
 ti fs describe-file-system
@@ -294,7 +299,7 @@ ti update
 ti update --target-version v0.1.1
 ```
 
-`ti update` downloads and verifies both `ti` and its `ti-drive9` companion before replacing either binary in the user-writable install directory. It never requests sudo. The old `tdc update` command cannot migrate to a differently named executable; install `ti` once with the new installer instead.
+`ti update` downloads and verifies both `ti` and its `ti-drive9` companion before replacing either binary in the user-writable install directory. It never requests sudo. The old `ti update` command cannot migrate to a differently named executable; install `ti` once with the new installer instead.
 
 ## Documentation
 

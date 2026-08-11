@@ -20,7 +20,7 @@ var PublicPairs = []Pair{
 	{Canonical: "TIDB_CLOUD_PUBLIC_KEY", Legacy: "TDC_PUBLIC_KEY"},
 	{Canonical: "TIDB_CLOUD_PRIVATE_KEY", Legacy: "TDC_PRIVATE_KEY"},
 	{Canonical: "TI_FS_TOKEN", Legacy: "TDC_FS_TOKEN"},
-	{Canonical: "TI_FS_FILE_SYSTEM_NAME", Legacy: "TDC_FS_FILE_SYSTEM_NAME"},
+	{Canonical: "TI_FS_FILE_SYSTEM_ID", Legacy: "TDC_FS_FILE_SYSTEM_ID"},
 	{Canonical: "TI_LOGGING", Legacy: "TDC_LOGGING"},
 	{Canonical: "TI_TELEMETRY", Legacy: "TDC_TELEMETRY"},
 	{Canonical: "TI_TELEMETRY_TAG", Legacy: "TDC_TELEMETRY_TAG"},

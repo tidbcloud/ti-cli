@@ -136,20 +136,15 @@ tidb_cloud_public_key = "..."
 tidb_cloud_private_key = "..."
 ```
 
-The v0.2.x release line accepts the corresponding legacy `TDC_*` environment variables and legacy `tdc_public_key`/`tdc_private_key` credential fields. New names win only when both values are equal; conflicting old and new values fail before mutation. New writes use canonical names only.
-
-When only `~/.tdc` exists, the first non-update `ti` invocation atomically copies durable state into `~/.ti`, records an owner-only migration marker, and preserves the old directory. When both directories were created independently or the marker is invalid, `ti` fails instead of merging them. Active mounts started by the old executable must be drained and unmounted with `tdc` before migration. Every `ti update` form bypasses this migration and all local product state.
-
-One profile can own multiple Filesystem resources. Each resource has isolated metadata and credentials:
+One profile can store credentials for multiple Filesystem resources. Drive9 remains authoritative for remote inventory; ti stores only the one-time token and its routing hint, keyed by the server-assigned file system ID:
 
 ```text
-~/.ti/fs_resources/<profile-key>/<resource-key>/config
-~/.ti/fs_resources/<profile-key>/<resource-key>/credentials
+~/.ti/fs_credentials/<profile-key>/<file-system-id-key>/credentials
 ```
 
-The resource config stores `file_system_name`, `tenant_id`, `cloud_provider`, `region_code`, and `created_at`. Its credentials file stores only the owner `api_key`. The main profile never stores a default resource name or resource API keys.
+The credential file stores `file_system_id`, canonical `region_code`, and the owner `api_key`. The main profile never stores a default resource ID or resource API keys.
 
-Legacy flat `fs_*` fields are migration input only. A complete legacy resource is migrated into the registry and the old fields are cleared. Incomplete legacy state fails explicitly.
+Legacy flat `fs_*` fields and name-keyed `~/.ti/fs_resources` records are migration input only. Complete legacy records are copied into the ID-keyed credential store without deleting the source, preserving rollback safety. Incomplete or conflicting legacy state fails explicitly.
 
 DB SQL credentials are cluster-scoped because TiDB Cloud cluster IDs are globally unique:
 
@@ -197,11 +192,11 @@ ti supplies a sanitized companion environment containing the resolved server, ca
 
 Filesystem resource selection is:
 
-1. Explicit `--file-system-name`.
-2. `TI_FS_FILE_SYSTEM_NAME`.
-3. Otherwise fail with `fs.missing_file_system_name` before endpoint resolution, companion startup, or a remote call.
+1. Explicit `--file-system-id` or `TI_FS_FILE_SYSTEM_ID`.
+2. The file system ID embedded in an explicitly supplied FS token; any separate ID must match it.
+3. Otherwise fail with `fs.missing_file_system_id` before endpoint resolution, companion startup, or a remote call.
 
-ti never infers a target from profile state, the number of registered resources, creation order, or deletion side effects. Creating the first resource does not select it for later commands, and deleting a resource does not promote another resource. `TI_FS_FILE_SYSTEM_NAME` is an explicit process-scoped selector, not a persisted default.
+ti never infers a target from profile state, the number of local credentials, creation order, or deletion side effects. Creating the first resource does not select it for later commands, and deleting a resource does not promote another resource. `TI_FS_FILE_SYSTEM_ID` is an explicit process-scoped selector, or a consistency assertion when a token is also supplied; it is not a persisted default.
 
 Remote data-plane, mount, Git, journal, and owner Vault commands select their FS token in this order:
 
@@ -214,12 +209,11 @@ A clean agent sandbox can access an existing Filesystem using only:
 ```text
 TI_FS_TOKEN
 TI_REGION_CODE
-TI_FS_FILE_SYSTEM_NAME
 ```
 
-These environment values form an in-memory command context and are not persisted. TiDB Cloud API keys remain required for `create-file-system` and `delete-file-system`; deletion also requires the resource to be registered locally.
+These environment values form an in-memory command context and are not persisted. The ID is derived from the token. TiDB Cloud API keys remain required for remote FS create, list, describe, and delete; deletion requires an ID but no local owner token.
 
-`create-file-system` returns `fs_token` once in its structured result. This owner credential must never appear in logs, telemetry, debug output, errors, non-secret config, or list/describe output.
+Drive9 is authoritative for the region-scoped remote inventory. `create-file-system` accepts no user-defined name and returns the server-assigned `file_system_id` plus `fs_token` once in its structured result. This owner credential must never appear in logs, telemetry, debug output, errors, non-secret config, or list/describe output. A known token can be validated and persisted with `import-file-system-token`.
 
 On macOS and Windows, automatic mounting selects WebDAV. On Linux, automatic mounting selects FUSE. macOS users can install macFUSE and explicitly request `--driver fuse` for the full mount behavior. Vault mount requires FUSE and is unavailable on Windows. `drain-file-system` is meaningful only for a FUSE mount that exposes a drain control socket.
 

@@ -1,5 +1,7 @@
 # tdc fs Data Plane
 
+> **Latest identity update:** `0028-remote-fs-resource-inventory.md` supersedes file system name selectors. Current data-plane commands select a server-assigned ID or derive it from an explicitly supplied FS token.
+
 > **Current status:** This document records the original command surface and tdc-native data-plane design. Since `0015-drive9-companion-wrapper-for-tdc-fs.md`, every retained public data-plane command is translated to the bundled `tdc-drive9` public CLI with no native fallback. Resource selection and credentials follow `0016-profile-fs-resource-registry.md` and `0018-fs-token-auth-and-config-free-access.md`; API keys are not stored in the main `~/.tdc/credentials`. Treat native HTTP, endpoint, upload, and filesystem-semantics statements below as historical.
 
 ## Goal

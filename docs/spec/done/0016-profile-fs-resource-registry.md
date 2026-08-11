@@ -1,8 +1,10 @@
 # Profile FS Resource Registry
 
+> **Latest identity update:** `0028-remote-fs-resource-inventory.md` supersedes this name-keyed inventory. The old registry is retained only as rollback-safe migration input; new local credentials are keyed by server-assigned ID.
+
 This spec supersedes the 1:1 profile storage and flat `fs_*` credential rules in completed specs 0009 and 0015.
 
-The persistent default-resource and unique-resource fallback rules in this completed spec are superseded by `docs/spec/done/0020-explicit-file-system-selection.md`. The 1:N registry and per-resource credential layout remain valid.
+The persistent default-resource and unique-resource fallback rules in this completed spec are superseded by `docs/spec/done/0020-explicit-file-system-selection.md`. The 1:N product relationship remains valid, but the name-keyed inventory and credential layout are superseded by `0028-remote-fs-resource-inventory.md`.
 
 ## Goal
 

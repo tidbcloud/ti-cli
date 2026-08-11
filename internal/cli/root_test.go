@@ -830,7 +830,7 @@ func TestFSAdjunctCommandsRequireConfiguredFSResource(t *testing.T) {
 	if got := apperr.ExitCodeFor(err); got != 2 {
 		t.Fatalf("expected config exit code 2, got %d", got)
 	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "file system name is required") || !strings.Contains(got, "TI_FS_FILE_SYSTEM_NAME") {
+	if got := apperr.MessageFor(err); !strings.Contains(got, "file system ID is required") || !strings.Contains(got, "TI_FS_FILE_SYSTEM_ID") {
 		t.Fatalf("unexpected message %q", got)
 	}
 }
@@ -838,6 +838,7 @@ func TestFSAdjunctCommandsRequireConfiguredFSResource(t *testing.T) {
 func TestFSOperationalCommandsExposeResourceSelector(t *testing.T) {
 	root := NewRootCommand(testVersion())
 	excluded := map[string]bool{
+		"ti fs create-file-system":  true,
 		"ti fs list-file-systems":   true,
 		"ti fs drain-file-system":   true,
 		"ti fs unmount-file-system": true,
@@ -851,8 +852,11 @@ func TestFSOperationalCommandsExposeResourceSelector(t *testing.T) {
 		if !strings.HasPrefix(path, "ti fs ") && !strings.HasPrefix(path, "ti fs-git ") && !strings.HasPrefix(path, "ti fs-journal ") && !strings.HasPrefix(path, "ti fs-vault ") {
 			return
 		}
-		if cmd.Flags().Lookup("file-system-name") == nil {
-			t.Fatalf("%s does not expose --file-system-name", path)
+		if cmd.Flags().Lookup("file-system-id") == nil {
+			t.Fatalf("%s does not expose --file-system-id", path)
+		}
+		if cmd.Flags().Lookup("file-system-name") != nil {
+			t.Fatalf("%s still exposes removed --file-system-name", path)
 		}
 	})
 }
@@ -863,6 +867,7 @@ func TestFSRemoteCommandsExposeTokenFlag(t *testing.T) {
 		"ti fs create-file-system":   true,
 		"ti fs list-file-systems":    true,
 		"ti fs describe-file-system": true,
+		"ti fs delete-file-system":   true,
 		"ti fs drain-file-system":    true,
 		"ti fs unmount-file-system":  true,
 		"ti fs-vault unmount-vault":  true,
@@ -896,7 +901,7 @@ func TestFSRegistryDryRunDoesNotMigrateLegacyState(t *testing.T) {
 	}, store.CredentialsProfile{TiDBCloudPublicKey: "public", TiDBCloudPrivateKey: "private", FSAPIKey: "key-1"}); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err := executeForTest("fs", "copy-file", "--file-system-name", "workspace", "--from-remote", "/source", "--to-remote", "/target", "--dry-run")
+	_, _, err := executeForTest("fs", "copy-file", "--file-system-id", "tenant-1", "--from-remote", "/source", "--to-remote", "/target", "--dry-run")
 	if err != nil {
 		t.Fatalf("dry-run failed: %v", err)
 	}

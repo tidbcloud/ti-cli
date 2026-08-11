@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -72,7 +73,8 @@ func TestHelpAndVersion(t *testing.T) {
 
 	deleteFileSystem := runTI(t, bin, "fs", "delete-file-system", "help")
 	deleteFileSystem.wantExitCode(0)
-	deleteFileSystem.wantStdoutContains("--file-system-name")
+	deleteFileSystem.wantStdoutContains("--file-system-id")
+	deleteFileSystem.wantStdoutNotContains("--file-system-name")
 	deleteFileSystem.wantStdoutNotContains("--confirm-file-system-name")
 
 	createDBCluster := runTI(t, bin, "db", "create-db-cluster", "help")
@@ -152,7 +154,7 @@ func TestErrorsAreRenderedAtCLIBoundary(t *testing.T) {
 	unknown.wantExitCode(2)
 	unknown.wantStderrContains(`ti [ERROR]: unknown command "missing-command" for "ti db"`)
 
-	removedConfirmation := runTI(t, bin, "fs", "delete-file-system", "--file-system-name", "workspace", "--confirm-file-system-name", "workspace")
+	removedConfirmation := runTI(t, bin, "fs", "delete-file-system", "--file-system-id", "tenant-workspace", "--confirm-file-system-name", "workspace")
 	removedConfirmation.wantExitCode(2)
 	removedConfirmation.wantStderrContains(`unknown flag: --confirm-file-system-name`)
 
@@ -619,7 +621,7 @@ func TestConfigureNonInteractiveFromEnvironment(t *testing.T) {
 	}
 }
 
-func TestFSResourceRegistrySelectionAcrossCommandFamilies(t *testing.T) {
+func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake companion build path is covered by unit tests on Windows")
 	}
@@ -632,6 +634,7 @@ func TestFSResourceRegistrySelectionAcrossCommandFamilies(t *testing.T) {
 		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
 	}
 	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
+	statePath := filepath.Join(t.TempDir(), "state.json")
 	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":"https://fs-east.test","cloud_provider":"aws","tidb_region":"us-east-1"},{"region_code":"aws-us-west-2","mode":"tidb_cloud_native","server_url":"https://fs-west.test","cloud_provider":"aws","tidb_region":"us-west-2"}]}`)
 	}))
@@ -640,6 +643,7 @@ func TestFSResourceRegistrySelectionAcrossCommandFamilies(t *testing.T) {
 		"HOME=" + home,
 		"TI_DRIVE9_BIN=" + companion,
 		"FAKE_DRIVE9_RECORD=" + recordPath,
+		"FAKE_DRIVE9_STATE=" + statePath,
 		"TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
 	}
@@ -652,34 +656,38 @@ func TestFSResourceRegistrySelectionAcrossCommandFamilies(t *testing.T) {
 	configured.wantExitCode(0)
 	missingWithZeroResources := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
 	missingWithZeroResources.wantExitCode(2)
-	missingWithZeroResources.wantStderrContains("file system name is required; pass --file-system-name or set TI_FS_FILE_SYSTEM_NAME")
+	missingWithZeroResources.wantStderrContains("file system ID is required")
 
-	createWorkspace := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-file-system", "--file-system-name", "workspace", "--wait")
+	createWorkspace := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-file-system", "--wait")
 	createWorkspace.wantExitCode(0)
 	createWorkspace.wantStdoutContains(`"status": "ready"`)
 	createWorkspace.wantStdoutContains(`"credentials_stored": true`)
-	createWorkspace.wantStdoutContains(`"fs_token": "key-workspace"`)
+	createWorkspace.wantStdoutContains(`"file_system_id": "tenant-aws-us-east-1"`)
 	missingWithOneResource := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
 	missingWithOneResource.wantExitCode(2)
-	missingWithOneResource.wantStderrContains("file system name is required; pass --file-system-name or set TI_FS_FILE_SYSTEM_NAME")
-	createScratch := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "create-file-system", "--file-system-name", "scratch", "--wait")
+	missingWithOneResource.wantStderrContains("file system ID is required")
+	createScratch := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "create-file-system", "--wait")
 	createScratch.wantExitCode(0)
 	createScratch.wantStdoutContains(`"status": "ready"`)
 	createScratch.wantStdoutContains(`"credentials_stored": true`)
 
 	list := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-file-systems")
 	list.wantExitCode(0)
-	list.wantStdoutContains(`"file_system_name": "workspace"`)
-	list.wantStdoutContains(`"file_system_name": "scratch"`)
-	list.wantStdoutNotContains("key-workspace")
-	list.wantStdoutNotContains("key-scratch")
+	list.wantStdoutContains(`"file_system_id": "tenant-aws-us-east-1"`)
+	list.wantStdoutNotContains(`"file_system_id": "tenant-aws-us-west-2"`)
+	list.wantStdoutContains(`"has_local_token": true`)
+	list.wantStdoutNotContains("drive9_")
 	list.wantStdoutNotContains("default_file_system_name")
 	list.wantStdoutNotContains("is_default")
-	describe := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "describe-file-system", "--file-system-name", "scratch")
+	westList := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "list-file-systems")
+	westList.wantExitCode(0)
+	westList.wantStdoutContains(`"file_system_id": "tenant-aws-us-west-2"`)
+	westList.wantStdoutNotContains(`"file_system_id": "tenant-aws-us-east-1"`)
+	describe := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "describe-file-system", "--file-system-id", "tenant-aws-us-west-2")
 	describe.wantExitCode(0)
-	describe.wantStdoutContains(`"tenant_id": "tenant-scratch"`)
+	describe.wantStdoutContains(`"file_system_id": "tenant-aws-us-west-2"`)
 	describe.wantStdoutContains(`"region_code": "aws-us-west-2"`)
-	describe.wantStdoutNotContains("key-scratch")
+	describe.wantStdoutNotContains("drive9_")
 	callsBeforeMissingSelectorCommands := len(readFakeDrive9Calls(t, recordPath))
 	for _, args := range [][]string{
 		{"fs", "list-files", "--path", "/"},
@@ -689,51 +697,51 @@ func TestFSResourceRegistrySelectionAcrossCommandFamilies(t *testing.T) {
 	} {
 		missing := runTIWithInput(t, bin, "", baseEnv, append([]string{"--profile", "stage"}, args...)...)
 		missing.wantExitCode(2)
-		missing.wantStderrContains("file system name is required; pass --file-system-name or set TI_FS_FILE_SYSTEM_NAME")
+		missing.wantStderrContains("file system ID is required")
 	}
 	if calls := readFakeDrive9Calls(t, recordPath); len(calls) != callsBeforeMissingSelectorCommands {
 		t.Fatalf("missing resource selection must fail before invoking Drive9: calls before=%d after=%d", callsBeforeMissingSelectorCommands, len(calls))
 	}
 	missingDryRun := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-directory", "--path", "/tmp", "--dry-run")
 	missingDryRun.wantExitCode(2)
-	missingDryRun.wantStderrContains("file system name is required; pass --file-system-name or set TI_FS_FILE_SYSTEM_NAME")
+	missingDryRun.wantStderrContains("file system ID is required")
 
-	dataPlane := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--file-system-name", "scratch", "--path", "/")
+	dataPlane := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--file-system-id", "tenant-aws-us-west-2", "--path", "/")
 	dataPlane.wantExitCode(0)
-	vault := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_FILE_SYSTEM_NAME=workspace"), "--profile", "stage", "fs-vault", "list-secrets")
+	vault := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_FILE_SYSTEM_ID=tenant-aws-us-east-1"), "--profile", "stage", "fs-vault", "list-secrets")
 	vault.wantExitCode(0)
-	journal := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_FILE_SYSTEM_NAME=workspace"), "--profile", "stage", "fs-journal", "create-journal", "--file-system-name", "scratch", "--journal-id", "jrn-e2e")
+	journal := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs-journal", "create-journal", "--file-system-id", "tenant-aws-us-west-2", "--journal-id", "jrn-e2e")
 	journal.wantExitCode(0)
-	git := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs-git", "hydrate-git-workspace", "--file-system-name", "scratch", "--target-path", filepath.Join(home, "workspace"))
+	git := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs-git", "hydrate-git-workspace", "--file-system-id", "tenant-aws-us-west-2", "--target-path", filepath.Join(home, "workspace"))
 	git.wantExitCode(0)
-	mount := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "mount-file-system", "--file-system-name", "scratch", "--mount-path", filepath.Join(home, "mount"), "--foreground")
+	mount := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "mount-file-system", "--file-system-id", "tenant-aws-us-west-2", "--mount-path", filepath.Join(home, "mount"), "--foreground")
 	mount.wantExitCode(0)
 
 	calls := readFakeDrive9Calls(t, recordPath)
-	assertFakeDrive9Call(t, calls, []string{"create", "--json", "--name", "workspace"}, "", home, "stage", "workspace", "https://fs-east.test", "aws-us-east-1")
-	assertFakeDrive9Call(t, calls, []string{"create", "--json", "--name", "scratch"}, "", home, "stage", "scratch", "https://fs-west.test", "aws-us-west-2")
-	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, "key-scratch", home, "stage", "scratch", "https://fs-west.test", "aws-us-west-2")
-	assertFakeDrive9Call(t, calls, []string{"vault", "ls"}, "key-workspace", home, "stage", "workspace", "https://fs-east.test", "aws-us-east-1")
-	assertFakeDrive9Call(t, calls, []string{"journal", "new"}, "key-scratch", home, "stage", "scratch", "https://fs-west.test", "aws-us-west-2")
-	assertFakeDrive9Call(t, calls, []string{"git", "hydrate"}, "key-scratch", home, "stage", "scratch", "https://fs-west.test", "aws-us-west-2")
-	assertFakeDrive9Call(t, calls, []string{"mount"}, "key-scratch", home, "stage", "scratch", "https://fs-west.test", "aws-us-west-2")
+	assertFakeDrive9TransientCall(t, calls, []string{"create"}, "", home, "https://fs-east.test", "aws-us-east-1")
+	assertFakeDrive9Call(t, calls, []string{"admin", "tenant", "list"}, "", home, "stage", "_control-plane", "https://fs-east.test", "aws-us-east-1")
+	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, drive9TestToken("tenant-aws-us-west-2"), home, "stage", "tenant-aws-us-west-2", "https://fs-west.test", "aws-us-west-2")
+	assertFakeDrive9Call(t, calls, []string{"vault", "ls"}, drive9TestToken("tenant-aws-us-east-1"), home, "stage", "tenant-aws-us-east-1", "https://fs-east.test", "aws-us-east-1")
 
-	deleteScratch := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "delete-file-system", "--file-system-name", "scratch")
+	deleteScratch := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-file-system", "--file-system-id", "tenant-aws-us-west-2")
 	deleteScratch.wantExitCode(0)
 	deleteScratch.wantStdoutContains(`"status": "deleting"`)
 	afterDelete := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-file-systems")
 	afterDelete.wantExitCode(0)
-	afterDelete.wantStdoutContains(`"file_system_name": "workspace"`)
-	afterDelete.wantStdoutNotContains(`"file_system_name": "scratch"`)
+	afterDelete.wantStdoutContains(`"file_system_id": "tenant-aws-us-east-1"`)
+	afterDelete.wantStdoutNotContains(`"file_system_id": "tenant-aws-us-west-2"`)
+	westAfterDelete := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "list-file-systems")
+	westAfterDelete.wantExitCode(0)
+	westAfterDelete.wantStdoutNotContains(`"file_system_id": "tenant-aws-us-west-2"`)
 	stillMissingAfterDelete := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
 	stillMissingAfterDelete.wantExitCode(2)
-	stillMissingAfterDelete.wantStderrContains("file system name is required; pass --file-system-name or set TI_FS_FILE_SYSTEM_NAME")
-	assertFakeDrive9Call(t, readFakeDrive9Calls(t, recordPath), []string{"delete", "--json", "--yes"}, "key-scratch", home, "stage", "scratch", "https://fs-west.test", "aws-us-west-2")
+	stillMissingAfterDelete.wantStderrContains("file system ID is required")
+	assertFakeDrive9Call(t, readFakeDrive9Calls(t, recordPath), []string{"admin", "tenant", "delete"}, "", home, "stage", "_control-plane", "https://fs-west.test", "aws-us-west-2")
 
 	for _, args := range [][]string{
 		{"--profile", "stage", "fs", "set-default-file-system"},
 		{"--profile", "stage", "fs", "unset-default-file-system"},
-		{"--profile", "stage", "fs", "create-file-system", "--file-system-name", "removed-flag", "--set-default"},
+		{"--profile", "stage", "fs", "create-file-system", "--set-default"},
 	} {
 		removed := runTIWithInput(t, bin, "", baseEnv, args...)
 		removed.wantExitCode(2)
@@ -766,15 +774,14 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
 	}
 	authEnv := append(append([]string{}, baseEnv...),
-		"TI_FS_FILE_SYSTEM_NAME=workspace",
-		"TI_FS_TOKEN=configuration-free-token",
-		"TI_REGION_CODE=aws-us-east-1",
-		"TIDB_CLOUD_PUBLIC_KEY=must-not-reach-data-plane",
+		"TDC_FS_TOKEN="+drive9TestToken("tenant-sandbox"),
+		"TDC_REGION_CODE=aws-us-east-1",
+		"TDC_PUBLIC_KEY=must-not-reach-data-plane",
 	)
 
-	localList := runTIWithInput(t, bin, "", baseEnv, "fs", "list-file-systems")
-	localList.wantExitCode(0)
-	localList.wantStdoutContains(`"file_systems": []`)
+	remoteList := runTIWithInput(t, bin, "", baseEnv, "fs", "list-file-systems")
+	remoteList.wantExitCode(2)
+	remoteList.wantStderrContains("profile \"default\" not found")
 
 	for _, args := range [][]string{
 		{"fs", "check-file-system"},
@@ -790,16 +797,14 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 	flagsOnly := runTIWithInput(t, bin, "", baseEnv,
 		"--region", "aws-us-east-1",
 		"fs", "list-files",
-		"--file-system-name", "workspace",
-		"--fs-token", "flag-token",
+		"--fs-token", drive9TestToken("tenant-flag"),
 		"--path", "/",
 	)
 	flagsOnly.wantExitCode(0)
 
-	mixed := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_TOKEN=mixed-token"),
+	mixed := runTIWithInput(t, bin, "", append(baseEnv, "TDC_FS_TOKEN="+drive9TestToken("tenant-mixed")),
 		"--region", "aws-us-east-1",
 		"fs", "list-files",
-		"--file-system-name", "workspace",
 		"--path", "/",
 	)
 	mixed.wantExitCode(0)
@@ -822,9 +827,10 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 	unmount.wantExitCode(0)
 
 	for _, path := range []string{
-		filepath.Join(home, ".ti", "config"),
-		filepath.Join(home, ".ti", "credentials"),
-		filepath.Join(home, ".ti", "fs_resources"),
+		filepath.Join(home, ".tdc", "config"),
+		filepath.Join(home, ".tdc", "credentials"),
+		filepath.Join(home, ".tdc", "fs_resources"),
+		filepath.Join(home, ".tdc", "fs_credentials"),
 	} {
 		if _, err := os.Stat(path); !os.IsNotExist(err) {
 			t.Fatalf("configuration-free command persisted ti configuration at %s: %v", path, err)
@@ -834,7 +840,7 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read configuration-free operation log: %v", err)
 	}
-	for _, secret := range []string{"configuration-free-token", "flag-token", "mixed-token", "must-not-reach-data-plane"} {
+	for _, secret := range []string{drive9TestToken("tenant-sandbox"), drive9TestToken("tenant-flag"), drive9TestToken("tenant-mixed"), "must-not-reach-data-plane"} {
 		if strings.Contains(string(logData), secret) {
 			t.Fatalf("configuration-free operation log leaked a credential")
 		}
@@ -848,9 +854,94 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 			t.Fatalf("data-plane companion inherited TiDB Cloud or raw ti secrets: %#v", call)
 		}
 	}
-	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, "configuration-free-token", home, "default", "workspace", "https://fs-east.test", "aws-us-east-1")
-	assertFakeDrive9Call(t, calls, []string{"mount", "drain"}, "", home, "default", "workspace", "https://fs-east.test", "aws-us-east-1")
-	assertFakeDrive9Call(t, calls, []string{"umount"}, "", home, "default", "workspace", "https://fs-east.test", "aws-us-east-1")
+	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, drive9TestToken("tenant-sandbox"), home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
+	assertFakeDrive9Call(t, calls, []string{"mount", "drain"}, "", home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
+	assertFakeDrive9Call(t, calls, []string{"umount"}, "", home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
+}
+
+func TestFSImportFileSystemToken(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX token-file permission checks are not available on Windows")
+	}
+	bin := tiBinary(t)
+	home := t.TempDir()
+	companion := filepath.Join(t.TempDir(), "tdc-drive9")
+	build := exec.Command("go", "build", "-o", companion, "./testdata/fake-drive9.go")
+	build.Dir = "."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
+	}
+	token := drive9TestToken("tenant-imported")
+	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":"https://fs.test","cloud_provider":"aws","tidb_region":"us-east-1"}]}`)
+	}))
+	defer manifestServer.Close()
+	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
+	baseEnv := []string{
+		"HOME=" + home,
+		"TI_DRIVE9_BIN=" + companion,
+		"FAKE_DRIVE9_RECORD=" + recordPath,
+		"FAKE_DRIVE9_EXPECT_API_KEY=" + token,
+		"TI_ALLOW_TEST_ENDPOINTS=1",
+		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+	}
+	tokenPath := filepath.Join(t.TempDir(), "fs-token")
+	if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	dryHome := t.TempDir()
+	dryRun := runTIWithInput(t, bin, "", append(append([]string{}, baseEnv...), "HOME="+dryHome),
+		"--region", "aws-us-east-1", "fs", "import-file-system-token", "--from-file", tokenPath, "--dry-run")
+	dryRun.wantExitCode(0)
+	if _, err := fscred.GetCredential(dryHome, "default", "tenant-imported"); err == nil {
+		t.Fatal("dry-run persisted imported credentials")
+	}
+
+	imported := runTIWithInput(t, bin, "", baseEnv,
+		"--region", "aws-us-east-1", "fs", "import-file-system-token", "--from-file", tokenPath)
+	imported.wantExitCode(0)
+	imported.wantStdoutContains(`"file_system_id": "tenant-imported"`)
+	imported.wantStdoutNotContains(token)
+	credential, err := fscred.GetCredential(home, "default", "tenant-imported")
+	if err != nil || credential.APIKey != token || credential.RegionCode != "aws-us-east-1" {
+		t.Fatalf("imported credential=%#v err=%v", credential, err)
+	}
+
+	useStored := runTIWithInput(t, bin, "", baseEnv,
+		"fs", "list-files", "--file-system-id", "tenant-imported", "--path", "/")
+	useStored.wantExitCode(0)
+	calls := readFakeDrive9Calls(t, recordPath)
+	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, token, home, "default", "tenant-imported", "https://fs.test", "aws-us-east-1")
+
+	multipleSources := runTIWithInput(t, bin, "", append(baseEnv, "TDC_FS_TOKEN="+token),
+		"--region", "aws-us-east-1", "fs", "import-file-system-token", "--from-file", tokenPath)
+	multipleSources.wantExitCode(2)
+	multipleSources.wantStderrContains("provide exactly one")
+
+	insecurePath := filepath.Join(t.TempDir(), "insecure-token")
+	if err := os.WriteFile(insecurePath, []byte(token), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	insecure := runTIWithInput(t, bin, "", baseEnv,
+		"--region", "aws-us-east-1", "fs", "import-file-system-token", "--from-file", insecurePath)
+	insecure.wantExitCode(2)
+	insecure.wantStderrContains("mode 0600 or stricter")
+
+	stdinHome := t.TempDir()
+	stdinImport := runTIWithInput(t, bin, token+"\n", append(append([]string{}, baseEnv...), "HOME="+stdinHome),
+		"--region", "aws-us-east-1", "fs", "import-file-system-token", "--from-file", "-")
+	stdinImport.wantExitCode(0)
+	if _, err := fscred.GetCredential(stdinHome, "default", "tenant-imported"); err != nil {
+		t.Fatalf("stdin import did not store credentials: %v", err)
+	}
+}
+
+func drive9TestToken(fileSystemID string) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload, _ := json.Marshal(map[string]string{"tenant_id": fileSystemID})
+	jwt := header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+	return "drive9_" + base64.RawURLEncoding.EncodeToString([]byte(jwt))
 }
 
 type fakeDrive9Call struct {
@@ -905,6 +996,36 @@ func assertFakeDrive9Call(t *testing.T, calls []fakeDrive9Call, prefix []string,
 		}
 		if call.APIKey != apiKey || call.Home != wantHome || call.Server != server || call.RegionCode != regionCode {
 			t.Fatalf("unexpected fake Drive9 environment for %v: %#v, want api_key=%q home=%q server=%q region=%q", prefix, call, apiKey, wantHome, server, regionCode)
+		}
+		return
+	}
+	t.Fatalf("missing fake Drive9 call with prefix %v in %#v", prefix, calls)
+}
+
+func assertFakeDrive9TransientCall(t *testing.T, calls []fakeDrive9Call, prefix []string, apiKey, persistentHome, server, regionCode string) {
+	t.Helper()
+	for _, call := range calls {
+		if len(call.Args) < len(prefix) {
+			continue
+		}
+		matches := true
+		for i := range prefix {
+			if call.Args[i] != prefix[i] {
+				matches = false
+				break
+			}
+		}
+		if !matches {
+			continue
+		}
+		if call.APIKey != apiKey || call.Server != server || call.RegionCode != regionCode {
+			t.Fatalf("unexpected fake Drive9 environment for %v: %#v", prefix, call)
+		}
+		if call.Home == "" || strings.HasPrefix(call.Home, filepath.Join(persistentHome, ".tdc")) {
+			t.Fatalf("fake Drive9 call %v used persistent HOME %q", prefix, call.Home)
+		}
+		if _, err := os.Stat(call.Home); !os.IsNotExist(err) {
+			t.Fatalf("transient Drive9 HOME still exists: %q, err=%v", call.Home, err)
 		}
 		return
 	}
@@ -1194,15 +1315,14 @@ func runTIUsingLoggingSettings(t *testing.T, bin string, env []string, args ...s
 
 func runTIProcess(t *testing.T, bin, stdin string, env []string, disableLoggingByDefault bool, args ...string) commandResult {
 	t.Helper()
-	if os.Getenv("TI_LIVE") != "1" && !envContains(env, "HOME") {
-		env = append(env, "HOME="+t.TempDir())
-	}
-	if os.Getenv("TI_LIVE") == "1" && hasLiveFSCommandFamily(args) && !envContains(env, "TI_FS_FILE_SYSTEM_NAME") {
-		name := strings.TrimSpace(os.Getenv("TI_LIVE_FS_NAME"))
-		if name == "" {
-			name = "workspace"
+	if os.Getenv("TI_LIVE") == "1" && hasLiveFSCommandFamily(args) && !envContains(env, "TI_FS_FILE_SYSTEM_ID") && !envContains(env, "TI_FS_TOKEN") && !envContains(env, "TDC_FS_TOKEN") {
+		fileSystemID := strings.TrimSpace(os.Getenv("TI_LIVE_FS_ID"))
+		if fileSystemID == "" {
+			fileSystemID = liveFSSelectedID
 		}
-		env = append(env, "TI_FS_FILE_SYSTEM_NAME="+name)
+		if fileSystemID != "" {
+			env = append(env, "TI_FS_FILE_SYSTEM_ID="+fileSystemID)
+		}
 	}
 
 	cmd := exec.Command(bin, args...)

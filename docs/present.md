@@ -147,54 +147,53 @@ SQL 默认通过 HTTPS SQL API 执行，一次命令只执行一个 statement。
 
 ## 4. 创建并管理 Filesystem
 
-创建名为 `ti-demo-workspace` 的资源。一个 profile 可以注册多个 Filesystem；每个资源都必须通过名称显式选择：
+创建一个由服务端分配稳定 ID 的资源。远端 inventory 是资源状态的权威来源，本地只保存按 ID 索引的访问凭证：
 
 ```bash
-bin/ti fs create-file-system \
-  --file-system-name ti-demo-workspace \
-  --dry-run
+bin/ti fs create-file-system --dry-run
 
-bin/ti fs create-file-system \
-  --file-system-name ti-demo-workspace \
-  --wait
+export FILE_SYSTEM_ID="$(bin/ti fs create-file-system \
+  --wait \
+  --query file_system_id \
+  --output text)"
 
 bin/ti fs list-file-systems --output text
 bin/ti fs describe-file-system \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --output text
 
 bin/ti fs check-file-system \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --output text
 ```
 
-创建命令的 JSON 结果包含一次性的 `fs_token`。它是资源 owner credential，不能写入日志或公开传递。资源元数据和凭证分别存储在 `~/.ti/fs_resources/<profile-key>/<resource-key>/` 下，不写入主 `~/.ti/credentials`。
+创建命令的 JSON 结果包含一次性的 `fs_token`。它是资源 owner credential，不能写入日志或公开传递。凭证存储在 `~/.ti/fs_credentials/<profile-key>/<file-system-id-key>/credentials`，不写入主 `~/.ti/credentials`。
 
 ## 5. 使用 Data Plane 操作文件
 
 ```bash
 bin/ti fs create-directory \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --path /demo
 
 printf 'hello from data plane\n' | bin/ti fs copy-file \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --from-stdin \
   --to-remote /demo/from-data-plane.txt \
   --tag source=data-plane \
   --description "created through ti fs data plane"
 
 bin/ti fs list-files \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --path /demo \
   --output text
 
 bin/ti fs read-file \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --path /demo/from-data-plane.txt
 
 bin/ti fs describe-file \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --path /demo/from-data-plane.txt \
   --output text
 ```
@@ -202,8 +201,8 @@ bin/ti fs describe-file \
 Unix-style alias 只缩短命令名，flags 仍使用完整名称：
 
 ```bash
-bin/ti fs ls --file-system-name ti-demo-workspace --path /demo --output text
-bin/ti fs cat --file-system-name ti-demo-workspace --path /demo/from-data-plane.txt
+bin/ti fs ls --file-system-id "$FILE_SYSTEM_ID" --path /demo --output text
+bin/ti fs cat --file-system-id "$FILE_SYSTEM_ID" --path /demo/from-data-plane.txt
 ```
 
 ## 6. 挂载并验证双向可见性
@@ -213,7 +212,7 @@ export MOUNT_PATH="/tmp/ti-demo-${DEMO_ID}"
 mkdir -p "$MOUNT_PATH"
 
 bin/ti fs mount-file-system \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --mount-path "$MOUNT_PATH"
 ```
 
@@ -231,7 +230,7 @@ cat "$MOUNT_PATH/demo/from-data-plane.txt"
 printf 'hello from mount\n' > "$MOUNT_PATH/demo/from-mount.txt"
 
 bin/ti fs read-file \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --path /demo/from-mount.txt
 ```
 
@@ -249,14 +248,14 @@ bin/ti fs drain-file-system --mount-path "$MOUNT_PATH"
 mkdir -p "$MOUNT_PATH/repos"
 
 bin/ti fs-git clone-git-workspace \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --repo-url https://github.com/octocat/Hello-World.git \
   --target-path "$MOUNT_PATH/repos/hello" \
   --blobless \
   --hydrate background
 
 bin/ti fs-git hydrate-git-workspace \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --target-path "$MOUNT_PATH/repos/hello"
 
 git -C "$MOUNT_PATH/repos/hello" status --short
@@ -266,7 +265,7 @@ git -C "$MOUNT_PATH/repos/hello" status --short
 
 ```bash
 bin/ti fs-git add-git-worktree \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --base-path "$MOUNT_PATH/repos/hello" \
   --worktree-path "$MOUNT_PATH/repos/hello-feature" \
   --branch-name demo-feature
@@ -274,7 +273,7 @@ bin/ti fs-git add-git-worktree \
 git -C "$MOUNT_PATH/repos/hello-feature" status --short
 
 bin/ti fs-git remove-git-worktree \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --worktree-path "$MOUNT_PATH/repos/hello-feature" \
   --force
 ```
@@ -287,7 +286,7 @@ bin/ti fs-git remove-git-worktree \
 export JOURNAL_ID="jrn-demo-${DEMO_ID}"
 
 bin/ti fs-journal create-journal \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --journal-id "$JOURNAL_ID" \
   --journal-kind agent \
   --title "ti demo ${DEMO_ID}" \
@@ -295,23 +294,23 @@ bin/ti fs-journal create-journal \
   --label demo=present
 
 bin/ti fs-journal append-journal-entries \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --journal-id "$JOURNAL_ID" \
   --entry-json '{"type":"demo.started"}' \
   --entry-json '{"type":"demo.completed"}'
 
 bin/ti fs-journal read-journal-entries \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --journal-id "$JOURNAL_ID" \
   --output text
 
 bin/ti fs-journal search-journal-entries \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --entry-type demo.completed \
   --include-entries
 
 bin/ti fs-journal verify-journal \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --journal-id "$JOURNAL_ID" \
   --output text
 ```
@@ -324,13 +323,13 @@ Journal 是 append-only、可验证的 workflow ledger，不是普通文本日�
 printf 'demo-token\n' > /tmp/ti-demo-token.txt
 
 bin/ti fs-vault create-secret \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --secret-name demo-service \
   --field ENDPOINT=https://example.invalid \
   --field API_TOKEN=@/tmp/ti-demo-token.txt
 
 bin/ti fs-vault read-secret \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --secret-name demo-service \
   --field ENDPOINT \
   --format raw
@@ -340,7 +339,7 @@ bin/ti fs-vault read-secret \
 
 ```bash
 export TI_VAULT_TOKEN="$(bin/ti fs-vault create-grant \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --agent-id demo-agent \
   --scope demo-service/ENDPOINT \
   --permission read \
@@ -348,14 +347,14 @@ export TI_VAULT_TOKEN="$(bin/ti fs-vault create-grant \
   --token-only)"
 
 bin/ti fs-vault read-secret \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --secret-name demo-service \
   --field ENDPOINT \
   --format raw \
   --vault-token "$TI_VAULT_TOKEN"
 
 bin/ti fs-vault list-audit-events \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --secret-name demo-service \
   --limit 20 \
   --output text
@@ -377,17 +376,17 @@ rm -rf "$MOUNT_PATH"
 
 ```bash
 bin/ti fs-vault delete-secret \
-  --file-system-name ti-demo-workspace \
+  --file-system-id "$FILE_SYSTEM_ID" \
   --secret-name demo-service
 
 rm -f /tmp/ti-demo-token.txt
 ```
 
-删除 Filesystem 资源及其本地 registry entry：
+删除 Filesystem 资源及其本地 credential entry：
 
 ```bash
 bin/ti fs delete-file-system \
-  --file-system-name ti-demo-workspace
+  --file-system-id "$FILE_SYSTEM_ID"
 ```
 
 删除演示 cluster：

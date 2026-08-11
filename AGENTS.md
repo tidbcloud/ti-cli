@@ -92,6 +92,7 @@ Implemented:
 - `ti db format-db-connection-string`
 - `ti db execute-sql-statement`
 - `ti fs create-file-system`
+- `ti fs import-file-system-token`
 - `ti fs delete-file-system`
 - `ti fs list-file-systems`
 - `ti fs describe-file-system`
@@ -141,7 +142,9 @@ Implemented:
 - structured JSON/text rendering and JMESPath `--query`
 - `--dry-run` on mutating control-plane commands
 - TiDB Cloud Digest-auth API client foundation and auth/authz error mapping
-- profile-scoped 1:N ti fs resource registry with per-resource credentials
+- region-scoped remote ti fs inventory, profile-scoped ID-keyed credentials,
+  and legacy credential migration from
+  `docs/spec/done/0028-remote-fs-resource-inventory.md`
 - ti fs/fs-git/fs-journal/fs-vault commands routed through the bundled
   `ti-drive9` companion, with ti-owned profile loading, credential storage,
   region resolution, and output/error handling
@@ -157,6 +160,12 @@ There are no registered placeholder commands at the current stage. Implemented
 mutating commands support `--dry-run` where their command contract declares
 dry-run support.
 
+The completed remote ti fs inventory implementation and its verified regional
+rollout status are recorded in
+`docs/spec/done/0028-remote-fs-resource-inventory.md`. Future Drive9 region
+publication and cleanup of historical backend tenant bindings are external
+deployment work and do not reopen the ti client spec.
+
 ## Reference Code
 
 - `ref/tidbcloud-cli/` is the previous TiDB Cloud CLI implementation. Use it as
@@ -165,10 +174,11 @@ dry-run support.
 - `ref/drive9/` is the filesystem reference implementation. Use it as context
   for filesystem commands, mount behavior, and data-plane semantics. In ti
   user-facing output, this domain is always called `ti fs`.
+- `ref/fs/` is the TiDB Filesystem server deployed for the Drive9-backed TiDB
+  Cloud Filesystem service. Use it to verify server routes, TiDB Cloud IAM and
+  billing authorization, tenant inventory and lifecycle behavior, quotas, and
+  data-plane contracts. It is server reference code, not a ti dependency.
 - `ref/serverless-js/` is a reference for the HTTPS SQL API call shape.
-- `ref/fs/` is the TiDB Cloud deployment wrapper around Drive9. Use it only to
-  understand the hosted filesystem API and authorization boundary.
-
 Reference directories are not product source for ti. They exist only to give
 agents context and implementation examples. In main project code, behave as if
 `ref/` does not exist:
@@ -253,17 +263,12 @@ vault grant reads, vault mount read on macOS/Linux hosts when available,
 journal create/append/read/search/verify, public Git clone/hydrate/worktree
 flows, mount and drain through the companion runtime, and explicit WebDAV
 fallback when the platform supports it.
-If the live profile has no registry resource named by `TI_LIVE_FS_NAME` or
-`workspace`, the suite creates that temporary ti fs resource, stores its
-metadata and API key in the profile-scoped resource registry, and deletes only
-that auto-created resource before the DB lifecycle needs the Starter slot, or
-when the test process exits if execution stops earlier.
-The live suite also attempts a separate 1:N registry lifecycle with two unique
-`ti-e2e-fs-*` resources, covering create, list, default selection, explicit
-selection, isolated deletion, and cleanup. If the second resource is rejected
-specifically because Starter quota is full, complete the single-resource live
-flow and rely on `make e2e` for fake-companion multi-resource routing coverage.
-Never delete a pre-existing resource to make room for this test.
+If remote inventory has no resource with a local token, the suite creates one
+temporary ti fs resource, records the server-assigned ID, and deletes only
+that ID before the DB lifecycle needs the Starter slot or when the process
+exits. `TI_LIVE_FS_ID` may select a remotely visible resource that already has
+local credentials. Never delete a pre-existing resource to make room for a
+test. Fake-companion e2e covers multiple remote resources and ID routing.
 When a service command is implemented, add its real live verification to
 `make live-e2e`; do not leave the target at profile, smoke-test-only, or
 mock-only coverage.
@@ -317,7 +322,7 @@ internal/db/sqlsingle/      one-statement validation
 internal/db/validate/       DB flag and request validation helpers
 internal/dryrun/            shared dry-run result envelope
 internal/fs/                ti fs control-plane, data-plane, and mount use cases
-internal/fs/fscred/         profile-scoped ti fs registry, selection, and migration
+internal/fs/fscred/         ID-keyed ti fs credentials, selection, and legacy migration
 internal/fs/mountlocator/   non-secret Drive9 background mount routing state
 internal/oplog/             local JSONL operation log writer
 internal/output/            structured JSON/text/raw rendering
@@ -336,7 +341,7 @@ docs/priciples.md           product principles and MVP scope source of truth
 docs/spec/                  pending requirement specs
 docs/spec/done/             completed requirement specs
 docs/pingcap-docs/docs/     pingcap/docs English documentation submodule
-ref/                        read-only reference implementations
+ref/                        read-only client and server reference implementations
 ```
 
 Keep one package per directory. Package names should be short, lowercase, and
@@ -424,7 +429,7 @@ Follow these rules unless `docs/priciples.md` is updated:
   add command-specific `--version <value>` flags; use names such as
   `--target-version` when a command needs a version input.
 - `ti update --check` and `ti update` use GitHub Releases metadata and
-  must not read or mutate `~/.ti/` or inspect/migrate `~/.tdc/`.
+  must not read or mutate `~/.ti/` or inspect/migrate `~/.ti/`.
 - `ti update` may replace only ti-owned archive/script installs. It must
   refuse local, unknown, Homebrew, Scoop, Winget, or other package-manager
   installs with actionable guidance.
@@ -500,16 +505,16 @@ Implemented command behavior:
 - `ti db execute-sql-statement --db-cluster-id <cluster-id> --admin --sql "select 1"`
 - `ti db execute-sql-statement --db-cluster-id <cluster-id> --transport https --sql "select 1"`
 - `ti db execute-sql-statement --db-cluster-id <cluster-id> --transport mysql --sql "select 1"`
-- `ti fs create-file-system --file-system-name workspace`
-- `ti fs create-file-system --file-system-name workspace --wait`
-- `ti fs create-file-system --file-system-name workspace --dry-run`
-- `ti fs create-file-system --file-system-name scratch`
-- `ti fs delete-file-system --file-system-name workspace`
-- `ti fs delete-file-system --file-system-name workspace --dry-run`
+- `ti fs create-file-system`
+- `ti fs create-file-system --wait`
+- `ti fs create-file-system --dry-run`
+- `ti fs import-file-system-token --from-file ./fs-token`
+- `ti fs delete-file-system --file-system-id <file-system-id>`
+- `ti fs delete-file-system --file-system-id <file-system-id> --dry-run`
 - `ti fs list-file-systems`
-- `ti fs describe-file-system --file-system-name workspace`
+- `ti fs describe-file-system --file-system-id <file-system-id>`
 - `ti fs check-file-system`
-- `ti fs check-file-system --file-system-name workspace`
+- `ti fs check-file-system --file-system-id <file-system-id>`
 - `ti fs copy-file --from-local ./README.md --to-remote /workspace/README.md`
 - `ti fs copy-file --from-remote /workspace/README.md --to-local ./README.copy.md --create-parents`
 - `ti fs copy-file --from-remote /workspace/README.md --to-remote /workspace/README.copy.md`
@@ -549,13 +554,13 @@ Implemented command behavior:
 - `ti fs pack-file-system --local-root ~/.ti/local/fs/demo --remote-root /workspace --mount-profile portable`
 - `ti fs pack-file-system --mount-path ./workspace`
 - `ti fs unpack-file-system --local-root ~/.ti/local/fs/demo --remote-root /workspace --mount-profile portable`
-- `ti fs mount-file-system --file-system-name workspace --mount-path ./workspace`
-- `ti fs mount-file-system --file-system-name workspace --mount-path ./workspace --driver fuse`
-- `ti fs mount-file-system --file-system-name workspace --mount-path ./workspace --driver webdav`
-- `ti fs mount-file-system --file-system-name workspace --mount-path ./workspace --mount-profile coding-agent`
-- `ti fs mount-file-system --file-system-name workspace --mount-path ./workspace --mount-profile portable --pack-path /`
-- `ti fs mount-file-system --file-system-name workspace --mount-path ./workspace --driver fuse --read-cache-size-mb 256 --read-cache-max-file-mb 16`
-- `ti fs mount-file-system --file-system-name workspace --mount-path ./workspace --driver fuse --cache-dir ~/.ti/cache/workspace --write-back-cache=false`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver webdav`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile coding-agent`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile portable --pack-path /`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --read-cache-size-mb 256 --read-cache-max-file-mb 16`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --cache-dir ~/.ti/cache/workspace --write-back-cache=false`
 - `ti fs drain-file-system --mount-path ./workspace`
 - `ti fs drain-file-system --mount-path ./workspace --timeout 30s`
 - `ti fs unmount-file-system --mount-path ./workspace`
@@ -602,6 +607,7 @@ Registered command surface:
 - `ti db format-db-connection-string`
 - `ti db execute-sql-statement`
 - `ti fs create-file-system`
+- `ti fs import-file-system-token`
 - `ti fs delete-file-system`
 - `ti fs list-file-systems`
 - `ti fs describe-file-system`
@@ -746,32 +752,30 @@ tidb_cloud_private_key = "..."
 Starter cluster. If it is absent and `--project-id` is not provided, the create
 request omits the project label and TiDB Cloud selects the account default.
 
-One profile can own multiple ti fs resources. The main config stores neither a
-default resource name nor resource credentials.
+One profile can access multiple remotely inventoried ti fs resources. The main
+config stores neither a default resource nor resource credentials.
 
-Each resource stores metadata and credentials separately:
+New local credentials are keyed by the server-assigned file system ID:
 
 ```text
-~/.ti/fs_resources/<profile-key>/<resource-key>/config
-~/.ti/fs_resources/<profile-key>/<resource-key>/credentials
+~/.ti/fs_credentials/<profile-key>/<file-system-id-key>/credentials
 ```
 
-Resource config files contain `file_system_name`, `tenant_id`,
-`cloud_provider`, `region_code`, and `created_at`. Resource credentials files
-contain only `api_key`, use mode `0600`, and must never be written to the main
-`~/.ti/credentials` file. Profile and resource path segments are safely
-encoded; always use the stored `file_system_name` for user-facing output.
+Credential files contain `file_system_id`, canonical `region_code`, and
+`api_key`, use mode `0600`, and must never be written to the main
+`~/.ti/credentials` file. Profile and ID path segments are safely encoded.
+Remote Drive9 list/get is authoritative for inventory and status; local state
+only determines `has_local_token` and data-plane access.
 
 `ti fs create-file-system` returns the stored owner credential as `fs_token`;
 this is the only ordinary command result that may reveal it. Treat `fs_token`
 as a secret and never include it in logs, telemetry, debug output, errors,
 mount locators, non-secret config, or test diagnostics.
 
-Legacy flat `fs_resource_name`, `fs_tenant_id`, `fs_cloud_provider`,
-`fs_region_code`, and `fs_api_key` fields are migration input only. The first fs
-command migrates a complete legacy resource into the registry and clears the
-flat fields. Incomplete legacy state fails with
-`fs.resource_credentials_incomplete`.
+Legacy flat fields and name-keyed `~/.ti/fs_resources` entries are migration
+input only. The first FS command copies complete credentials into the ID-keyed
+store without deleting name-keyed source files or old companion homes.
+Incomplete or conflicting state fails closed.
 
 DB SQL user credentials live outside the main credentials file:
 
@@ -862,37 +866,37 @@ local profile namespace and must not cause ti to write local `[env]` sections.
 Generated ti fs state is always stored under the selected local profile:
 `--profile`, `TI_PROFILE`, or `default`.
 
-ti fs resource selection order is:
+ti fs data-plane resource selection order is:
 
-1. Explicit `--file-system-name`.
-2. `TI_FS_FILE_SYSTEM_NAME`.
-3. Otherwise fail with `fs.missing_file_system_name` before credential loading,
-   endpoint resolution, companion startup, or a remote request.
+1. Explicit `--file-system-id` or `TI_FS_FILE_SYSTEM_ID`.
+2. If an explicit `--fs-token` or `TI_FS_TOKEN` exists, derive the ID from its
+   structured token claim and require any separately supplied ID to match.
+3. Otherwise fail with `fs.missing_file_system_id` before endpoint resolution,
+   companion startup, or a remote request.
 
-Never infer a ti fs resource from profile state, registry cardinality,
-creation order, or deletion side effects. `TI_FS_FILE_SYSTEM_NAME` is an
-explicit process-scoped selector and must not be persisted.
+Never infer a ti fs resource from profile state, credential-store cardinality,
+creation order, or deletion side effects. `TI_FS_FILE_SYSTEM_ID` is an
+explicit process-scoped assertion and must not be persisted.
 
 Remote ti fs, fs-git, fs-journal, and owner fs-vault commands use this FS
 credential lookup order:
 
 1. Explicit command-local `--fs-token`.
 2. `TI_FS_TOKEN`.
-3. The selected resource's `api_key` in its resource-scoped credentials file.
+3. The selected ID's `api_key` in its ID-keyed credentials file.
 
 Those commands do not require TiDB Cloud public/private keys. A clean machine
-can use an existing resource with a file-system name, canonical region, and FS
-token supplied independently through flags or environment variables. Do not
+can use an existing resource with only a canonical region and FS token; the ID
+is derived in memory from the token. Do not
 persist ephemeral flag/environment credentials or create a synthetic `[env]`
-profile. `ti fs create-file-system` and `ti fs delete-file-system` remain
-TiDB Cloud-authenticated; deletion also requires the selected locally
-registered resource and its owner token.
+profile. `ti fs create-file-system`, remote list/describe, and
+`ti fs delete-file-system` remain TiDB Cloud-authenticated. Delete requires an
+ID but does not require a locally stored owner token.
 
-The selector is available on ti fs data-plane/runtime commands and all
-`fs-git`, `fs-journal`, and `fs-vault` subcommands. Creation, deletion, and
-description require an explicit resource name where their command contract
-declares it. Drain and unmount resolve an existing mount through its mount path
-and locator instead of selecting a resource again.
+The ID selector is available on ti fs data-plane/runtime commands and all
+`fs-git`, `fs-journal`, and `fs-vault` subcommands. Creation accepts no ID;
+description and deletion require an ID. Drain and unmount resolve an existing
+mount through its mount path and locator instead of selecting a resource again.
 
 When implementing command handlers, detect whether `--profile` was explicitly
 set before calling `config.Load`; the root flag has a default value, but that
@@ -954,8 +958,8 @@ create-db-sql-users` owns those credentials and must be idempotent: it
 creates or repairs the stable ti-managed read-only, read-write, and admin
 users for a cluster instead of creating a new group every time.
 
-Generated `ti fs` resource API keys live only in the per-resource credentials
-files under `~/.ti/fs_resources/`. User-facing docs and commands must call
+Generated `ti fs` resource API keys live only in the ID-keyed credentials
+files under `~/.ti/fs_credentials/`. User-facing docs and commands must call
 these `ti fs` API keys or resource credentials, never reference implementation
 API keys. Filesystem data-plane
 commands route through the installer-managed Drive9 companion binary named
@@ -1001,11 +1005,11 @@ mount consumption path.
 companion records a drain control socket. WebDAV mounts flush through normal
 file close semantics and should not be expected to support drain.
 
-When invoking the companion, resolve exactly one registry resource and build a
+When invoking a data-plane companion command, resolve exactly one file system ID and build a
 sanitized environment: `HOME` from that resource's scoped companion directory,
 `DRIVE9_SERVER` from its resolved endpoint, `DRIVE9_REGION_CODE` from its
 canonical resource region, `DRIVE9_API_KEY` from its per-resource credentials,
-and TiDB Cloud public/private keys only for provision/delete flows. Strip
+and TiDB Cloud public/private keys only for remote inventory/create/describe/delete flows. Strip
 inherited `DRIVE9_*` values so user shell state cannot override ti selection.
 Debug and error output must redact TiDB Cloud keys, ti fs API keys, vault tokens, SQL
 credentials, file contents, and secret values.
@@ -1106,8 +1110,8 @@ Current expectations:
   the focused `make live-e2e-<family>` targets or the aggregate
   `make live-e2e`. They must use the `live-e2e` profile and verify the real
   API/command surface for every implemented spec. Implemented mutating commands
-  must have real live mutation coverage with resource names scoped to the test
-  run and cleanup that only targets resources created by that run.
+  must have real live mutation coverage with resource IDs captured from create
+  responses and cleanup that only targets resources created by that run.
 
 Do not require live cloud credentials for ordinary `go test ./...`.
 

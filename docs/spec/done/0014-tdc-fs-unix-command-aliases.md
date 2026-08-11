@@ -1,5 +1,7 @@
 # tdc fs Unix Command Aliases
 
+> **Latest identity update:** aliases use the ID/token selection contract in `0028-remote-fs-resource-inventory.md`; `--file-system-name` is no longer available.
+
 ## Goal
 
 Add Unix-style aliases for common `tdc fs` file and mount operations while keeping the existing long, AWS-style command names as the canonical interface. The aliases make tdc easier for Linux and Drive9 users without changing flag names, output contracts, permissions, or implementation paths.

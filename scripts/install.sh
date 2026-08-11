@@ -314,11 +314,11 @@ print_next_steps() {
   printf "       ${DIM}\$${RESET} ti organization list-projects --output text\n"
   printf "\n"
   printf "    ${BOLD}4.${RESET} Create or check ti fs\n"
-  printf "       ${DIM}\$${RESET} ti fs create-file-system --file-system-name workspace\n"
+  printf "       ${DIM}\$${RESET} export TI_FS_FILE_SYSTEM_ID=\$(ti fs create-file-system --query file_system_id --output text)\n"
   printf "       ${DIM}\$${RESET} ti fs check-file-system --output text\n"
   printf "\n"
   printf "    ${BOLD}5.${RESET} Mount ti fs when FUSE is available\n"
-  printf "       ${DIM}\$${RESET} ti fs mount-file-system --file-system-name workspace --mount-path ./workspace\n"
+  printf "       ${DIM}\$${RESET} ti fs mount-file-system --file-system-id \"\$TI_FS_FILE_SYSTEM_ID\" --mount-path ./workspace\n"
   printf "\n"
   printf "  Docs: ${DIM}https://github.com/tidbcloud/ti-cli${RESET}\n"
 }

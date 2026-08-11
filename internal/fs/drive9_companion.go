@@ -42,8 +42,23 @@ type drive9CreateOutput struct {
 }
 
 type drive9DeleteOutput struct {
-	Status string `json:"status"`
-	Server string `json:"server,omitempty"`
+	TenantID string `json:"tenant_id,omitempty"`
+	Status   string `json:"status"`
+	Server   string `json:"server,omitempty"`
+}
+
+type drive9AdminTenant struct {
+	TenantID string `json:"tenant_id"`
+	Status   string `json:"status"`
+	Kind     string `json:"kind"`
+	Quota    any    `json:"quota,omitempty"`
+}
+
+type drive9AdminTenantListOutput struct {
+	Tenants  []drive9AdminTenant `json:"tenants"`
+	Page     int                 `json:"page"`
+	PageSize int                 `json:"page_size"`
+	NextPage int                 `json:"next_page,omitempty"`
 }
 
 type drive9StatMetadata struct {
@@ -151,7 +166,7 @@ func sleepDrive9Retry(ctx context.Context, attempt int) error {
 }
 
 func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSystemOptions) (FileSystemResult, error) {
-	_, name, _, err := s.createRequestAndEndpoint(opts, false)
+	_, _, err := s.createRequestAndEndpoint(opts, false)
 	if err != nil {
 		return FileSystemResult{}, err
 	}
@@ -159,30 +174,23 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 	if err != nil {
 		return FileSystemResult{}, err
 	}
-	if existing, getErr := fscred.Get(homeDir, opts.Profile.Name, name); getErr == nil {
-		fileSystem := FileSystemResult{
-			FileSystemName:    existing.Name,
-			TenantID:          existing.TenantID,
-			CloudProvider:     existing.CloudProvider,
-			RegionCode:        existing.RegionCode,
-			FSToken:           existing.APIKey,
-			Status:            "exists",
-			CredentialsStored: true,
-		}
-		if opts.WaitUntilReady {
-			if err := s.waitUntilFileSystemReady(ctx, homeDir, opts.Profile, name); err != nil {
-				return FileSystemResult{}, err
-			}
-			fileSystem.Status = "ready"
-		}
-		return fileSystem, nil
-	} else if apperr.CodeFor(getErr) != "fs.resource_not_found" {
-		return FileSystemResult{}, getErr
+	if err := fscred.MigrateNameRegistry(homeDir, opts.Profile); err != nil {
+		return FileSystemResult{}, err
 	}
-	args := []string{"create", "--json", "--name", name, "--region-code", opts.Profile.PlacementRegionCode}
-	result, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{
+	if err := fscred.PrepareCredentialStore(homeDir, opts.Profile.Name); err != nil {
+		return FileSystemResult{}, err
+	}
+	createHome, err := os.MkdirTemp("", "ti-fs-create-*")
+	if err != nil {
+		return FileSystemResult{}, apperr.Wrap("fs.companion_home", "runtime", 1, "prepare temporary ti fs create state", err)
+	}
+	defer os.RemoveAll(createHome)
+	runner := s.drive9Runner()
+	runner.HomeDir = createHome
+	args := []string{"create", "--json", "--region-code", opts.Profile.PlacementRegionCode}
+	result, err := runner.Run(ctx, fswrap.RunOptions{
 		Profile:         opts.Profile,
-		ResourceName:    name,
+		ResourceName:    "_create",
 		Args:            args,
 		CaptureStdout:   true,
 		IncludeTIKeys:   true,
@@ -197,33 +205,35 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 	}
 	status := strings.TrimSpace(out.Status)
 	if status == "" {
-		status = "provisioned"
+		status = "provisioning"
 	}
-	cloudProvider := out.CloudProvider
-	if cloudProvider == "" {
-		cloudProvider = opts.Profile.CloudProvider
+	fileSystemID, err := fscred.ValidateFileSystemID(out.TenantID)
+	if err != nil {
+		return FileSystemResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "ti fs create response did not include a valid tenant_id", err)
 	}
-	regionCode := out.RegionCode
+	if strings.TrimSpace(out.APIKey) == "" {
+		return FileSystemResult{}, apperr.New("fs.companion_decode", "runtime", 1, "ti fs create response did not include api_key")
+	}
+	regionCode := opts.Profile.PlacementRegionCode
 	if regionCode == "" {
-		regionCode = out.Region
-	}
-	if regionCode == "" {
-		regionCode = opts.Profile.PlacementRegionCode
-	}
-	if err := fscred.Store(homeDir, opts.Profile, name, out.TenantID, cloudProvider, regionCode, out.APIKey); err != nil {
-		return FileSystemResult{}, err
+		regionCode = out.RegionCode
 	}
 	fileSystem := FileSystemResult{
-		FileSystemName:    name,
-		TenantID:          out.TenantID,
-		CloudProvider:     cloudProvider,
+		FileSystemID:      fileSystemID,
 		RegionCode:        regionCode,
 		FSToken:           out.APIKey,
 		Status:            status,
-		CredentialsStored: true,
+		CredentialsStored: false,
 	}
+	if _, storeErr := fscred.StoreCredential(homeDir, opts.Profile, fileSystemID, regionCode, out.APIKey, false); storeErr != nil {
+		if s.Stderr != nil {
+			_, _ = fmt.Fprintf(s.Stderr, "ti [WARNING]: file system %s was created, but its one-time token could not be stored locally: %s\n", fileSystemID, apperr.MessageFor(storeErr))
+		}
+		return fileSystem, nil
+	}
+	fileSystem.CredentialsStored = true
 	if opts.WaitUntilReady {
-		if err := s.waitUntilFileSystemReady(ctx, homeDir, opts.Profile, name); err != nil {
+		if err := s.waitUntilFileSystemReady(ctx, homeDir, opts.Profile, fileSystemID); err != nil {
 			return FileSystemResult{}, err
 		}
 		fileSystem.Status = "ready"
@@ -232,51 +242,223 @@ func (s Service) drive9CreateFileSystem(ctx context.Context, opts CreateFileSyst
 }
 
 func (s Service) drive9DeleteFileSystem(ctx context.Context, opts DeleteFileSystemOptions) (DeleteResult, error) {
-	name, _, err := s.deleteInputsAndEndpoint(opts, false)
+	fileSystemID, _, err := s.deleteInputsAndEndpoint(opts, false)
 	if err != nil {
 		return DeleteResult{}, err
 	}
-	resource := fscred.FromProfile(opts.Profile)
-	args := []string{"delete", "--json", "--yes"}
+	homeDir, err := s.homeDir()
+	if err != nil {
+		return DeleteResult{}, err
+	}
+	if err := fscred.MigrateNameRegistry(homeDir, opts.Profile); err != nil {
+		return DeleteResult{}, err
+	}
+	args := []string{"admin", "tenant", "delete", "--json", "--region-code", opts.Profile.PlacementRegionCode, "--tenant-id", fileSystemID}
 	result, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{
 		Profile:         opts.Profile,
+		ResourceName:    "_control-plane",
 		Args:            args,
 		CaptureStdout:   true,
 		IncludeTIKeys:   true,
-		IncludeFSAPIKey: true,
+		IncludeFSAPIKey: false,
 	})
 	if err != nil {
+		if isDrive9NotFound(err) {
+			return DeleteResult{}, remoteFileSystemNotFound(fileSystemID, err)
+		}
 		return DeleteResult{}, err
 	}
 	var out drive9DeleteOutput
 	if err := json.Unmarshal(result.Stdout, &out); err != nil {
 		return DeleteResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs deletion response", err)
 	}
+	if out.TenantID != "" && out.TenantID != fileSystemID {
+		return DeleteResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("ti fs deletion response identified file system %q instead of %q", out.TenantID, fileSystemID))
+	}
 	status := strings.TrimSpace(out.Status)
 	if status == "" {
 		status = "deleting"
 	}
-	homeDir, err := s.homeDir()
+	credentialsRemoved, err := fscred.DeleteCredential(homeDir, opts.Profile.Name, fileSystemID)
 	if err != nil {
 		return DeleteResult{}, err
 	}
-	if err := fscred.Delete(homeDir, opts.Profile, name); err != nil {
-		return DeleteResult{}, err
-	}
-	if companionHome, companionErr := fscred.CompanionHome(homeDir, opts.Profile.Name, name); companionErr == nil {
-		_ = os.RemoveAll(companionHome)
-	}
 	return DeleteResult{
-		FileSystemName:      name,
-		TenantID:            resource.TenantID,
+		FileSystemID:        fileSystemID,
 		Status:              status,
-		CredentialsRemoved:  true,
+		CredentialsRemoved:  credentialsRemoved,
 		RemoteDeletionState: status,
 	}, nil
 }
 
-func (s Service) waitUntilFileSystemReady(ctx context.Context, homeDir string, profile *config.Profile, name string) error {
-	selected, _, err := fscred.Resolve(homeDir, profile, name, true, nil)
+func (s Service) drive9ListFileSystems(ctx context.Context, profile *config.Profile) (ListFileSystemsResult, error) {
+	if err := validateProfile(profile); err != nil {
+		return ListFileSystemsResult{}, err
+	}
+	homeDir, err := s.homeDir()
+	if err != nil {
+		return ListFileSystemsResult{}, err
+	}
+	if err := fscred.MigrateNameRegistry(homeDir, profile); err != nil {
+		return ListFileSystemsResult{}, err
+	}
+	credentials, err := fscred.ListCredentials(homeDir, profile.Name)
+	if err != nil {
+		return ListFileSystemsResult{}, err
+	}
+	hasToken := make(map[string]bool, len(credentials))
+	for _, credential := range credentials {
+		hasToken[credential.FileSystemID] = credential.HasLocalToken
+	}
+	const pageSize = 100
+	page := 1
+	seenPages := map[int]bool{}
+	seenIDs := map[string]bool{}
+	fileSystems := make([]FileSystemSummary, 0)
+	for {
+		if page <= 0 || seenPages[page] {
+			return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, "ti fs inventory returned a repeated or invalid page")
+		}
+		seenPages[page] = true
+		args := []string{"admin", "tenant", "list", "--json", "--region-code", profile.PlacementRegionCode, "--page-size", strconv.Itoa(pageSize), "--page", strconv.Itoa(page)}
+		result, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{Profile: profile, ResourceName: "_control-plane", Args: args, CaptureStdout: true, IncludeTIKeys: true})
+		if err != nil {
+			return ListFileSystemsResult{}, err
+		}
+		var out drive9AdminTenantListOutput
+		if err := json.Unmarshal(result.Stdout, &out); err != nil {
+			return ListFileSystemsResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs inventory response", err)
+		}
+		if out.Page != page {
+			return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("ti fs inventory returned page %d while page %d was requested", out.Page, page))
+		}
+		for _, tenant := range out.Tenants {
+			id, err := fscred.ValidateFileSystemID(tenant.TenantID)
+			if err != nil {
+				return ListFileSystemsResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "ti fs inventory included an invalid tenant_id", err)
+			}
+			if seenIDs[id] {
+				return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("ti fs inventory returned duplicate file system ID %q", id))
+			}
+			seenIDs[id] = true
+			fileSystems = append(fileSystems, FileSystemSummary{FileSystemID: id, RegionCode: profile.PlacementRegionCode, Status: tenant.Status, Kind: tenant.Kind, Quota: tenant.Quota, HasLocalToken: hasToken[id]})
+		}
+		if out.NextPage == 0 {
+			break
+		}
+		if out.NextPage <= page {
+			return ListFileSystemsResult{}, apperr.New("fs.companion_decode", "runtime", 1, "ti fs inventory returned a repeated or regressing next_page")
+		}
+		page = out.NextPage
+	}
+	sort.Slice(fileSystems, func(i, j int) bool { return fileSystems[i].FileSystemID < fileSystems[j].FileSystemID })
+	return ListFileSystemsResult{RegionCode: profile.PlacementRegionCode, FileSystems: fileSystems}, nil
+}
+
+func (s Service) drive9DescribeFileSystem(ctx context.Context, profile *config.Profile, fileSystemID string) (DescribeFileSystemResult, error) {
+	if err := validateProfile(profile); err != nil {
+		return DescribeFileSystemResult{}, err
+	}
+	id, err := fscred.ValidateFileSystemID(fileSystemID)
+	if err != nil {
+		return DescribeFileSystemResult{}, err
+	}
+	homeDir, err := s.homeDir()
+	if err != nil {
+		return DescribeFileSystemResult{}, err
+	}
+	if err := fscred.MigrateNameRegistry(homeDir, profile); err != nil {
+		return DescribeFileSystemResult{}, err
+	}
+	result, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{
+		Profile: profile, ResourceName: "_control-plane",
+		Args:          []string{"admin", "tenant", "get", "--json", "--region-code", profile.PlacementRegionCode, "--tenant-id", id},
+		CaptureStdout: true, IncludeTIKeys: true,
+	})
+	if err != nil {
+		if isDrive9NotFound(err) {
+			return DescribeFileSystemResult{}, remoteFileSystemNotFound(id, err)
+		}
+		return DescribeFileSystemResult{}, err
+	}
+	var tenant drive9AdminTenant
+	if err := json.Unmarshal(result.Stdout, &tenant); err != nil {
+		return DescribeFileSystemResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs describe response", err)
+	}
+	if tenant.TenantID != id {
+		return DescribeFileSystemResult{}, apperr.New("fs.companion_decode", "runtime", 1, fmt.Sprintf("ti fs describe response identified file system %q instead of %q", tenant.TenantID, id))
+	}
+	_, credentialErr := fscred.GetCredential(homeDir, profile.Name, id)
+	if credentialErr != nil && apperr.CodeFor(credentialErr) != "fs.credential_not_found" {
+		return DescribeFileSystemResult{}, credentialErr
+	}
+	return DescribeFileSystemResult{FileSystemSummary: FileSystemSummary{
+		FileSystemID: id, RegionCode: profile.PlacementRegionCode, Status: tenant.Status, Kind: tenant.Kind, Quota: tenant.Quota, HasLocalToken: credentialErr == nil,
+	}}, nil
+}
+
+func (s Service) importFileSystemToken(ctx context.Context, opts ImportFileSystemTokenOptions, persist bool) (ImportFileSystemTokenResult, error) {
+	if opts.Profile == nil {
+		return ImportFileSystemTokenResult{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
+	}
+	tokenID, err := fscred.FileSystemIDFromToken(opts.Token)
+	if err != nil {
+		return ImportFileSystemTokenResult{}, err
+	}
+	if asserted := strings.TrimSpace(opts.FileSystemID); asserted != "" {
+		asserted, err = fscred.ValidateFileSystemID(asserted)
+		if err != nil {
+			return ImportFileSystemTokenResult{}, err
+		}
+		if asserted != tokenID {
+			return ImportFileSystemTokenResult{}, apperr.New("fs.token_file_system_mismatch", "authentication", 3, fmt.Sprintf("FS token belongs to file system %q, not %q", tokenID, asserted))
+		}
+	}
+	placement, err := region.ParsePlacementCode(opts.Profile.PlacementRegionCode)
+	if err != nil {
+		return ImportFileSystemTokenResult{}, err
+	}
+	selected := *opts.Profile
+	selected.FSResourceName = tokenID
+	selected.FSTenantID = tokenID
+	selected.FSPlacementRegionCode = placement.Code
+	selected.FSCloudProvider = placement.Provider
+	selected.FSRegionCode = placement.NativeCode
+	selected.FSAPIKey = opts.Token
+	validationHome, err := os.MkdirTemp("", "ti-fs-token-validation-*")
+	if err != nil {
+		return ImportFileSystemTokenResult{}, apperr.Wrap("fs.token_validation", "runtime", 1, "prepare temporary FS token validation state", err)
+	}
+	defer os.RemoveAll(validationHome)
+	runner := s.drive9Runner()
+	runner.HomeDir = validationHome
+	if _, err := runner.Run(ctx, fswrap.RunOptions{
+		Profile:         &selected,
+		ResourceName:    tokenID,
+		Args:            []string{"fs", "stat", "--output", "json", ":/"},
+		CaptureStdout:   true,
+		IncludeFSAPIKey: true,
+	}); err != nil {
+		return ImportFileSystemTokenResult{}, err
+	}
+	status := "validated"
+	stored := false
+	if persist {
+		homeDir, err := s.homeDir()
+		if err != nil {
+			return ImportFileSystemTokenResult{}, err
+		}
+		if _, err := fscred.StoreCredential(homeDir, opts.Profile, tokenID, placement.Code, opts.Token, opts.Replace); err != nil {
+			return ImportFileSystemTokenResult{}, err
+		}
+		status = "imported"
+		stored = true
+	}
+	return ImportFileSystemTokenResult{FileSystemID: tokenID, RegionCode: placement.Code, CredentialsStored: stored, Status: status}, nil
+}
+
+func (s Service) waitUntilFileSystemReady(ctx context.Context, homeDir string, profile *config.Profile, fileSystemID string) error {
+	selected, _, err := fscred.ResolveCredential(homeDir, profile, fscred.ResolveCredentialOptions{FileSystemID: fileSystemID, FileSystemIDExplicit: true, TokenRequired: true})
 	if err != nil {
 		return err
 	}
@@ -292,7 +474,7 @@ func (s Service) waitUntilFileSystemReady(ctx context.Context, homeDir string, p
 		if err == nil {
 			return nil
 		}
-		if waitErr := fsReadyWaitContextError(ctx, waitCtx, name, timeout); waitErr != nil {
+		if waitErr := fsReadyWaitContextError(ctx, waitCtx, fileSystemID, timeout); waitErr != nil {
 			return waitErr
 		}
 		if !isDrive9ReadinessError(err) {
@@ -300,14 +482,14 @@ func (s Service) waitUntilFileSystemReady(ctx context.Context, homeDir string, p
 				"fs.ready_wait_failed",
 				"runtime",
 				1,
-				fmt.Sprintf("ti fs resource %q was provisioned and its credentials were stored, but its Drive9 data plane readiness check failed", name),
+				fmt.Sprintf("ti fs resource %q was provisioned and its credentials were stored, but its Drive9 data plane readiness check failed", fileSystemID),
 				err,
 			)
 		}
 
 		select {
 		case <-waitCtx.Done():
-			return fsReadyWaitContextError(ctx, waitCtx, name, timeout)
+			return fsReadyWaitContextError(ctx, waitCtx, fileSystemID, timeout)
 		case <-ticker.C:
 		}
 	}
@@ -374,11 +556,11 @@ func (s Service) drive9CheckFileSystem(ctx context.Context, opts CheckFileSystem
 	checks := []Check{
 		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("ti fs credentials for profile namespace %q loaded", profileName(opts.Profile))},
 	}
-	resource := fscred.FromProfile(opts.Profile)
-	if resource.Name == "" || !resource.HasAPIKey {
-		checks = append(checks, Check{Name: "fs_resource_credentials", Status: "warning", Message: "ti fs resource name or FS token is missing"})
+	resource := fscred.Credential{FileSystemID: opts.Profile.FSTenantID, RegionCode: opts.Profile.FSPlacementRegionCode, HasLocalToken: strings.TrimSpace(opts.Profile.FSAPIKey) != "", APIKey: opts.Profile.FSAPIKey}
+	if resource.FileSystemID == "" || !resource.HasLocalToken {
+		checks = append(checks, Check{Name: "fs_resource_credentials", Status: "warning", Message: "ti fs file system ID or token is missing"})
 	} else {
-		checks = append(checks, Check{Name: "fs_resource_credentials", Status: "passed", Message: resource.Name})
+		checks = append(checks, Check{Name: "fs_resource_credentials", Status: "passed", Message: resource.FileSystemID})
 	}
 	endpoint, err := s.resolveFS(opts.Profile)
 	if err != nil {
@@ -391,15 +573,15 @@ func (s Service) drive9CheckFileSystem(ctx context.Context, opts CheckFileSystem
 		return checkResult(opts.Profile, resource, &endpoint, nil, checks), nil
 	}
 	checks = append(checks, Check{Name: "companion_binary", Status: "passed", Message: "ti-drive9"})
-	if !resource.HasAPIKey {
-		checks = append(checks, Check{Name: "remote_status", Status: "warning", Message: "remote status requires fs_api_key; run ti fs create-file-system first"})
+	if !resource.HasLocalToken {
+		checks = append(checks, Check{Name: "remote_status", Status: "warning", Message: "remote status requires an FS token; create or import local credentials first"})
 		return checkResult(opts.Profile, resource, &endpoint, nil, checks), nil
 	}
 	if _, err := s.drive9Run(ctx, opts.Profile, []string{"fs", "stat", "--output", "json", ":/"}, true); err != nil {
 		checks = append(checks, Check{Name: "remote_status", Status: "failed", Message: apperr.MessageFor(err)})
 		return checkResult(opts.Profile, resource, &endpoint, nil, checks), nil
 	}
-	remote := apifs.StatusResponse{Status: "reachable", TenantID: resource.TenantID, Kind: "ti fs"}
+	remote := apifs.StatusResponse{Status: "reachable", TenantID: resource.FileSystemID, Kind: "ti fs"}
 	checks = append(checks, Check{Name: "remote_status", Status: "passed", Message: "reachable"})
 	return checkResult(opts.Profile, resource, &endpoint, &remote, checks), nil
 }
@@ -1366,6 +1548,7 @@ func (s Service) drive9MountLocatorProfile(base *config.Profile, mountPath strin
 	profile.Name = locator.Profile
 	profile.HomeDir = homeDir
 	profile.FSResourceName = locator.FileSystemName
+	profile.FSTenantID = locator.FileSystemName
 	profile.FSPlacementRegionCode = placement.Code
 	profile.FSCloudProvider = placement.Provider
 	profile.FSRegionCode = placement.NativeCode
@@ -1514,6 +1697,10 @@ func isDrive9NotFound(err error) bool {
 		return false
 	}
 	return strings.Contains(strings.ToLower(err.Error()), "not found")
+}
+
+func remoteFileSystemNotFound(fileSystemID string, cause error) error {
+	return apperr.Wrap("fs.resource_not_found", "runtime", 1, fmt.Sprintf("file system %q was not found in the selected region", fileSystemID), cause)
 }
 
 func isTransientDrive9Error(err error) bool {

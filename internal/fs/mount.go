@@ -77,7 +77,7 @@ type DrainFileSystemOptions struct {
 type MountResult struct {
 	Status         string               `json:"status"`
 	Profile        string               `json:"profile"`
-	FileSystemName string               `json:"file_system_name"`
+	FileSystemName string               `json:"file_system_id"`
 	MountPath      string               `json:"mount_path"`
 	RemotePath     string               `json:"remote_path"`
 	Driver         string               `json:"driver"`
@@ -236,7 +236,7 @@ func (s Service) DryRunDrainFileSystem(ctx context.Context, commandPath string, 
 			Path:        opts.MountPath,
 		},
 		dryrun.Check{Name: "mount_locator", Status: "passed", Message: opts.MountPath},
-		dryrun.Check{Name: "file_system_name", Status: "passed", Message: profile.FSResourceName},
+		dryrun.Check{Name: "file_system_id", Status: "passed", Message: profile.FSTenantID},
 		dryrun.Check{Name: "region", Status: "passed", Message: profile.FSPlacementRegionCode},
 	), nil
 }
@@ -263,7 +263,7 @@ func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string
 			Path:        opts.MountPath,
 		},
 		dryrun.Check{Name: "mount_locator", Status: "passed", Message: opts.MountPath},
-		dryrun.Check{Name: "file_system_name", Status: "passed", Message: profile.FSResourceName},
+		dryrun.Check{Name: "file_system_id", Status: "passed", Message: profile.FSTenantID},
 		dryrun.Check{Name: "region", Status: "passed", Message: profile.FSPlacementRegionCode},
 	), nil
 }
@@ -331,10 +331,10 @@ func (s Service) mountInputs(opts MountFileSystemOptions) (mountInputs, error) {
 		fileSystemName = opts.Profile.FSResourceName
 	}
 	if fileSystemName == "" {
-		return mountInputs{}, apperr.New("fs.missing_file_system_name", "usage", 2, "--file-system-name is required or fs_resource_name must exist in the active profile")
+		return mountInputs{}, apperr.New("fs.missing_file_system_id", "usage", 2, "--file-system-id is required unless an FS token identifies the file system")
 	}
 	if opts.Profile.FSResourceName != "" && opts.Profile.FSResourceName != fileSystemName {
-		return mountInputs{}, resourceMismatch(opts.Profile.FSResourceName, fileSystemName)
+		return mountInputs{}, apperr.New("fs.file_system_id_mismatch", "usage", 2, fmt.Sprintf("resolved file system ID %q does not match %q", opts.Profile.FSResourceName, fileSystemName))
 	}
 	mountPath, err := mountstate.CanonicalMountPath(opts.MountPath)
 	if err != nil {
@@ -568,7 +568,7 @@ func (s Service) mountBackground(ctx context.Context, inputs mountInputs, remote
 	args := []string{
 		"--profile", inputs.profile.Name,
 		"fs", "mount-file-system",
-		"--file-system-name", inputs.fileSystemName,
+		"--file-system-id", inputs.fileSystemName,
 		"--mount-path", inputs.mountPath,
 		"--remote-path", inputs.remotePath,
 		"--driver", inputs.driver.Name(),
