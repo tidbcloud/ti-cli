@@ -52,6 +52,14 @@ func TestLiveProfileConfigured(t *testing.T) {
 	if profile.CloudProvider == "" || profile.RegionCode == "" {
 		t.Fatalf("live e2e profile %q is incomplete", profile.Name)
 	}
+	configured := runTIWithInput(t, bin, "", []string{
+		"TI_REGION_CODE=" + profile.PlacementRegionCode,
+		"TIDB_CLOUD_PUBLIC_KEY=" + profile.TiDBCloudPublicKey,
+		"TIDB_CLOUD_PRIVATE_KEY=" + profile.TiDBCloudPrivateKey,
+	}, "configure", "--profile", profile.Name, "--non-interactive")
+	configured.wantExitCode(0)
+	configured.wantStdoutContains(`"region_code": "` + profile.PlacementRegionCode + `"`)
+	configured.wantStdoutNotContains("project")
 }
 
 func TestLiveDBAPIReadOnlyProbes(t *testing.T) {
@@ -67,20 +75,6 @@ func TestLiveDBAPIReadOnlyProbes(t *testing.T) {
 	starter := liveDigestClient(t, profile, starterEndpoint, authz.StarterClusterRead)
 	liveGETJSON(t, starter, "/v1beta1/regions")
 	liveGETJSON(t, starter, "/v1beta1/regions:listCloudProviders")
-}
-
-func TestLiveOrganizationAPIReadOnlyProbes(t *testing.T) {
-	requireLive(t)
-
-	profile := liveProfile(t)
-	resolver := endpoints.NewResolver()
-
-	iamEndpoint, err := resolver.ResolveIAM()
-	if err != nil {
-		t.Fatalf("resolve IAM endpoint: %v", err)
-	}
-	iam := liveDigestClient(t, profile, iamEndpoint, authz.OrganizationProjectRead)
-	liveGETJSON(t, iam, "/v1beta1/projects")
 }
 
 func TestLiveFSRemoteInventoryLifecycle(t *testing.T) {
@@ -139,43 +133,6 @@ func TestLiveCLICommandSurface(t *testing.T) {
 	checkUpdateHelp.wantStdoutContains("--check")
 	checkUpdateHelp.wantStdoutContains("--fail-if-update-available")
 	checkUpdateHelp.wantStdoutNotContains("--yes")
-}
-
-func TestLiveOrganizationCommandSurface(t *testing.T) {
-	requireLive(t)
-	bin := tiBinary(t)
-	profileName := liveProfileName(t)
-	testLiveHelpCommands(t, bin, [][]string{{"organization", "help"}})
-	testLiveReadOnlyDryRunRejections(t, bin, profileName, [][]string{{"organization", "list-projects"}})
-
-	projects := runTI(t, bin, "--profile", profileName, "organization", "list-projects", "--page-size", "1")
-	projects.wantExitCode(0)
-	projects.wantStdoutContains(`"projects"`)
-	var projectList struct {
-		Projects []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
-			Type string `json:"type"`
-		} `json:"projects"`
-		NextPageToken string `json:"next_page_token"`
-	}
-	if err := json.Unmarshal([]byte(projects.stdout), &projectList); err != nil {
-		t.Fatalf("decode organization list-projects output: %v\n%s", err, projects.stdout)
-	}
-	if len(projectList.Projects) == 0 || projectList.Projects[0].ID == "" || projectList.Projects[0].Type == "" {
-		t.Fatalf("expected live profile %q to see at least one project with an id and type:\n%s", profileName, projects.stdout)
-	}
-
-	query := runTI(t, bin, "--profile", profileName, "organization", "list-projects", "--page-size", "1", "--query", "projects[0].id")
-	query.wantExitCode(0)
-	query.wantStdoutContains(projectList.Projects[0].ID)
-
-	text := runTI(t, bin, "--profile", profileName, "organization", "list-projects", "--page-size", "1", "--output", "text")
-	text.wantExitCode(0)
-	text.wantStdoutContains("ID")
-	text.wantStdoutContains("TYPE")
-	text.wantStdoutContains(projectList.Projects[0].ID)
-	text.wantStdoutContains(projectList.Projects[0].Type)
 }
 
 func TestLiveDBCommandSurface(t *testing.T) {
@@ -1511,8 +1468,8 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 	if described.ClusterPlan != "" && described.ClusterPlan != "STARTER" {
 		t.Fatalf("expected STARTER cluster, got %#v", described)
 	}
-	if strings.TrimSpace(described.Labels["tidb.cloud/project"]) == "" {
-		t.Fatalf("server-selected project label is empty: %#v", described)
+	if project := strings.TrimSpace(created.Labels["tidb.cloud/project"]); project != "" && described.Labels["tidb.cloud/project"] != project {
+		t.Fatalf("server project metadata changed between create and describe: created=%#v described=%#v", created.Labels, described.Labels)
 	}
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
 		{"db", "update-db-cluster", "--db-cluster-id", clusterID, "--db-cluster-name", updatedName},
@@ -2190,24 +2147,6 @@ func liveProfile(t *testing.T) *config.Profile {
 	profile, err := load()
 	if err != nil {
 		t.Fatalf("load live e2e profile %q: %v\nconfigure it with: bin/ti configure --profile %s", profileName, err, profileName)
-	}
-	if profile.ProjectID != "" {
-		return profile
-	}
-
-	configured := runTIWithInput(t, tiBinary(t), "", []string{
-		"TI_REGION_CODE=" + profile.PlacementRegionCode,
-		"TIDB_CLOUD_PUBLIC_KEY=" + profile.TiDBCloudPublicKey,
-		"TIDB_CLOUD_PRIVATE_KEY=" + profile.TiDBCloudPrivateKey,
-	}, "configure", "--profile", profileName, "--non-interactive")
-	configured.wantExitCode(0)
-	configured.wantStdoutContains(`"project_type": "tidbx_virtual"`)
-	profile, err = load()
-	if err != nil {
-		t.Fatalf("reload live e2e profile %q after configure: %v", profileName, err)
-	}
-	if profile.ProjectID == "" {
-		t.Fatalf("live e2e profile %q has no project_id after configure", profileName)
 	}
 	return profile
 }

@@ -10,8 +10,6 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/api"
 )
 
-const ProjectLabelKey = "tidb.cloud/project"
-
 type Client struct {
 	api *api.Client
 }
@@ -41,7 +39,6 @@ type GetClusterOptions struct {
 type CreateClusterRequest struct {
 	DisplayName   string
 	RegionName    string
-	ProjectID     string
 	SpendingLimit *SpendingLimit
 }
 
@@ -141,18 +138,11 @@ func (c *Client) ListClusters(ctx context.Context, opts ListClustersOptions) (Li
 }
 
 func (c *Client) CreateCluster(ctx context.Context, input CreateClusterRequest) (Cluster, error) {
-	var labels map[string]string
-	if projectID := strings.TrimSpace(input.ProjectID); projectID != "" {
-		labels = map[string]string{
-			ProjectLabelKey: projectID,
-		}
-	}
 	body := createClusterWireRequest{
 		DisplayName: input.DisplayName,
 		Region: &regionWire{
 			Name: input.RegionName,
 		},
-		Labels:        labels,
 		SpendingLimit: input.SpendingLimit,
 	}
 	req, err := c.api.NewRequest(ctx, http.MethodPost, "/v1beta1/clusters", body)
@@ -373,10 +363,9 @@ type authorizedNetworkWire struct {
 }
 
 type createClusterWireRequest struct {
-	DisplayName   string            `json:"displayName"`
-	Region        *regionWire       `json:"region,omitempty"`
-	Labels        map[string]string `json:"labels,omitempty"`
-	SpendingLimit *SpendingLimit    `json:"spendingLimit,omitempty"`
+	DisplayName   string         `json:"displayName"`
+	Region        *regionWire    `json:"region,omitempty"`
+	SpendingLimit *SpendingLimit `json:"spendingLimit,omitempty"`
 }
 
 type updateClusterWireRequest struct {

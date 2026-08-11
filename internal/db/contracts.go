@@ -35,14 +35,12 @@ type ListClustersOptions struct {
 }
 
 type CreateClusterOptions struct {
-	Profile           *config.Profile
-	DisplayName       string
-	ClusterType       string
-	ProjectID         string
-	ProjectIDExplicit bool
-	WaitUntilActive   bool
-	Product           ProductOptions
-	Dispatch          DispatchContext
+	Profile         *config.Profile
+	DisplayName     string
+	ClusterType     string
+	WaitUntilActive bool
+	Product         ProductOptions
+	Dispatch        DispatchContext
 }
 
 type DescribeClusterOptions struct {

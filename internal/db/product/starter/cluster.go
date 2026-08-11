@@ -199,11 +199,6 @@ func (s Service) DryRunCreateCluster(ctx context.Context, commandPath string, op
 		},
 		"spendingLimit": request.SpendingLimit,
 	}
-	if request.ProjectID != "" {
-		body["labels"] = map[string]string{
-			apistarter.ProjectLabelKey: request.ProjectID,
-		}
-	}
 	return dryrun.New(
 		commandPath,
 		"create_db_cluster",
@@ -469,10 +464,6 @@ func (s Service) createRequestAndEndpoint(opts CreateClusterOptions) (apistarter
 	if err := validate.ClusterName(opts.DisplayName); err != nil {
 		return apistarter.CreateClusterRequest{}, endpoints.Endpoint{}, err
 	}
-	projectID, err := resolveCreateProjectID(opts)
-	if err != nil {
-		return apistarter.CreateClusterRequest{}, endpoints.Endpoint{}, err
-	}
 	product, err := createOptions(opts.Product)
 	if err != nil {
 		return apistarter.CreateClusterRequest{}, endpoints.Endpoint{}, err
@@ -487,26 +478,8 @@ func (s Service) createRequestAndEndpoint(opts CreateClusterOptions) (apistarter
 	return apistarter.CreateClusterRequest{
 		DisplayName:   opts.DisplayName,
 		RegionName:    endpoint.RegionName,
-		ProjectID:     projectID,
 		SpendingLimit: spendingLimit(product.MonthlySpendingLimitUSDCents),
 	}, endpoint, nil
-}
-
-func resolveCreateProjectID(opts CreateClusterOptions) (string, error) {
-	projectID := strings.TrimSpace(opts.ProjectID)
-	if opts.ProjectIDExplicit && projectID == "" {
-		return "", apperr.New("db.empty_project_id", "usage", 2, "--project-id cannot be empty")
-	}
-	if projectID != "" {
-		return projectID, nil
-	}
-	if opts.Profile != nil {
-		projectID = strings.TrimSpace(opts.Profile.ProjectID)
-	}
-	if projectID != "" {
-		return projectID, nil
-	}
-	return "", nil
 }
 
 func (s Service) updateRequest(opts UpdateClusterOptions) (string, apistarter.UpdateClusterRequest, error) {

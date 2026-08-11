@@ -475,7 +475,7 @@ func TestDeliveryFailuresAreSilentByDefault(t *testing.T) {
 		cfg.Endpoint = server.URL
 		var debug strings.Builder
 		cfg.DebugWriter = &debug
-		Start(cfg).Finish(EventInput{CommandPath: "ti organization list-projects"})
+		Start(cfg).Finish(EventInput{CommandPath: "ti db list-db-clusters"})
 		server.Close()
 		if debug.Len() != 0 {
 			t.Fatalf("status %d produced normal output: %q", status, debug.String())
@@ -497,7 +497,7 @@ func TestDeliveryDoesNotFollowRedirects(t *testing.T) {
 	defer server.Close()
 	cfg := enabledConfig(t.TempDir())
 	cfg.Endpoint = server.URL
-	Start(cfg).Finish(EventInput{CommandPath: "ti organization list-projects"})
+	Start(cfg).Finish(EventInput{CommandPath: "ti db list-db-clusters"})
 	if redirected {
 		t.Fatal("telemetry followed a redirect away from its configured endpoint")
 	}

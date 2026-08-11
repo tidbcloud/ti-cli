@@ -123,8 +123,8 @@ function Print-NextSteps {
     Write-Output "    2. Configure credentials"
     Write-Output "       ti configure"
     Write-Output ""
-    Write-Output "    3. List projects"
-    Write-Output "       ti organization list-projects --output text"
+    Write-Output "    3. Create a Starter database"
+    Write-Output "       ti db create-db-cluster --db-cluster-type starter --db-cluster-name my-database --wait"
     Write-Output ""
     Write-Output "    4. Create or check ti fs"
     Write-Output '       $env:TI_FS_FILE_SYSTEM_ID = ti fs create-file-system --query file_system_id --output text'

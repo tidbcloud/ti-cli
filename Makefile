@@ -25,7 +25,7 @@ ifneq ($(strip $(TELEMETRY_ENDPOINT)),)
 LDFLAGS += -X $(MODULE)/internal/version.telemetryEndpoint=$(TELEMETRY_ENDPOINT)
 endif
 
-.PHONY: all build build-telemetry-backend build-telemetry-migrator test e2e telemetry-e2e live-e2e live-e2e-configure live-e2e-organization live-e2e-db live-e2e-fs live-e2e-fs-git live-e2e-fs-journal live-e2e-fs-vault release-snapshot clean
+.PHONY: all build build-telemetry-backend build-telemetry-migrator test e2e telemetry-e2e live-e2e live-e2e-configure live-e2e-db live-e2e-fs live-e2e-fs-git live-e2e-fs-journal live-e2e-fs-vault release-snapshot clean
 
 all: build
 
@@ -57,9 +57,6 @@ live-e2e: build
 
 live-e2e-configure: build
 	$(LIVE_E2E_RUN) -run '^TestLive(ProfileConfigured|CLICommandSurface)$$'
-
-live-e2e-organization: build
-	$(LIVE_E2E_RUN) -run '^TestLiveOrganization'
 
 live-e2e-db: build
 	$(LIVE_E2E_RUN) -run '^TestLiveDB'

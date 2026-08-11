@@ -26,18 +26,9 @@ TIDB_CLOUD_PRIVATE_KEY="$TIDB_CLOUD_PRIVATE_KEY" \
 bin/ti configure --non-interactive
 ```
 
-`configure` 会验证 TiDB Cloud API key，找到唯一的 `tidbx_virtual` project，并把其 ID 保存为默认 `project_id`。后续创建 Starter cluster 不需要重复传 `--project-id`。
+`configure` 只在本地保存 region 和 TiDB Cloud API key，不发送远端请求。第一个远端命令会验证对应权限；创建 Starter cluster 时由 TiDB Cloud 选择服务端默认 project。
 
-## 1. 查看 Organization Project
-
-```bash
-bin/ti organization list-projects --output text
-bin/ti organization list-projects --query 'projects[].{id:id,name:name,type:type}'
-```
-
-`organization` 当前是只读 control plane，可供人、脚本和 agent 检查 API key 能访问的项目。
-
-## 2. 创建并管理 Starter Cluster
+## 1. 创建并管理 Starter Cluster
 
 为本次演示生成唯一名字：
 
@@ -91,7 +82,7 @@ bin/ti db create-db-cluster-branch \
 bin/ti db list-db-cluster-branches --db-cluster-id "$CLUSTER_ID" --output text
 ```
 
-## 3. 创建 SQL 用户并按角色执行 SQL
+## 2. 创建 SQL 用户并按角色执行 SQL
 
 创建或修复 ti 管理的三种稳定 SQL 用户。该操作可重入，不会在每次运行时创建新的一组：
 
@@ -145,7 +136,7 @@ bin/ti db execute-sql-statement \
 
 SQL 默认通过 HTTPS SQL API 执行，一次命令只执行一个 statement。`--transport mysql` 是显式的一次性连接模式，不是隐藏 fallback。
 
-## 4. 创建并管理 Filesystem
+## 3. 创建并管理 Filesystem
 
 创建一个由服务端分配稳定 ID 的资源。远端 inventory 是资源状态的权威来源，本地只保存按 ID 索引的访问凭证：
 
@@ -169,7 +160,7 @@ bin/ti fs check-file-system \
 
 创建命令的 JSON 结果包含一次性的 `fs_token`。它是资源 owner credential，不能写入日志或公开传递。凭证存储在 `~/.ti/fs_credentials/<profile-key>/<file-system-id-key>/credentials`，不写入主 `~/.ti/credentials`。
 
-## 5. 使用 Data Plane 操作文件
+## 4. 使用 Data Plane 操作文件
 
 ```bash
 bin/ti fs create-directory \
@@ -205,7 +196,7 @@ bin/ti fs ls --file-system-id "$FILE_SYSTEM_ID" --path /demo --output text
 bin/ti fs cat --file-system-id "$FILE_SYSTEM_ID" --path /demo/from-data-plane.txt
 ```
 
-## 6. 挂载并验证双向可见性
+## 5. 挂载并验证双向可见性
 
 ```bash
 export MOUNT_PATH="/tmp/ti-demo-${DEMO_ID}"
@@ -240,7 +231,7 @@ FUSE mount 可以在卸载前 drain dirty state。WebDAV 通过正常的 file cl
 bin/ti fs drain-file-system --mount-path "$MOUNT_PATH"
 ```
 
-## 7. 使用 Filesystem Git Workspace
+## 6. 使用 Filesystem Git Workspace
 
 在挂载目录内执行快速 clone 和 hydrate：
 
@@ -280,7 +271,7 @@ bin/ti fs-git remove-git-worktree \
 
 `ti fs-git` 不替代 Git。它负责为 Filesystem mount 准备 clone、hydrate 和 worktree 工作流；普通提交和分支操作仍使用 `git`。
 
-## 8. 使用 Journal 记录 Agent 工作流
+## 7. 使用 Journal 记录 Agent 工作流
 
 ```bash
 export JOURNAL_ID="jrn-demo-${DEMO_ID}"
@@ -317,7 +308,7 @@ bin/ti fs-journal verify-journal \
 
 Journal 是 append-only、可验证的 workflow ledger，不是普通文本日志文件。
 
-## 9. 使用 Vault 管理和委派 Secret
+## 8. 使用 Vault 管理和委派 Secret
 
 ```bash
 printf 'demo-token\n' > /tmp/ti-demo-token.txt
@@ -362,7 +353,7 @@ bin/ti fs-vault list-audit-events \
 
 Vault mount 是只读 FUSE view，需要 delegated Vault token；Windows 不支持，macOS 需要 macFUSE。`run-with-secret` 可在不把值写进命令行的情况下将 secret 注入子进程。
 
-## 10. 清理
+## 9. 清理
 
 FUSE mount 先 drain，再卸载。WebDAV mount 跳过 drain：
 

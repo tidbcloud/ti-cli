@@ -404,7 +404,7 @@ func TestLegacyMigrationRejectsRegistryMismatch(t *testing.T) {
 func TestDeletePreservesOtherResourceWithoutChangingMainConfig(t *testing.T) {
 	home := t.TempDir()
 	profile := registryProfile(home)
-	if err := store.WriteProfile(home, profile.Name, store.ConfigProfile{RegionCode: "aws-us-east-1", ProjectID: "project-1"}, store.CredentialsProfile{}); err != nil {
+	if err := store.WriteProfile(home, profile.Name, store.ConfigProfile{RegionCode: "aws-us-east-1"}, store.CredentialsProfile{}); err != nil {
 		t.Fatal(err)
 	}
 	if err := Store(home, profile, "workspace", "tenant-1", "aws", "aws-us-east-1", "key-1"); err != nil {
@@ -426,7 +426,7 @@ func TestDeletePreservesOtherResourceWithoutChangingMainConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := configDoc[profile.Name]; got.RegionCode != "aws-us-east-1" || got.ProjectID != "project-1" {
+	if got := configDoc[profile.Name]; got.RegionCode != "aws-us-east-1" {
 		t.Fatalf("main config changed: %#v", got)
 	}
 }

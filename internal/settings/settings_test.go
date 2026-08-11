@@ -225,7 +225,7 @@ max_files = 2
 	if err != nil {
 		t.Fatal(err)
 	}
-	if profiles["default"].ProjectID != "project-default" || profiles["stage"].ProjectID != "project-stage" {
+	if profiles["default"].LegacyProjectID != "project-default" || profiles["stage"].LegacyProjectID != "project-stage" {
 		t.Fatalf("profiles changed during migration: %#v", profiles)
 	}
 	afterCredentials, err := os.ReadFile(store.CredentialsPath(home))

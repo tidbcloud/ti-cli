@@ -1,10 +1,12 @@
-# Remove DB Project Selection
+# Remove TiDB Cloud Project Selection And Inventory
 
 ## Goal
 
-Remove client-side project selection from TiDB Cloud CLI configuration and every `ti db` workflow. TiDB Cloud Starter cluster creation must always omit project selection and let the TiDB Cloud service choose its server-side default project.
+Remove client-side TiDB Cloud project selection and project inventory from TiDB Cloud CLI. TiDB Cloud Starter cluster creation must always omit project selection and let the TiDB Cloud service choose its server-side default project.
 
-Project is fading out as a user-facing TiDB Cloud concept. `ti` must not discover a default project, persist a project ID, accept a project selector, or infer a project from local state.
+Project is fading out as a user-facing TiDB Cloud concept. `ti` must not discover a default project, persist a project ID, accept a project selector, infer a project from local state, or expose a standalone project-listing command.
+
+This removal applies only to ti-owned command inputs, configuration, discovery, and inventory. It must not alter the shape or values of TiDB Cloud API responses. If a cluster response contains project-related fields or `labels["tidb.cloud/project"]`, ti returns them unchanged as opaque service-owned resource metadata.
 
 This is an intentional breaking change that supersedes the active behavior originally introduced by `docs/spec/done/0017-default-virtual-project-resolution.md`. The completed spec remains unchanged as a historical record.
 
@@ -16,8 +18,9 @@ This is an intentional breaking change that supersedes the active behavior origi
 - `ti configure` becomes a local AWS CLI-style configuration operation. It validates local input and writes the selected profile without making a TiDB Cloud API request.
 - Invalid or unauthorized API keys are reported by the first remote command that uses the permission required by that command, not by `ti configure`.
 - A Starter create request omits project placement entirely. It must not send `project_id: ""`, `labels: {}`, or `labels: {"tidb.cloud/project": ""}`.
-- TiDB Cloud remains free to return `labels["tidb.cloud/project"]` on cluster resources. ti preserves the API response and must not hide, rewrite, or interpret that server-selected label as local configuration.
-- `ti organization list-projects` remains available as an independent organization inventory command. It is no longer part of configure or DB creation.
+- TiDB Cloud remains free to return project-related fields and `labels["tidb.cloud/project"]` on cluster resources. ti preserves the API response and must not hide, rewrite, rename, filter, or interpret those values as local configuration.
+- Remove `ti organization list-projects` and the now-empty `ti organization` top-level command without a compatibility alias or placeholder.
+- Remove the project-list API client surface and `organization.project.read` permission from ti. Do not remove IAM SQL-user APIs or the IAM endpoint resolver because DB SQL-user workflows still depend on them.
 - Existing cluster, branch, IAM SQL-user, and SQL operations continue to identify resources through cluster and branch IDs. They must not acquire a project parameter.
 - Future DB product providers must not reintroduce a generic `--project-id` on `ti db` without a new approved product design.
 
@@ -69,6 +72,15 @@ ti db create-db-cluster \
 ```
 
 It fails as a normal unknown flag usage error with exit code `2`. ti must not silently ignore the supplied project ID because doing so would create the cluster in a different placement than the caller requested.
+
+The following commands are also removed:
+
+```bash
+ti organization
+ti organization list-projects
+```
+
+They fail as unknown commands. Project inventory is no longer part of the TiDB Cloud CLI command surface.
 
 ## Configure Contract
 
@@ -147,7 +159,7 @@ No request other than Starter create currently sends a project selection. Preser
 - Connection-string formatting and SQL execution use cluster ID plus locally managed SQL credentials.
 - Product dispatch discovers the cluster service plan through cluster metadata and does not use a project ID.
 
-Do not add a project filter to list pagination, dispatch discovery, Starter guardrails, SQL credential paths, operation logs, or telemetry.
+Do not add a project filter to list pagination, dispatch discovery, Starter guardrails, SQL credential paths, operation logs, or telemetry. Do not remove or rewrite project-related fields received in cluster responses; response preservation is independent of project selection.
 
 ## Dry-run Behavior
 
@@ -191,7 +203,7 @@ Migration rules:
 
 - Every DB command ignores the legacy value immediately after upgrade.
 - Loading a profile must not copy the legacy value into the runtime `config.Profile` used by DB services.
-- Ordinary DB, organization, FS, update, and help commands do not rewrite the config merely to remove the value.
+- Ordinary DB, FS, update, and help commands do not rewrite the config merely to remove the value.
 - The next successful `ti configure` for that profile removes its `project_id` while updating region and credentials.
 - Reconfiguring one profile must not remove or change values in another profile.
 - A legacy `project_id` with malformed or unexpected content must remain inert and must not block profile loading or a projectless DB request.
@@ -209,6 +221,9 @@ In `internal/cli`:
 - stop reading `project-id` in `createClusterOptions`;
 - update help, usage, and command tests;
 - keep `db-cluster-type`, `db-cluster-name`, spending limit, wait, and dry-run behavior unchanged.
+- remove registration of the `organization` parent and `list-projects` child commands;
+- remove organization-only service construction, help, aliases, permissions, and command-path mappings;
+- ensure `ti organization` and `ti organization list-projects` both fail through the ordinary unknown-command path.
 
 ### Configure
 
@@ -242,6 +257,41 @@ In `internal/api/starter`:
 
 No project-specific helper should remain in the create call path merely to pass an empty value.
 
+### Organization And IAM Project Inventory
+
+- delete `internal/organization` because it has no non-project use case;
+- remove `Project`, `ListProjectsOptions`, `ListProjectsResponse`, project response wire types, and `ListProjects` from `internal/api/iam`;
+- retain SQL-user request and response types and methods in `internal/api/iam`;
+- retain IAM endpoint routing used by SQL-user operations;
+- remove `authz.OrganizationProjectRead` and its command permission mapping;
+- remove the focused `make live-e2e-organization` target and organization live tests;
+- remove organization from issue-template command-family choices when no other organization command remains;
+- remove installer next steps that recommend project listing.
+
+Do not generalize this removal into deleting all uses of the word `project`. Vercel project IDs, source-code projects, and other unrelated provider concepts are outside this TiDB Cloud Project boundary.
+
+### API Response Fidelity
+
+Public TiDB Cloud response models remain faithful to the service contract:
+
+- preserve the generic cluster `labels` and `annotations` maps;
+- preserve any project-related field that is part of an official cluster or future product response;
+- do not redact `labels["tidb.cloud/project"]` from create, list, describe, update, wait, dry-run discovery, or error-context responses when that value came from TiDB Cloud;
+- do not synthesize project fields when the service omitted them;
+- do not copy a returned project value into local configuration or use it in a later request.
+
+Removing `ProjectID` and `ProjectType` from ti's configure result and removing the `--project-id` input do not authorize removing similarly named fields from an API resource response. Configure output is a ti-owned result, and `--project-id` is a ti-owned request selector; neither is an upstream API response field.
+
+The ownership boundary is:
+
+| Surface | Treatment |
+| --- | --- |
+| `ti configure` result fields `project_id` and `project_type` | Remove because ti synthesizes this local command result. |
+| `ti db create-db-cluster --project-id` | Remove because it is a ti-owned request selector. |
+| DB create project resolver and outgoing project label | Remove because ti must defer placement to the service. |
+| Project-related fields returned by a TiDB Cloud resource API | Preserve exactly as returned. |
+| `labels["tidb.cloud/project"]` returned on a cluster | Preserve inside the unmodified labels map. |
+
 ## Error Behavior
 
 After this spec:
@@ -251,6 +301,7 @@ After this spec:
 - `ti db create-db-cluster --project-id ...` fails with Cobra's unknown-flag usage error.
 - The first remote command reports authentication or authorization errors using that command's declared permission.
 - A server-side create rejection is returned unchanged through the existing API error mapping.
+- `ti organization` and `ti organization list-projects` return the normal unknown-command usage error because those commands no longer exist.
 
 Do not add a warning merely because TiDB Cloud assigned a project label in the response. That is expected server behavior.
 
@@ -275,19 +326,16 @@ ti db create-db-cluster
   -> ti validates Starter metadata and optionally waits for ACTIVE
 ```
 
-Organization project listing remains explicit:
-
-```text
-ti organization list-projects -> GET /v1beta1/projects
-```
+No runtime path calls `GET /v1beta1/projects`.
 
 ## Dependencies And Platform Impact
 
 - No new Go module is required.
 - No cgo dependency is introduced.
 - Configure becomes faster and works offline after the required local inputs are available.
+- The CLI no longer declares or exercises `organization.project.read`.
 - The change is identical on macOS, Linux, and Windows.
-- This is a CLI and configure-output breaking change because `--project-id`, `project_id`, `project_type`, and the saved default project are removed.
+- This is a CLI and configure-output breaking change because `ti organization`, `ti organization list-projects`, `--project-id`, `project_id`, `project_type`, and the saved default project are removed.
 
 ## Tests
 
@@ -303,7 +351,9 @@ Unit tests must cover:
 - dry-run output omits project and labels fields;
 - API response project labels remain present in rendered cluster output;
 - `--project-id` is absent from help and rejected as an unknown flag;
-- organization project listing remains functional and retains its own permission mapping.
+- the organization parent and project-list subcommand are absent from help and rejected as unknown commands;
+- the IAM client retains SQL-user behavior after its project-listing types and methods are removed;
+- cluster API response fixtures containing project-related fields or `labels["tidb.cloud/project"]` render those values unchanged.
 
 Black-box `make e2e` must cover:
 
@@ -311,9 +361,9 @@ Black-box `make e2e` must cover:
 - config and configure output with no project fields;
 - a legacy config containing `project_id` followed by create dry-run and normal fake-API create, proving the request omits labels;
 - explicit `--project-id` rejection;
-- the unchanged `ti organization list-projects` command through its dedicated fake IAM server.
+- rejection of the removed `ti organization` and `ti organization list-projects` commands.
 
-`make live-e2e-configure` must verify local persistence without requiring project discovery. `make live-e2e-db` must create a real Starter cluster without an explicit or configured project ID, wait for `ACTIVE`, preserve the non-empty server-selected project label in the returned resource, and complete the existing branch, SQL, update, and delete lifecycle. The live profile loader must not run configure merely because `project_id` is absent.
+`make live-e2e-configure` must verify local persistence without requiring project discovery. Remove `make live-e2e-organization`. `make live-e2e-db` must create a real Starter cluster without an explicit or configured project ID, wait for `ACTIVE`, preserve any server-selected project metadata in the returned resource, and complete the existing branch, SQL, update, and delete lifecycle. The live profile loader must not run configure merely because `project_id` is absent.
 
 ## Documentation Updates
 
@@ -322,7 +372,9 @@ When implemented, update:
 - `docs/priciples.md` as the product source of truth;
 - `AGENTS.md` current behavior, config examples, command examples, and live-e2e requirements;
 - `README.md` configure and Starter creation workflows;
-- current PingCAP Preview documentation for configure, credentials, Starter DB, create command reference, organization concepts, troubleshooting, and examples;
+- current PingCAP Preview documentation for configure, credentials, Starter DB, create command reference, troubleshooting, and examples;
+- remove the organization command reference page and its TOC entries rather than leaving a page for a command that no longer exists;
+- remove `ti organization list-projects` from installer next steps, command inventories, examples, and presentation material;
 - release notes to identify removal of `--project-id` and configure result fields as a breaking change.
 
 Do not rewrite completed specs or archived release notes to pretend the previous default-project behavior never existed.
@@ -339,24 +391,19 @@ ti db create-db-cluster \
   --wait
 ```
 
-Users who need project inventory can still request it explicitly:
-
-```bash
-ti organization list-projects --output text
-```
-
-That inventory has no effect on later DB commands.
+There is no TiDB Cloud project inventory command in ti after this spec. Users do not need to discover or select a project before creating a Starter cluster.
 
 ## Acceptance Criteria
 
 - No public `ti db` command accepts a project ID.
 - No `ti db` request sends a project ID or project-selection label.
 - Starter create omits the project label rather than sending an empty value.
-- TiDB Cloud can select the project and ti preserves the returned project label as resource metadata.
+- TiDB Cloud can select the project and ti preserves every returned project-related field or label as resource metadata.
 - `ti configure` performs no network request and stores no project ID.
 - Existing profile `project_id` values are ignored immediately and removed only when that profile is reconfigured.
 - Configure output contains no `project_id` or `project_type`.
-- `ti organization list-projects` remains available but is not called implicitly.
+- `ti organization` and `ti organization list-projects` are absent from help and rejected as unknown commands.
+- No runtime code calls `GET /v1beta1/projects` or declares `organization.project.read`.
 - Dry-run, unit, black-box e2e, configure live-e2e, and DB live-e2e coverage prove the projectless request path.
 - README and current product documentation match the implemented behavior.
 
@@ -364,10 +411,10 @@ That inventory has no effect on later DB commands.
 
 - Choosing or changing the TiDB Cloud service-side default project.
 - Moving an existing cluster between projects.
-- Hiding project labels returned by TiDB Cloud.
-- Removing the explicit `ti organization list-projects` command.
+- Hiding, renaming, filtering, or otherwise changing project fields and labels returned by TiDB Cloud.
 - Modifying historical completed specs or old release notes.
 - Designing project behavior for unimplemented Essential, Premium, or Dedicated providers.
+- Removing unrelated concepts such as Vercel project IDs.
 
 ## Dependencies
 

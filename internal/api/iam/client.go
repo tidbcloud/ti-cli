@@ -17,35 +17,14 @@ func New(client *api.Client) *Client {
 	return &Client{api: client}
 }
 
-type ListProjectsOptions struct {
-	PageSize  int32
-	PageToken string
-}
-
 type ListSQLUsersOptions struct {
 	PageSize  int32
 	PageToken string
 }
 
-type ListProjectsResponse struct {
-	Projects      []Project `json:"projects"`
-	NextPageToken string    `json:"next_page_token,omitempty"`
-}
-
 type ListSQLUsersResponse struct {
 	SQLUsers      []SQLUser `json:"sql_users"`
 	NextPageToken string    `json:"next_page_token,omitempty"`
-}
-
-type Project struct {
-	ID              string `json:"id"`
-	Name            string `json:"name"`
-	Type            string `json:"type"`
-	OrgID           string `json:"org_id"`
-	ClusterCount    int32  `json:"cluster_count"`
-	UserCount       int32  `json:"user_count"`
-	CreateTimestamp string `json:"create_timestamp"`
-	AWSCMEKEnabled  bool   `json:"aws_cmek_enabled"`
 }
 
 type SQLUser struct {
@@ -68,30 +47,6 @@ type UpdateSQLUserRequest struct {
 	Password    string
 	BuiltinRole string
 	CustomRoles []string
-}
-
-func (c *Client) ListProjects(ctx context.Context, opts ListProjectsOptions) (ListProjectsResponse, error) {
-	requestPath := "/v1beta1/projects"
-	query := url.Values{}
-	if opts.PageToken != "" {
-		query.Set("pageToken", opts.PageToken)
-	}
-	if opts.PageSize > 0 {
-		query.Set("pageSize", strconv.FormatInt(int64(opts.PageSize), 10))
-	}
-	if encoded := query.Encode(); encoded != "" {
-		requestPath += "?" + encoded
-	}
-
-	req, err := c.api.NewRequest(ctx, http.MethodGet, requestPath, nil)
-	if err != nil {
-		return ListProjectsResponse{}, err
-	}
-	var response listProjectsWireResponse
-	if err := c.api.DoJSON(req, &response); err != nil {
-		return ListProjectsResponse{}, err
-	}
-	return response.toResponse(), nil
 }
 
 func (c *Client) ListSQLUsers(ctx context.Context, clusterID string, opts ListSQLUsersOptions) (ListSQLUsersResponse, error) {
@@ -173,27 +128,6 @@ func (c *Client) DeleteSQLUser(ctx context.Context, clusterID, userName string) 
 		return err
 	}
 	return c.api.DoJSON(req, nil)
-}
-
-type listProjectsWireResponse struct {
-	Projects         []Project `json:"projects"`
-	NextPageToken    string    `json:"nextPageToken"`
-	NextPageTokenAlt string    `json:"next_page_token"`
-}
-
-func (r listProjectsWireResponse) toResponse() ListProjectsResponse {
-	nextPageToken := r.NextPageToken
-	if nextPageToken == "" {
-		nextPageToken = r.NextPageTokenAlt
-	}
-	projects := r.Projects
-	if projects == nil {
-		projects = []Project{}
-	}
-	return ListProjectsResponse{
-		Projects:      projects,
-		NextPageToken: nextPageToken,
-	}
 }
 
 type listSQLUsersWireResponse struct {

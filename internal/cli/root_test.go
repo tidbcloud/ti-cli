@@ -158,7 +158,6 @@ func TestCommandOperationLogRecordsSafeSummary(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("TI_LOGGING", "on")
-	configureIAMForTest(t)
 
 	_, _, err := executeForTest(
 		"configure",
@@ -428,7 +427,6 @@ func TestTelemetrySendsCanonicalSafeCommandEvent(t *testing.T) {
 		"db", "create-db-cluster",
 		"--db-cluster-type", "starter",
 		"--db-cluster-name", clusterName,
-		"--project-id", "must-not-appear-project-id",
 		"--dry-run",
 	)
 	if err != nil {
@@ -443,7 +441,7 @@ func TestTelemetrySendsCanonicalSafeCommandEvent(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("eligible command did not send telemetry")
 	}
-	for _, prohibited := range []string{clusterName, "must-not-appear-profile", "must-not-appear-project-id", "test-public", "test-private"} {
+	for _, prohibited := range []string{clusterName, "must-not-appear-profile", "test-public", "test-private"} {
 		if strings.Contains(string(body), prohibited) {
 			t.Fatalf("telemetry payload leaked %q: %s", prohibited, body)
 		}
@@ -472,7 +470,7 @@ func TestTelemetrySendsCanonicalSafeCommandEvent(t *testing.T) {
 	if event.CommandPath != "ti db create-db-cluster" || event.ExitCode != 0 || event.ErrorCode != "" || event.CloudProvider != "aws" || event.RegionCode != "aws-us-east-1" || event.ProfileSource != "explicit" || event.Tag != "e2b-preview" || string(event.Extra) != `{"campaign":"launch","runtime":"e2b"}` {
 		t.Fatalf("unexpected telemetry event: %#v", event)
 	}
-	for _, want := range []string{"db-cluster-name", "dry-run", "profile", "project-id"} {
+	for _, want := range []string{"db-cluster-name", "db-cluster-type", "dry-run", "profile"} {
 		if !containsString(event.FlagNames, want) {
 			t.Fatalf("missing changed flag %q in %#v", want, event.FlagNames)
 		}
@@ -560,7 +558,7 @@ func TestTelemetryFailureDoesNotChangeCommandResult(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("TI_LOGGING", "off")
 	withConfigEnv(t)
-	args := []string{"db", "create-db-cluster", "--db-cluster-name", "demo", "--project-id", "project-1", "--dry-run"}
+	args := []string{"db", "create-db-cluster", "--db-cluster-name", "demo", "--db-cluster-type", "starter", "--dry-run"}
 
 	t.Setenv("TI_TELEMETRY", "off")
 	wantStdout, wantStderr, wantErr := executeForTestWithInfo(testVersion(), args...)
@@ -666,9 +664,6 @@ func TestHelpUsageShowsRequiredFirstAndOptionalBracketed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected db create help to succeed, got %v", err)
 	}
-	if !strings.Contains(stdout, "    [--project-id <string>]") {
-		t.Fatalf("expected --project-id to be optional, got:\n%s", stdout)
-	}
 	if !strings.Contains(stdout, "    [--wait]") {
 		t.Fatalf("expected --wait to be optional, got:\n%s", stdout)
 	}
@@ -676,15 +671,14 @@ func TestHelpUsageShowsRequiredFirstAndOptionalBracketed(t *testing.T) {
 		"--db-cluster-name <string> (required)",
 		"--db-cluster-type <string>",
 		"--db-cluster-type <string> (required)",
-		"--project-id <string>",
 		"--monthly-spending-limit-usd-cents <int32>",
 	} {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("expected formatted flag %q, got:\n%s", want, stdout)
 		}
 	}
-	if strings.Contains(stdout, "--project-id <string> (required)") {
-		t.Fatalf("optional --project-id must not be marked required, got:\n%s", stdout)
+	if strings.Contains(stdout, "--project-id") {
+		t.Fatalf("db create help exposes removed project selection:\n%s", stdout)
 	}
 	stdout, _, err = executeForTest("db", "delete-db-cluster", "help")
 	if err != nil {
@@ -741,8 +735,7 @@ func TestServiceCommandsDeclarePermissions(t *testing.T) {
 			!strings.HasPrefix(path, "ti fs ") &&
 			!strings.HasPrefix(path, "ti fs-git ") &&
 			!strings.HasPrefix(path, "ti fs-journal ") &&
-			!strings.HasPrefix(path, "ti fs-vault ") &&
-			!strings.HasPrefix(path, "ti organization ") {
+			!strings.HasPrefix(path, "ti fs-vault ") {
 			return
 		}
 		if _, err := authz.ForCommand(path); err != nil {
@@ -997,7 +990,7 @@ func TestControlPlaneCommandSpecRendersImplementedResult(t *testing.T) {
 		Use:        "implemented-command",
 		Short:      "Implemented command.",
 		Mutation:   readOnlyCommand,
-		Permission: authz.OrganizationProjectRead,
+		Permission: authz.StarterClusterRead,
 		Run: func(commandContext) (any, error) {
 			return map[string]any{
 				"items": []map[string]string{
@@ -1065,7 +1058,7 @@ func TestControlPlaneCommandSpecUsesCustomDryRun(t *testing.T) {
 func TestMutatingControlPlaneDryRunRendersJSON(t *testing.T) {
 	withConfigEnv(t)
 
-	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "demo-cluster", "--project-id", "project-1", "--wait", "--dry-run")
+	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "demo-cluster", "--wait", "--dry-run")
 	if err != nil {
 		t.Fatalf("expected dry-run to succeed, got %v", err)
 	}
@@ -1101,7 +1094,7 @@ func TestRegionOverrideWinsOverEnvironmentCredentials(t *testing.T) {
 	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "test-public")
 	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "test-private")
 
-	stdout, _, err := executeForTest("--region", "aws-ap-southeast-1", "db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run")
+	stdout, _, err := executeForTest("--region", "aws-ap-southeast-1", "db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run")
 	if err != nil {
 		t.Fatalf("expected dry-run to succeed, got %v", err)
 	}
@@ -1115,7 +1108,7 @@ func TestRegionOverrideAllowsEnvironmentCredentialsWithoutEnvRegion(t *testing.T
 	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "test-public")
 	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "test-private")
 
-	stdout, _, err := executeForTest("--region", "ali-ap-southeast-1", "db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run")
+	stdout, _, err := executeForTest("--region", "ali-ap-southeast-1", "db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run")
 	if err != nil {
 		t.Fatalf("expected dry-run to succeed, got %v", err)
 	}
@@ -1124,24 +1117,7 @@ func TestRegionOverrideAllowsEnvironmentCredentialsWithoutEnvRegion(t *testing.T
 	}
 }
 
-func TestCreateClusterUsesConfiguredDefaultProject(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("TI_REGION_CODE", "")
-	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "")
-	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
-	writeCompleteProfile(t, home, "default")
-
-	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run")
-	if err != nil {
-		t.Fatalf("expected profile project fallback to succeed: %v", err)
-	}
-	if !strings.Contains(stdout, `"tidb.cloud/project": "virtual-test"`) {
-		t.Fatalf("dry-run did not use configured project:\n%s", stdout)
-	}
-}
-
-func TestCreateClusterAllowsMissingConfiguredProject(t *testing.T) {
+func TestCreateClusterOmitsProjectSelection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("TI_REGION_CODE", "")
@@ -1158,24 +1134,10 @@ func TestCreateClusterAllowsMissingConfiguredProject(t *testing.T) {
 
 	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "demo-cluster", "--dry-run")
 	if err != nil {
-		t.Fatalf("expected server-default project fallback to succeed: %v", err)
+		t.Fatalf("expected create dry-run to succeed: %v", err)
 	}
 	if strings.Contains(stdout, "tidb.cloud/project") || strings.Contains(stdout, `"labels"`) {
 		t.Fatalf("dry-run unexpectedly included a project label:\n%s", stdout)
-	}
-}
-
-func TestCreateClusterExplicitEmptyProjectDoesNotFallback(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("TI_REGION_CODE", "")
-	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "")
-	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
-	writeCompleteProfile(t, home, "default")
-
-	_, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "", "--dry-run")
-	if apperr.CodeFor(err) != "db.empty_project_id" {
-		t.Fatalf("unexpected error: %v", err)
 	}
 }
 
@@ -1204,8 +1166,6 @@ func TestConfigureUsesTIProfileNamespace(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("TI_PROFILE", "stage")
-	configureIAMForTest(t)
-
 	stdout, _, err := executeForTest(
 		"configure", "--non-interactive",
 		"--region-code", "aws-us-east-1",
@@ -1222,8 +1182,8 @@ func TestConfigureUsesTIProfileNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if doc["stage"].ProjectID != "virtual-test" {
-		t.Fatalf("stage project was not stored: %#v", doc)
+	if doc["stage"].LegacyProjectID != "" {
+		t.Fatalf("configure unexpectedly stored project state: %#v", doc)
 	}
 	if _, exists := doc["default"]; exists {
 		t.Fatalf("configure unexpectedly wrote default profile: %#v", doc)
@@ -1233,7 +1193,6 @@ func TestConfigureUsesTIProfileNamespace(t *testing.T) {
 func TestConfigureDoesNotDisplayTelemetryNotice(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("TI_TELEMETRY", "off")
-	configureIAMForTest(t)
 	_, stderr, err := executeForTest(
 		"configure", "--non-interactive",
 		"--region-code", "aws-us-east-1",
@@ -1264,7 +1223,7 @@ func TestExplicitEmptyRegionFails(t *testing.T) {
 func TestMutatingControlPlaneDryRunSupportsTextOutput(t *testing.T) {
 	withConfigEnv(t)
 
-	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run", "--output", "text")
+	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run", "--output", "text")
 	if err != nil {
 		t.Fatalf("expected dry-run to succeed, got %v", err)
 	}
@@ -1276,7 +1235,7 @@ func TestMutatingControlPlaneDryRunSupportsTextOutput(t *testing.T) {
 func TestQueryAppliesToDryRunResult(t *testing.T) {
 	withConfigEnv(t)
 
-	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run", "--query", "command")
+	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run", "--query", "command")
 	if err != nil {
 		t.Fatalf("expected query to succeed, got %v", err)
 	}
@@ -1288,7 +1247,7 @@ func TestQueryAppliesToDryRunResult(t *testing.T) {
 func TestInvalidQueryFails(t *testing.T) {
 	withConfigEnv(t)
 
-	_, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run", "--query", "command[")
+	_, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run", "--query", "command[")
 	if err == nil {
 		t.Fatal("expected invalid query to fail")
 	}
@@ -1307,7 +1266,7 @@ func TestDryRunRequiresConfigAndCredentials(t *testing.T) {
 	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
 	writeConfigOnlyProfile(t, "default")
 
-	_, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run")
+	_, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run")
 	if err == nil {
 		t.Fatal("expected missing config to fail")
 	}
@@ -1328,7 +1287,7 @@ func TestTIProfileEnvironmentSelectsFileProfile(t *testing.T) {
 	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "")
 	writeCompleteProfile(t, home, "stage")
 
-	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--project-id", "project-1", "--dry-run")
+	stdout, _, err := executeForTest("db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run")
 	if err != nil {
 		t.Fatalf("expected dry-run to succeed, got %v", err)
 	}
@@ -1376,7 +1335,6 @@ func writeCompleteProfile(t *testing.T, home, profileName string) {
 	t.Helper()
 	err := store.WriteProfile(home, profileName, store.ConfigProfile{
 		RegionCode: "aws-us-east-1",
-		ProjectID:  "virtual-test",
 	}, store.CredentialsProfile{
 		TiDBCloudPublicKey:  "test-public",
 		TiDBCloudPrivateKey: "test-private",
@@ -1451,20 +1409,6 @@ func executeForTestWithInfo(info version.Info, args ...string) (string, string, 
 	root := NewRootCommand(info)
 	err := Execute(context.Background(), root, info, args, &stdout, &stderr)
 	return stdout.String(), stderr.String(), err
-}
-
-func configureIAMForTest(t *testing.T) {
-	t.Helper()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1beta1/projects" {
-			http.NotFound(w, r)
-			return
-		}
-		_, _ = w.Write([]byte(`{"projects":[{"id":"virtual-test","type":"tidbx_virtual"}]}`))
-	}))
-	t.Cleanup(server.Close)
-	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "1")
-	t.Setenv("TI_TEST_IAM_BASE_URL", server.URL)
 }
 
 func testVersion() version.Info {

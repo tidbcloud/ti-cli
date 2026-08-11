@@ -9,11 +9,10 @@ import (
 
 func TestForCommand(t *testing.T) {
 	tests := map[string]Permission{
-		"ti organization list-projects": OrganizationProjectRead,
-		"ti fs create-file-system":      FSVolumeCreate,
-		"ti fs search-file-content":     FSFileRead,
-		"ti fs mount-file-system":       FSMount,
-		"ti fs-vault mount-vault":       FSVaultSecretRead,
+		"ti fs create-file-system":  FSVolumeCreate,
+		"ti fs search-file-content": FSFileRead,
+		"ti fs mount-file-system":   FSMount,
+		"ti fs-vault mount-vault":   FSVaultSecretRead,
 	}
 
 	for command, want := range tests {

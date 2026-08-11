@@ -94,15 +94,14 @@ func TestCreateCluster(t *testing.T) {
 		if body["displayName"] != "demo-cluster" {
 			t.Fatalf("unexpected body: %#v", body)
 		}
-		labels := body["labels"].(map[string]any)
-		if labels[ProjectLabelKey] != "project-1" {
-			t.Fatalf("unexpected labels: %#v", labels)
+		if _, ok := body["labels"]; ok {
+			t.Fatalf("create request must omit labels: %#v", body)
 		}
 		region := body["region"].(map[string]any)
 		if region["name"] != "regions/aws-us-east-1" {
 			t.Fatalf("unexpected region: %#v", region)
 		}
-		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo-cluster","clusterPlan":"STARTER"}`))
+		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo-cluster","clusterPlan":"STARTER","labels":{"tidb.cloud/project":"server-project","custom":"value"}}`))
 	}))
 	defer server.Close()
 
@@ -110,13 +109,15 @@ func TestCreateCluster(t *testing.T) {
 	cluster, err := client.CreateCluster(context.Background(), CreateClusterRequest{
 		DisplayName: "demo-cluster",
 		RegionName:  "regions/aws-us-east-1",
-		ProjectID:   "project-1",
 	})
 	if err != nil {
 		t.Fatalf("CreateCluster failed: %v", err)
 	}
 	if cluster.ID != "cluster-1" || cluster.DisplayName != "demo-cluster" {
 		t.Fatalf("unexpected cluster: %#v", cluster)
+	}
+	if cluster.Labels["tidb.cloud/project"] != "server-project" || cluster.Labels["custom"] != "value" {
+		t.Fatalf("response labels were not preserved: %#v", cluster.Labels)
 	}
 }
 

@@ -178,7 +178,7 @@ func TestCreatePlanFailureRetainsAcceptedClusterIdentity(t *testing.T) {
 	defer server.Close()
 
 	_, err := testService(server.URL).CreateCluster(context.Background(), CreateClusterOptions{
-		Profile: testProfile(), DisplayName: "demo", ClusterType: "starter", ProjectID: "project-1", Product: CreateOptions{MonthlySpendingLimitUSDCents: -1},
+		Profile: testProfile(), DisplayName: "demo", ClusterType: "starter", Product: CreateOptions{MonthlySpendingLimitUSDCents: -1},
 	})
 	if apperr.CodeFor(err) != "db.not_starter_cluster" {
 		t.Fatalf("unexpected error: %v", err)
@@ -228,7 +228,7 @@ func TestCreateWaitPlanFailureRetainsAcceptedClusterIdentity(t *testing.T) {
 	service.ClusterWaitTimeout = time.Second
 	service.ClusterWaitPollInterval = time.Millisecond
 	_, err := service.CreateCluster(context.Background(), CreateClusterOptions{
-		Profile: testProfile(), DisplayName: "demo", ClusterType: "starter", ProjectID: "project-1", Product: CreateOptions{MonthlySpendingLimitUSDCents: -1}, WaitUntilActive: true,
+		Profile: testProfile(), DisplayName: "demo", ClusterType: "starter", Product: CreateOptions{MonthlySpendingLimitUSDCents: -1}, WaitUntilActive: true,
 	})
 	if apperr.CodeFor(err) != "db.not_starter_cluster" {
 		t.Fatalf("unexpected error: %v", err)

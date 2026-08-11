@@ -15,7 +15,6 @@ func TestWriteProfileCreatesFilesAndRestrictsCredentials(t *testing.T) {
 
 	err := WriteProfile(home, "default", ConfigProfile{
 		RegionCode:      "aws-us-east-1",
-		ProjectID:       "virtual-1",
 		FSResourceName:  "workspace",
 		FSTenantID:      "tenant",
 		FSCloudProvider: "aws",
@@ -46,9 +45,6 @@ func TestWriteProfileCreatesFilesAndRestrictsCredentials(t *testing.T) {
 	}
 	if cfg["default"].FSResourceName != "workspace" {
 		t.Fatalf("fs resource name was not persisted: %#v", cfg["default"])
-	}
-	if cfg["default"].ProjectID != "virtual-1" {
-		t.Fatalf("project id was not persisted: %#v", cfg["default"])
 	}
 
 	creds, err := ReadCredentials(home)
@@ -127,7 +123,7 @@ fs_default_file_system_name = "scratch"
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := configDoc["default"]; got.RegionCode != "aws-us-east-1" || got.ProjectID != "project-1" {
+	if got := configDoc["default"]; got.RegionCode != "aws-us-east-1" || got.LegacyProjectID != "project-1" {
 		t.Fatalf("default profile changed: %#v", got)
 	}
 	data, err := os.ReadFile(ConfigPath(home))
