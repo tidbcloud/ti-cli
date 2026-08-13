@@ -42,6 +42,10 @@ func TestTokenTTLValidation(t *testing.T) {
 	if _, _, _, err := validateGenerate(base); apperr.CodeFor(err) != "fs.token_lifetime_required" {
 		t.Fatalf("both lifetimes = %v", err)
 	}
+	longScopedTTL := MaxTTL + time.Second
+	if seconds, err := scopedTTLSeconds(&longScopedTTL); err != nil || seconds == nil || *seconds != int64(longScopedTTL/time.Second) {
+		t.Fatalf("scopedTTLSeconds(%s) = %v, %v", longScopedTTL, seconds, err)
+	}
 }
 
 func TestGenerateAndListMapBackendFieldsAndStoreMetadata(t *testing.T) {
@@ -92,6 +96,78 @@ func TestGenerateAndListMapBackendFieldsAndStoreMetadata(t *testing.T) {
 	encoded, err := json.Marshal(listed)
 	if err != nil || strings.Contains(string(encoded), "drive9_malicious") {
 		t.Fatalf("list output retained unexpected plaintext: %s, %v", encoded, err)
+	}
+}
+
+func TestGenerateScopedUsesOwnerBearerAndStoresScopes(t *testing.T) {
+	home := t.TempDir()
+	ownerToken := wrappedToken(t, "fs-1", 1)
+	scopedToken := wrappedToken(t, "fs-1", 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tokens" || r.Header.Get("Authorization") != "Bearer "+ownerToken {
+			t.Errorf("request = %s %s auth=%q", r.Method, r.URL.Path, r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("X-TiDBCloud-Public-Key") != "" {
+			t.Error("scoped issue included TiDB Cloud credentials")
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body["subject"] != "sandbox" || body["ttl_seconds"] != float64(3600) {
+			t.Errorf("body = %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"token":` + jsonString(scopedToken) + `,"token_id":"scoped-1","subject":"sandbox","scope_kind":"fs_scoped","expires_at":"2026-08-13T00:00:00Z","scopes":[{"prefix":"/workspace","ops":["read","list"]}]}`))
+	}))
+	defer server.Close()
+	service, profile := tokenTestService(home, server.URL)
+	if _, err := fscred.StoreCredentialRecord(home, profile, fscred.Credential{FileSystemID: "fs-1", RegionCode: "aws-us-east-1", APIKey: ownerToken, TokenID: "owner-1", ScopeKind: "owner"}, false); err != nil {
+		t.Fatal(err)
+	}
+	ttl := time.Hour
+	result, err := service.GenerateScoped(context.Background(), GenerateScopedOptions{Profile: profile, FileSystemID: "fs-1", Subject: "sandbox", TTL: &ttl, Allows: []string{"/workspace:read,list"}, StoreLocally: true, Replace: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ScopeKind != "fs_scoped" || !result.CredentialsStored || len(result.Scopes) != 1 || result.Scopes[0].Prefix != "/workspace" {
+		t.Fatalf("result = %#v", result)
+	}
+	credential, err := fscred.GetCredential(home, profile.Name, "fs-1")
+	if err != nil || credential.APIKey != scopedToken || credential.ScopeKind != "fs_scoped" || len(credential.Scopes) != 1 || strings.Join(credential.Scopes[0].Ops, ",") != "read,list" {
+		t.Fatalf("credential = %#v, %v", credential, err)
+	}
+}
+
+func TestGenerateScopedValidationAndKnownScopedOwnerRejection(t *testing.T) {
+	ttl := time.Hour
+	base := GenerateScopedOptions{TTL: &ttl}
+	for _, tc := range []struct {
+		allow string
+		code  string
+	}{
+		{"", "fs.token_scope_required"},
+		{"/workspace:search", "fs.invalid_token_scope"},
+		{"/workspace:unknown", "fs.invalid_token_scope"},
+		{"/workspace/../secret:read", "fs.invalid_token_scope"},
+	} {
+		opts := base
+		if tc.allow != "" {
+			opts.Allows = []string{tc.allow}
+		}
+		if _, _, _, err := validateGenerateScoped(opts); apperr.CodeFor(err) != tc.code {
+			t.Fatalf("allow %q error = %v", tc.allow, err)
+		}
+	}
+	home := t.TempDir()
+	service, profile := tokenTestService(home, "http://127.0.0.1:1")
+	if _, err := fscred.StoreCredentialRecord(home, profile, fscred.Credential{FileSystemID: "fs-1", RegionCode: "aws-us-east-1", APIKey: wrappedToken(t, "fs-1", 1), ScopeKind: "fs_scoped"}, false); err != nil {
+		t.Fatal(err)
+	}
+	_, err := service.GenerateScoped(context.Background(), GenerateScopedOptions{Profile: profile, FileSystemID: "fs-1", TTL: &ttl, Allows: []string{"/workspace:read"}})
+	if apperr.CodeFor(err) != "fs.owner_token_required" {
+		t.Fatalf("known scoped token error = %v", err)
 	}
 }
 
@@ -195,7 +271,7 @@ func TestGenerateStoreAndRollbackFailureReturnsOneTimeSecret(t *testing.T) {
 	}
 }
 
-func TestLocalRefreshAtomicallyReplacesCredential(t *testing.T) {
+func TestLocalRefreshAtomicallyReplacesCredentialAndPreservesScopes(t *testing.T) {
 	home := t.TempDir()
 	oldToken := wrappedToken(t, "fs-1", 1)
 	newToken := wrappedToken(t, "fs-1", 2)
@@ -204,11 +280,11 @@ func TestLocalRefreshAtomicallyReplacesCredential(t *testing.T) {
 			t.Errorf("refresh authentication = %#v", r.Header)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"token":` + jsonString(newToken) + `,"token_id":"token-1","tenant_id":"fs-1","scope_kind":"owner","expires_at":null}`))
+		_, _ = w.Write([]byte(`{"token":` + jsonString(newToken) + `,"token_id":"token-1","tenant_id":"fs-1","scope_kind":"fs_scoped","expires_at":"2026-08-14T00:00:00Z"}`))
 	}))
 	defer server.Close()
 	service, profile := tokenTestService(home, server.URL)
-	if _, err := fscred.StoreCredentialRecord(home, profile, fscred.Credential{FileSystemID: "fs-1", RegionCode: "aws-us-east-1", APIKey: oldToken, TokenID: "token-1", TokenName: "preserved", ScopeKind: "owner"}, false); err != nil {
+	if _, err := fscred.StoreCredentialRecord(home, profile, fscred.Credential{FileSystemID: "fs-1", RegionCode: "aws-us-east-1", APIKey: oldToken, TokenID: "token-1", TokenName: "preserved", ScopeKind: "fs_scoped", Scopes: []fscred.TokenScope{{Prefix: "/workspace", Ops: []string{"read", "list"}}}}, false); err != nil {
 		t.Fatal(err)
 	}
 	result, err := service.Refresh(context.Background(), RefreshOptions{Profile: profile, FileSystemID: "fs-1"})
@@ -222,7 +298,7 @@ func TestLocalRefreshAtomicallyReplacesCredential(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if credential.APIKey != newToken || credential.TokenName != "preserved" || credential.TokenID != "token-1" {
+	if credential.APIKey != newToken || credential.TokenName != "preserved" || credential.TokenID != "token-1" || credential.ScopeKind != "fs_scoped" || len(credential.Scopes) != 1 || credential.Scopes[0].Prefix != "/workspace" {
 		t.Fatalf("credential = %#v", credential)
 	}
 }

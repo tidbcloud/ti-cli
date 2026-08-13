@@ -42,12 +42,34 @@ The backend model has these constraints:
 - Local state remains a selected operational credential, not a replica of all remote tokens and not a multi-token wallet.
 - A profile may store one selected token for each File System. Different profiles may store different tokens for the same File System.
 - Token management never changes which File System is selected implicitly. Existing explicit FS ID and token-derived ID rules remain in force.
-- Control-plane token management uses TiDB Cloud public/private keys only. It must not also send the selected local FS token.
+- Owner-token generation uses TiDB Cloud public/private keys only. It must not also send an FS token.
+- Scoped-token generation uses an owner FS bearer token only. It must not also send TiDB Cloud public/private keys.
+- List, enable, disable, and delete use an explicitly supplied `--fs-token` or `TI_FS_TOKEN` when present; otherwise they use TiDB Cloud public/private keys. An owner bearer is accepted and an `fs_scoped` bearer is rejected by the backend.
 - Self-refresh uses one FS bearer token only. It must not also send TiDB Cloud public/private keys.
 - ti never guesses a remote `token_id` from token name, issuance time, list ordering, profile, or the number of returned rows.
 - An old local credential with no known `token_id` remains valid for data-plane use but cannot be correlated with one list row.
 - No background refresh, automatic expiry renewal, token daemon, or automatic remote revocation is introduced.
-- Owner token management is the first-phase creation surface. This spec does not add a ti command for issuing new path-level `fs_scoped` tokens. Existing scoped tokens can appear in list and can be managed by token ID through TiDB Cloud credentials. A separate spec can expose scoped issuance after its local import and scope-display contract is designed.
+- `TI_FS_TOKEN` can contain either an owner token or an `fs_scoped` token. The token wrapper does not reveal its kind or scopes, so ti must not infer capabilities from JWT claims. The backend remains the authorization boundary for explicit and environment tokens. Authoritative metadata stored by ti may provide an earlier diagnostic but never grants authority.
+- Owner tokens can access the full File System, generate scoped tokens, list token metadata, delete same-FS tokens, enable or disable scoped targets, and self-refresh. Owner bearer authentication cannot enable or disable an owner-token target. Scoped tokens can self-refresh and access only allowed filesystem paths and operations; they cannot issue child tokens or manage token inventory.
+- The backend token list does not return path scopes. ti displays scopes from the one-time scoped-generation response and can retain them with a locally stored generated token, but it does not claim that remote list reconstructs scope details.
+
+The effective backend capability matrix is:
+
+| Capability | Owner token | `fs_scoped` token |
+| --- | --- | --- |
+| File read, list, search, write, append, copy, move, mkdir, symlink, hardlink, and delete | Allowed | Allowed only when every requested path and operation is covered by its scopes. |
+| File `chmod` | Allowed | Always denied. |
+| Upload, resume, pack/unpack data paths | Allowed | Allowed only within the scoped paths and required operations. |
+| Layer create/list/read/write/checkpoint/rollback/commit | Allowed | Allowed only when the layer base root and entries satisfy the scopes. |
+| Mount | Allowed | Allowed when mount startup probes and subsequent operations are within the token scopes; use a scoped remote root rather than assuming `/` is accessible. |
+| Generate another scoped token | Allowed | Denied. |
+| List token metadata through Bearer auth | Allowed for the same File System. | Denied. |
+| Enable or disable tokens through Bearer auth | Allowed only when the target is an `fs_scoped` token in the same File System. | Denied. |
+| Delete tokens through Bearer auth | Allowed for a target in the same File System, including an owner target. | Denied. |
+| Self-refresh | Allowed | Allowed; scopes remain unchanged. |
+| Git workspace API, Journal, Vault, SQL, fork, and event APIs | Allowed under their normal owner contracts | Denied by the backend scoped-token dispatcher. |
+
+ti passes both token kinds unchanged to the companion for ordinary FS commands. It does not pre-authorize paths from locally stored scope metadata, because remote scope changes and backend routing remain authoritative.
 
 ## User-Facing Commands
 
@@ -55,6 +77,7 @@ Add these commands:
 
 ```text
 ti fs generate-file-system-token
+ti fs generate-file-system-scoped-token
 ti fs list-file-system-tokens
 ti fs enable-file-system-token
 ti fs disable-file-system-token
@@ -94,6 +117,20 @@ ti fs generate-file-system-token \
 
 If another local token already exists, `--store-locally` fails before the remote request. The user must explicitly add `--replace`. Replacing the local selection does not disable, delete, refresh, or otherwise change the previous remote token.
 
+Generate a finite path-and-operation-limited token using an owner token:
+
+```bash
+TI_FS_TOKEN=<owner-token> ti fs generate-file-system-scoped-token \
+  --subject sandbox-agent \
+  --ttl 24h \
+  --allow /workspace:read,list,write \
+  --allow /artifacts:read,list
+```
+
+`--ttl` and at least one repeatable `--allow <prefix>:<ops>` are required. Scoped TTL is a positive Go duration that resolves to whole seconds; unlike owner generation, the current backend does not impose a 365-day scoped-token ceiling. Supported operations are `read`, `list`, `search`, `write`, and `delete`; `search` also requires `read`. Prefixes are canonical absolute remote paths, and duplicate canonical prefixes are rejected. `--file-system-id` is optional when the owner token is supplied explicitly or through `TI_FS_TOKEN` because ti verifies the ID embedded in the token. It is required when loading a locally stored owner token.
+
+`--subject` is an optional server-side audit label of at most 64 bytes. It is not a unique token name or selector. Add `--store-locally` to replace the selected operational credential with the generated scoped token; an existing local token additionally requires `--replace`. This explicit replacement can remove the locally selected owner capability, while the previous remote owner token remains active.
+
 List token metadata for exactly one File System:
 
 ```bash
@@ -126,7 +163,15 @@ All remote mutations support `--dry-run`. Dry-run validates credential availabil
 
 ## Authentication And Region Resolution
 
-Generate, list, enable, disable, and delete use the selected profile's TiDB Cloud API keys. Request credentials are sent through `X-TiDBCloud-Public-Key` and `X-TiDBCloud-Private-Key` headers, not copied into request JSON. These commands fail before the request if either key is missing.
+Owner generate uses the selected profile's TiDB Cloud API keys. Request credentials are sent through `X-TiDBCloud-Public-Key` and `X-TiDBCloud-Private-Key` headers, not copied into request JSON. The command fails before the request if either key is missing.
+
+Scoped generate resolves an owner FS token in this order:
+
+1. Explicit non-empty `--fs-token`.
+2. Non-empty `TI_FS_TOKEN`.
+3. The selected local File System credential identified by `--file-system-id`.
+
+List, enable, disable, and delete use the same explicit flag then environment precedence. If neither contains a token, they use TiDB Cloud API keys. They do not silently use a local token because doing so would unexpectedly replace the established control-plane identity; use `--fs-token` when a locally known owner token should authorize one management call.
 
 Refresh resolves its FS token in the existing order:
 
@@ -158,6 +203,20 @@ ti fs generate-file-system-token
        body: tenant_id, key_name, ttl_seconds when finite
   -> map tenant_id to file_system_id and token to fs_token
   -> optionally store the returned token locally
+  -> render the one-time secret response
+```
+
+Generate scoped:
+
+```text
+ti fs generate-file-system-scoped-token
+  -> resolve exactly one owner bearer and verify its embedded File System ID
+  -> validate finite TTL, subject, canonical prefixes, and operation sets
+  -> POST /v1/tokens
+       Authorization: Bearer <owner-token>
+       body: subject, ttl_seconds, scopes[{prefix,ops}]
+  -> receive the scoped plaintext, immutable token ID, expiry, and normalized scopes once
+  -> optionally store that scoped token as the selected local credential
   -> render the one-time secret response
 ```
 
@@ -227,9 +286,13 @@ token_id = "<token-id>"
 scope_kind = "owner"
 token_name = "local-owner"
 expires_at = "2026-09-11T00:00:00Z"
+
+[[scopes]]
+prefix = "/workspace"
+ops = ["read", "list", "write"]
 ```
 
-The existing `api_key` key remains unchanged for compatibility. `token_id`, `scope_kind`, `token_name`, and `expires_at` are optional because create and old imports cannot discover them with the available backend APIs.
+The existing `api_key` key remains unchanged for compatibility. `token_id`, `scope_kind`, `token_name`, `expires_at`, and `scopes` are optional because create and old imports cannot discover them with the available backend APIs. `scopes` is written only from an authoritative scoped-generation response and is preserved across self-refresh because refresh does not return scopes.
 
 Do not persist remote `status` as an authoritative local value. Another machine can enable, disable, delete, or refresh a token at any time, making such a cached status stale.
 
@@ -334,6 +397,23 @@ Generate JSON:
   "status": "active",
   "issued_at": "2026-08-12T00:00:00Z",
   "expires_at": "2026-08-13T00:00:00Z",
+  "fs_token": "drive9_...",
+  "credentials_stored": false
+}
+```
+
+Scoped generate JSON:
+
+```json
+{
+  "file_system_id": "tnt_abc123",
+  "token_id": "0d716939-f896-420c-a3f9-68310345f17d",
+  "subject": "sandbox-agent",
+  "scope_kind": "fs_scoped",
+  "expires_at": "2026-08-13T00:00:00Z",
+  "scopes": [
+    {"prefix": "/workspace", "ops": ["read", "list", "write"]}
+  ],
   "fs_token": "drive9_...",
   "credentials_stored": false
 }
@@ -461,13 +541,15 @@ Black-box e2e uses a fake FS server and fake companion to verify command help, r
 Live e2e must use a uniquely generated token on the temporary test File System and must not mutate the provision token or any pre-existing token:
 
 1. Generate a uniquely named finite-TTL owner token.
-2. List the exact File System and verify the generated token metadata and absence of plaintext.
-3. Perform a data-plane read using the generated token.
-4. Disable the generated token, wait beyond the documented cache convergence window, and verify data-plane authentication is rejected.
-5. Enable the same token and verify data-plane access returns.
-6. Refresh the token with no active mount, verify the token ID is unchanged, verify the new token works, and verify the old token stops working after cache convergence.
-7. Delete the refreshed token and verify it no longer authenticates or appears in default list.
-8. Clean up only the token generated by the same test run, including failure cleanup through TiDB Cloud credentials.
+2. Use that owner token to generate a finite scoped token with a unique subject and multiple path/operation constraints; verify in-scope operations succeed and out-of-scope path and operation requests fail.
+3. Verify a scoped token can self-refresh but cannot generate another scoped token, list token metadata, or manage token status.
+4. List the exact File System through both TiDB Cloud credentials and the generated owner token, and verify metadata and absence of plaintext.
+5. Perform a data-plane read using the generated owner token.
+6. Disable the generated token, wait beyond the documented cache convergence window, and verify data-plane authentication is rejected.
+7. Enable the same token and verify data-plane access returns.
+8. Refresh the token with no active mount, verify the token ID is unchanged, verify the new token works, and verify the old token stops working after cache convergence.
+9. Delete the refreshed owner and scoped tokens and verify they no longer authenticate or appear in default list.
+10. Clean up only tokens generated by the same test run, including failure cleanup through TiDB Cloud credentials.
 
 The live test also exercises local store/replace in an isolated temporary `TI_HOME` and verifies that no plaintext reaches captured logs. It must tolerate the expected authentication-cache convergence delay without using an unbounded retry.
 
@@ -477,6 +559,8 @@ When implemented, update README, PingCAP command references, examples, troublesh
 
 - One File System can have multiple tokens while one local profile selects one operational token per FS.
 - The difference between an owner token and a path/operation-limited `fs_scoped` token.
+- How `--allow` prefixes and `read,list,search,write,delete` operations constrain scoped access.
+- The owner/scoped capability matrix for data plane, mount, token management, refresh, Git, Journal, and Vault commands.
 - Token plaintext is visible only on generate/refresh.
 - List is scoped to an explicit File System ID.
 - Generate does not replace local credentials unless requested.
@@ -494,7 +578,7 @@ When implemented, update README, PingCAP command references, examples, troublesh
 
 ## Acceptance Criteria
 
-- Users can generate, list, enable, disable, delete, and self-refresh FS tokens through ti using the existing backend API.
+- Users can generate owner and scoped tokens, list, enable, disable, delete, and self-refresh FS tokens through ti using the existing backend API.
 - Every list and ID-based mutation is explicitly scoped to one File System ID.
 - Multiple remote tokens do not force ti to persist multiple local secrets.
 - Existing create/import credentials remain usable without a token ID.
@@ -513,5 +597,4 @@ When implemented, update README, PingCAP command references, examples, troublesh
 - Automatic refresh, background renewal, token expiry notifications, or a credential daemon.
 - Automatic distribution to CI, sandboxes, containers, remote hosts, or secret managers.
 - Detecting mounts or processes on another machine.
-- Generating new `fs_scoped` tokens through ti in this phase.
 - Changing the existing `ti fs create-file-system` provisioning API or companion implementation.

@@ -861,6 +861,7 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSDescribeFileSystemCommand(info),
 		newFSImportFileSystemTokenCommand(info),
 		newFSGenerateFileSystemTokenCommand(info),
+		newFSGenerateFileSystemScopedTokenCommand(info),
 		newFSListFileSystemTokensCommand(info),
 		newFSEnableFileSystemTokenCommand(info),
 		newFSDisableFileSystemTokenCommand(info),
@@ -892,7 +893,7 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSDrainFileSystemCommand(info),
 		newFSUnmountFileSystemCommand(info),
 	}
-	tokenCommands := []string{"generate-file-system-token", "list-file-system-tokens", "enable-file-system-token", "disable-file-system-token", "delete-file-system-token", "refresh-file-system-token"}
+	tokenCommands := []string{"generate-file-system-token", "generate-file-system-scoped-token", "list-file-system-tokens", "enable-file-system-token", "disable-file-system-token", "delete-file-system-token", "refresh-file-system-token"}
 	selectorExclusions := append([]string{"create-file-system", "list-file-systems", "describe-file-system", "delete-file-system", "import-file-system-token", "drain-file-system", "unmount-file-system"}, tokenCommands...)
 	addFSSelectorFlags(commands, selectorExclusions...)
 	addFSAuthFlags(commands,
@@ -904,6 +905,7 @@ func newFSCommand(info version.Info) *cobra.Command {
 		"drain-file-system",
 		"unmount-file-system",
 		"generate-file-system-token",
+		"generate-file-system-scoped-token",
 		"list-file-system-tokens",
 		"enable-file-system-token",
 		"disable-file-system-token",
@@ -950,11 +952,52 @@ func newFSGenerateFileSystemTokenCommand(info version.Info) *cobra.Command {
 	return cmd
 }
 
+func newFSGenerateFileSystemScopedTokenCommand(info version.Info) *cobra.Command {
+	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
+		Use: "generate-file-system-scoped-token", Short: "Generate a path-and-operation-limited token using an owner token.", Mutation: mutatingCommand, Permission: authz.FSTokenIssueScoped,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := fsTokenLocalServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			opts, err := fsGenerateScopedTokenOptions(ctx, profile)
+			if err != nil {
+				return nil, err
+			}
+			return service.GenerateScoped(ctx.cmd.Context(), opts)
+		},
+		DryRun: func(ctx commandContext) (dryrun.Result, error) {
+			service, profile, err := fsTokenLocalServiceAndProfile(ctx)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			opts, err := fsGenerateScopedTokenOptions(ctx, profile)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			return service.DryRunGenerateScoped(ctx.CommandPath(), opts)
+		},
+	}, info)
+	cmd.Flags().String("file-system-id", "", "Optional file system ID assertion; required when using a locally stored owner token.")
+	cmd.Flags().String("fs-token", "", "Owner file system token. Default: TI_FS_TOKEN, then the selected local credential.")
+	cmd.Flags().String("subject", "", "Optional server-side audit label (maximum 64 bytes).")
+	cmd.Flags().Duration("ttl", 0, "Scoped token lifetime as a positive duration of whole seconds.")
+	cmd.Flags().StringArray("allow", nil, "Allowed path prefix and operations as <prefix>:<ops>; repeatable. Operations: read,list,search,write,delete.")
+	cmd.Flags().Bool("store-locally", false, "Select and store the generated scoped token in this profile's local credentials.")
+	cmd.Flags().Bool("replace", false, "Replace the selected local token; the previous remote token remains active.")
+	markUsageRequired(cmd, "ttl", "allow")
+	return cmd
+}
+
 func newFSListFileSystemTokensCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use: "list-file-system-tokens", Short: "List token metadata for one file system.", Mutation: readOnlyCommand, Permission: authz.FSTokenList,
 		Run: func(ctx commandContext) (any, error) {
-			service, profile, err := fsTokenTIServiceAndProfile(ctx)
+			token, err := ctx.StringFlag("fs-token")
+			if err != nil {
+				return nil, err
+			}
+			service, profile, err := fsTokenManagementServiceAndProfile(ctx, token, ctx.FlagChanged("fs-token"))
 			if err != nil {
 				return nil, err
 			}
@@ -978,10 +1021,11 @@ func newFSListFileSystemTokensCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.List(ctx.cmd.Context(), tokenmgmt.ListOptions{Profile: profile, FileSystemID: fileSystemID, Offset: int(offset), Limit: int(limit), IncludeExpired: includeExpired, RegionOverride: regionOverride})
+			return service.List(ctx.cmd.Context(), tokenmgmt.ListOptions{Profile: profile, FileSystemID: fileSystemID, Token: token, TokenExplicit: ctx.FlagChanged("fs-token"), Offset: int(offset), Limit: int(limit), IncludeExpired: includeExpired, RegionOverride: regionOverride})
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID whose tokens are listed.")
+	cmd.Flags().String("fs-token", "", "Optional owner FS token. Default: TI_FS_TOKEN; otherwise TiDB Cloud API keys are used.")
 	cmd.Flags().Bool("include-expired", false, "Include expired token metadata.")
 	cmd.Flags().Int32("offset", 0, "The zero-based token offset.")
 	cmd.Flags().Int32("limit", tokenmgmt.DefaultListLimit, "The maximum number of tokens to return (maximum 200).")
@@ -1005,7 +1049,11 @@ func newFSTokenMutationCommand(use, short, operation, method, path string, permi
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use: use, Short: short, Mutation: mutatingCommand, Permission: permission,
 		Run: func(ctx commandContext) (any, error) {
-			service, profile, err := fsTokenTIServiceAndProfile(ctx)
+			token, err := ctx.StringFlag("fs-token")
+			if err != nil {
+				return nil, err
+			}
+			service, profile, err := fsTokenManagementServiceAndProfile(ctx, token, ctx.FlagChanged("fs-token"))
 			if err != nil {
 				return nil, err
 			}
@@ -1025,7 +1073,11 @@ func newFSTokenMutationCommand(use, short, operation, method, path string, permi
 			}
 		},
 		DryRun: func(ctx commandContext) (dryrun.Result, error) {
-			service, profile, err := fsTokenTIServiceAndProfile(ctx)
+			token, err := ctx.StringFlag("fs-token")
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			service, profile, err := fsTokenManagementServiceAndProfile(ctx, token, ctx.FlagChanged("fs-token"))
 			if err != nil {
 				return dryrun.Result{}, err
 			}
@@ -1038,6 +1090,7 @@ func newFSTokenMutationCommand(use, short, operation, method, path string, permi
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID that owns the token.")
 	cmd.Flags().String("token-id", "", "The immutable token ID.")
+	cmd.Flags().String("fs-token", "", "Optional owner FS token. Default: TI_FS_TOKEN; otherwise TiDB Cloud API keys are used.")
 	markUsageRequired(cmd, "file-system-id", "token-id")
 	return cmd
 }
@@ -1111,6 +1164,46 @@ func fsGenerateTokenOptions(ctx commandContext, profile *config.Profile) (tokenm
 	return tokenmgmt.GenerateOptions{Profile: profile, FileSystemID: fileSystemID, TokenName: tokenName, TTL: ttl, NoExpiration: noExpiration, StoreLocally: storeLocally, Replace: replace, RegionOverride: regionOverride}, nil
 }
 
+func fsGenerateScopedTokenOptions(ctx commandContext, profile *config.Profile) (tokenmgmt.GenerateScopedOptions, error) {
+	fileSystemID, err := ctx.StringFlag("file-system-id")
+	if err != nil {
+		return tokenmgmt.GenerateScopedOptions{}, err
+	}
+	token, err := ctx.StringFlag("fs-token")
+	if err != nil {
+		return tokenmgmt.GenerateScopedOptions{}, err
+	}
+	subject, err := ctx.StringFlag("subject")
+	if err != nil {
+		return tokenmgmt.GenerateScopedOptions{}, err
+	}
+	allows, err := ctx.StringArrayFlag("allow")
+	if err != nil {
+		return tokenmgmt.GenerateScopedOptions{}, err
+	}
+	storeLocally, err := ctx.BoolFlag("store-locally")
+	if err != nil {
+		return tokenmgmt.GenerateScopedOptions{}, err
+	}
+	replace, err := ctx.BoolFlag("replace")
+	if err != nil {
+		return tokenmgmt.GenerateScopedOptions{}, err
+	}
+	var ttl *time.Duration
+	if ctx.FlagChanged("ttl") {
+		value, err := ctx.DurationFlag("ttl")
+		if err != nil {
+			return tokenmgmt.GenerateScopedOptions{}, err
+		}
+		ttl = &value
+	}
+	regionOverride, err := fsExplicitRegionOverride(ctx)
+	if err != nil {
+		return tokenmgmt.GenerateScopedOptions{}, err
+	}
+	return tokenmgmt.GenerateScopedOptions{Profile: profile, FileSystemID: fileSystemID, Token: token, TokenExplicit: ctx.FlagChanged("fs-token"), Subject: subject, TTL: ttl, Allows: allows, StoreLocally: storeLocally, Replace: replace, RegionOverride: regionOverride}, nil
+}
+
 func fsTokenMutationOptions(ctx commandContext, profile *config.Profile) (tokenmgmt.MutationOptions, error) {
 	fileSystemID, err := ctx.StringFlag("file-system-id")
 	if err != nil {
@@ -1120,11 +1213,15 @@ func fsTokenMutationOptions(ctx commandContext, profile *config.Profile) (tokenm
 	if err != nil {
 		return tokenmgmt.MutationOptions{}, err
 	}
+	token, err := ctx.StringFlag("fs-token")
+	if err != nil {
+		return tokenmgmt.MutationOptions{}, err
+	}
 	regionOverride, err := fsExplicitRegionOverride(ctx)
 	if err != nil {
 		return tokenmgmt.MutationOptions{}, err
 	}
-	return tokenmgmt.MutationOptions{Profile: profile, FileSystemID: fileSystemID, TokenID: tokenID, RegionOverride: regionOverride}, nil
+	return tokenmgmt.MutationOptions{Profile: profile, FileSystemID: fileSystemID, TokenID: tokenID, Token: token, TokenExplicit: ctx.FlagChanged("fs-token"), RegionOverride: regionOverride}, nil
 }
 
 func fsRefreshTokenOptions(ctx commandContext, profile *config.Profile) (tokenmgmt.RefreshOptions, error) {
@@ -2658,6 +2755,21 @@ func fsTokenLocalServiceAndProfile(ctx commandContext) (tokenmgmt.Service, *conf
 		return tokenmgmt.Service{}, nil, err
 	}
 	return fsTokenService(ctx, profile)
+}
+
+func fsTokenManagementServiceAndProfile(ctx commandContext, token string, tokenExplicit bool) (tokenmgmt.Service, *config.Profile, error) {
+	useBearer := tokenExplicit || strings.TrimSpace(token) != ""
+	if !useBearer {
+		envToken, _, _, err := envcompat.ResolveNames(nil, "TI_FS_TOKEN", envcompat.LegacyNameFor("TI_FS_TOKEN"))
+		if err != nil {
+			return tokenmgmt.Service{}, nil, err
+		}
+		useBearer = strings.TrimSpace(envToken) != ""
+	}
+	if useBearer {
+		return fsTokenLocalServiceAndProfile(ctx)
+	}
+	return fsTokenTIServiceAndProfile(ctx)
 }
 
 func fsTokenService(ctx commandContext, profile *config.Profile) (tokenmgmt.Service, *config.Profile, error) {

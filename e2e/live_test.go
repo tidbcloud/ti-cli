@@ -215,6 +215,7 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "mkdir", "help"}, {"fs", "chmod", "help"}, {"fs", "symlink", "help"},
 		{"fs", "hardlink", "help"}, {"fs", "grep", "help"}, {"fs", "find", "help"},
 		{"fs", "generate-file-system-token", "help"}, {"fs", "list-file-system-tokens", "help"},
+		{"fs", "generate-file-system-scoped-token", "help"},
 		{"fs", "enable-file-system-token", "help"}, {"fs", "disable-file-system-token", "help"},
 		{"fs", "delete-file-system-token", "help"}, {"fs", "refresh-file-system-token", "help"},
 		{"fs", "mount", "help"}, {"fs", "drain", "help"}, {"fs", "umount", "help"},
@@ -233,6 +234,8 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "disable-file-system-token", "--file-system-id", selected.FSTenantID, "--token-id", "00000000-0000-0000-0000-000000000000"},
 		{"fs", "delete-file-system-token", "--file-system-id", selected.FSTenantID, "--token-id", "00000000-0000-0000-0000-000000000000"},
 	}, "remote_mutation")
+	scopedDryRun := runTI(t, bin, "--profile", profileName, "fs", "generate-file-system-scoped-token", "--file-system-id", selected.FSTenantID, "--ttl", "1h", "--allow", "/ti-e2e:read,list", "--dry-run")
+	scopedDryRun.wantExitCode(0)
 	refreshDryRun := runTIWithInput(t, bin, "", []string{"TI_FS_TOKEN=" + drive9TestTokenWithVersion(selected.FSTenantID, 999), "TI_REGION_CODE=" + selected.FSPlacementRegionCode},
 		"--profile", profileName, "fs", "refresh-file-system-token", "--file-system-id", selected.FSTenantID, "--dry-run")
 	refreshDryRun.wantExitCode(0)
@@ -290,6 +293,64 @@ func TestLiveFSFileSystemTokenLifecycle(t *testing.T) {
 	if generatedResult.FileSystemID != selected.FSTenantID {
 		t.Fatalf("generated token file_system_id = %q, want %q", generatedResult.FileSystemID, selected.FSTenantID)
 	}
+	scopedRoot := fmt.Sprintf("/ti-e2e-scoped-%d", time.Now().UnixNano())
+	scopedIssue := runTIWithInput(t, bin, "", []string{"TI_FS_TOKEN=" + generatedResult.FSToken, "TI_REGION_CODE=" + regionCode},
+		"--profile", profileName, "fs", "generate-file-system-scoped-token", "--file-system-id", selected.FSTenantID,
+		"--subject", "ti-e2e-scoped", "--ttl", "1h", "--allow", scopedRoot+":read,list,write,delete")
+	scopedIssue.wantExitCode(0)
+	var scopedResult struct {
+		TokenID string `json:"token_id"`
+		FSToken string `json:"fs_token"`
+	}
+	if err := json.Unmarshal([]byte(scopedIssue.stdout), &scopedResult); err != nil || scopedResult.TokenID == "" || scopedResult.FSToken == "" {
+		t.Fatalf("decode generated scoped FS token: %v\n%s", err, scopedIssue.stdout)
+	}
+	scopedDeleted := false
+	defer func() {
+		if scopedDeleted {
+			return
+		}
+		cleanup := runLiveFSSetupCommand(t, bin, "--profile", profileName, "--region", regionCode, "fs", "delete-file-system-token",
+			"--file-system-id", selected.FSTenantID, "--token-id", scopedResult.TokenID)
+		if cleanup.exitCode != 0 && !strings.Contains(strings.ToLower(cleanup.stderr), "not found") {
+			t.Logf("cleanup generated scoped FS token failed: %s", strings.TrimSpace(cleanup.stderr))
+		}
+	}()
+
+	scopedEnv := []string{"TI_FS_TOKEN=" + scopedResult.FSToken, "TI_REGION_CODE=" + regionCode}
+	mkdir := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "create-directory", "--file-system-id", selected.FSTenantID, "--path", scopedRoot)
+	mkdir.wantExitCode(0)
+	write := runTIWithInput(t, bin, "scoped-data", scopedEnv, "--profile", profileName, "fs", "copy-file", "--file-system-id", selected.FSTenantID, "--from-stdin", "--to-remote", scopedRoot+"/probe.txt")
+	write.wantExitCode(0)
+	read := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "read-file", "--file-system-id", selected.FSTenantID, "--path", scopedRoot+"/probe.txt")
+	read.wantExitCode(0)
+	read.wantStdoutContains("scoped-data")
+	outOfScope := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "list-files", "--file-system-id", selected.FSTenantID, "--path", "/")
+	if outOfScope.exitCode == 0 {
+		outOfScope.fail("scoped token unexpectedly accessed a path outside its prefix")
+	}
+	scopedList := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "list-file-system-tokens", "--file-system-id", selected.FSTenantID)
+	scopedList.wantExitCode(4)
+	scopedChild := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "generate-file-system-scoped-token", "--file-system-id", selected.FSTenantID, "--ttl", "1h", "--allow", scopedRoot+":read")
+	scopedChild.wantExitCode(4)
+	scopedRefresh := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "refresh-file-system-token", "--file-system-id", selected.FSTenantID)
+	scopedRefresh.wantExitCode(0)
+	var scopedRefreshResult struct {
+		TokenID string `json:"token_id"`
+		FSToken string `json:"fs_token"`
+	}
+	if err := json.Unmarshal([]byte(scopedRefresh.stdout), &scopedRefreshResult); err != nil || scopedRefreshResult.TokenID != scopedResult.TokenID || scopedRefreshResult.FSToken == "" {
+		t.Fatalf("decode refreshed scoped FS token: %v\n%s", err, scopedRefresh.stdout)
+	}
+	scopedEnv = []string{"TI_FS_TOKEN=" + scopedRefreshResult.FSToken, "TI_REGION_CODE=" + regionCode}
+	readAfterRefresh := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "read-file", "--file-system-id", selected.FSTenantID, "--path", scopedRoot+"/probe.txt")
+	readAfterRefresh.wantExitCode(0)
+
+	cleanupPath := runTIWithInput(t, bin, "", []string{"TI_FS_TOKEN=" + generatedResult.FSToken, "TI_REGION_CODE=" + regionCode}, "--profile", profileName, "fs", "delete-file", "--file-system-id", selected.FSTenantID, "--path", scopedRoot, "--recursive")
+	cleanupPath.wantExitCode(0)
+	removeScoped := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "delete-file-system-token", "--file-system-id", selected.FSTenantID, "--token-id", scopedResult.TokenID)
+	removeScoped.wantExitCode(0)
+	scopedDeleted = true
 	deleted := false
 	defer func() {
 		if deleted {

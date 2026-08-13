@@ -947,11 +947,12 @@ func TestFSFileSystemTokenLifecycle(t *testing.T) {
 	home := t.TempDir()
 	generatedToken := drive9TestTokenWithVersion("tenant-tokens", 1)
 	refreshedToken := drive9TestTokenWithVersion("tenant-tokens", 2)
+	scopedToken := drive9TestTokenWithVersion("tenant-tokens", 3)
 	remoteRequests := 0
 	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		remoteRequests++
 		w.Header().Set("Content-Type", "application/json")
-		if r.URL.Path != "/v1/tokens/refresh" {
+		if r.URL.Path != "/v1/tokens/refresh" && !(r.Method == http.MethodPost && r.URL.Path == "/v1/tokens") && r.Header.Get("Authorization") == "" {
 			if r.Header.Get("X-TiDBCloud-Public-Key") != "e2e-public" || r.Header.Get("X-TiDBCloud-Private-Key") != "e2e-private" || r.Header.Get("Authorization") != "" {
 				t.Errorf("control-plane token authentication headers = %#v", r.Header)
 			}
@@ -960,6 +961,16 @@ func TestFSFileSystemTokenLifecycle(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/generate":
 			w.WriteHeader(http.StatusCreated)
 			_, _ = fmt.Fprintf(w, `{"token":%q,"token_id":"token-e2e","tenant_id":"tenant-tokens","key_name":"e2e-owner","scope_kind":"owner","status":"active","issued_at":"2026-08-12T00:00:00Z","expires_at":"2026-08-13T00:00:00Z"}`, generatedToken)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens":
+			if r.Header.Get("Authorization") != "Bearer "+generatedToken || r.Header.Get("X-TiDBCloud-Public-Key") != "" {
+				t.Errorf("scoped issue authentication headers = %#v", r.Header)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(w, `{"token":%q,"token_id":"token-scoped","subject":"e2e-agent","scope_kind":"fs_scoped","expires_at":"2026-08-13T00:00:00Z","scopes":[{"prefix":"/workspace","ops":["read","list"]}]}`, scopedToken)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/tokens":
 			if r.URL.Query().Get("tenant_id") != "tenant-tokens" || r.URL.Query().Get("limit") != "50" {
 				t.Errorf("list query = %s", r.URL.RawQuery)
@@ -1014,6 +1025,16 @@ func TestFSFileSystemTokenLifecycle(t *testing.T) {
 	if err != nil || credential.TokenID != "token-e2e" || credential.APIKey != generatedToken {
 		t.Fatalf("generated credential = %#v, %v", credential, err)
 	}
+
+	scoped := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "generate-file-system-scoped-token", "--file-system-id", "tenant-tokens", "--fs-token", generatedToken, "--subject", "e2e-agent", "--ttl", "1h", "--allow", "/workspace:read,list")
+	scoped.wantExitCode(0)
+	scoped.wantStdoutContains(`"scope_kind": "fs_scoped"`)
+	scoped.wantStdoutContains(`"prefix": "/workspace"`)
+	scoped.wantStdoutContains(scopedToken)
+
+	bearerListEnv := append(append([]string{}, env...), "TI_FS_TOKEN="+generatedToken)
+	bearerListed := runTIWithInput(t, bin, "", bearerListEnv, "--profile", "stage", "fs", "list-file-system-tokens", "--file-system-id", "tenant-tokens")
+	bearerListed.wantExitCode(0)
 
 	listed := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "list-file-system-tokens", "--file-system-id", "tenant-tokens", "--output", "text")
 	listed.wantExitCode(0)

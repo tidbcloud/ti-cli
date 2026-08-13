@@ -84,6 +84,26 @@ type RefreshTokenResponse struct {
 	ExpiresAt    *time.Time `json:"expires_at"`
 }
 
+type TokenScope struct {
+	Prefix string   `json:"prefix"`
+	Ops    []string `json:"ops"`
+}
+
+type IssueScopedTokenRequest struct {
+	Subject    string       `json:"subject,omitempty"`
+	TTLSeconds int64        `json:"ttl_seconds"`
+	Scopes     []TokenScope `json:"scopes"`
+}
+
+type IssueScopedTokenResponse struct {
+	Token     string       `json:"token"`
+	TokenID   string       `json:"token_id"`
+	Subject   string       `json:"subject,omitempty"`
+	ScopeKind string       `json:"scope_kind"`
+	ExpiresAt *time.Time   `json:"expires_at,omitempty"`
+	Scopes    []TokenScope `json:"scopes"`
+}
+
 func (c *Client) GenerateToken(ctx context.Context, creds TiDBCloudCredentials, input GenerateTokenRequest) (GenerateTokenResponse, error) {
 	body := struct {
 		FileSystemID string `json:"tenant_id"`
@@ -103,6 +123,14 @@ func (c *Client) GenerateToken(ctx context.Context, creds TiDBCloudCredentials, 
 }
 
 func (c *Client) ListTokens(ctx context.Context, creds TiDBCloudCredentials, opts ListTokensOptions) (ListTokensResponse, error) {
+	return c.listTokens(ctx, &creds, opts)
+}
+
+func (c *Client) ListTokensWithBearer(ctx context.Context, opts ListTokensOptions) (ListTokensResponse, error) {
+	return c.listTokens(ctx, nil, opts)
+}
+
+func (c *Client) listTokens(ctx context.Context, creds *TiDBCloudCredentials, opts ListTokensOptions) (ListTokensResponse, error) {
 	query := url.Values{}
 	query.Set("tenant_id", opts.FileSystemID)
 	query.Set("offset", strconv.Itoa(opts.Offset))
@@ -114,7 +142,9 @@ func (c *Client) ListTokens(ctx context.Context, creds TiDBCloudCredentials, opt
 	if err != nil {
 		return ListTokensResponse{}, err
 	}
-	setTiDBCloudCredentialHeaders(req, creds)
+	if creds != nil {
+		setTiDBCloudCredentialHeaders(req, *creds)
+	}
 	var response ListTokensResponse
 	if err := c.api.DoJSON(req, &response); err != nil {
 		return ListTokensResponse{}, err
@@ -126,6 +156,14 @@ func (c *Client) ListTokens(ctx context.Context, creds TiDBCloudCredentials, opt
 }
 
 func (c *Client) SetTokenEnabled(ctx context.Context, creds TiDBCloudCredentials, fileSystemID, tokenID string, enabled bool) (TokenMutationResponse, error) {
+	return c.setTokenEnabled(ctx, &creds, fileSystemID, tokenID, enabled)
+}
+
+func (c *Client) SetTokenEnabledWithBearer(ctx context.Context, fileSystemID, tokenID string, enabled bool) (TokenMutationResponse, error) {
+	return c.setTokenEnabled(ctx, nil, fileSystemID, tokenID, enabled)
+}
+
+func (c *Client) setTokenEnabled(ctx context.Context, creds *TiDBCloudCredentials, fileSystemID, tokenID string, enabled bool) (TokenMutationResponse, error) {
 	action := "deactivate"
 	if enabled {
 		action = "activate"
@@ -136,7 +174,9 @@ func (c *Client) SetTokenEnabled(ctx context.Context, creds TiDBCloudCredentials
 	if err != nil {
 		return TokenMutationResponse{}, err
 	}
-	setTiDBCloudCredentialHeaders(req, creds)
+	if creds != nil {
+		setTiDBCloudCredentialHeaders(req, *creds)
+	}
 	var response TokenMutationResponse
 	if err := c.api.DoJSON(req, &response); err != nil {
 		return TokenMutationResponse{}, err
@@ -172,6 +212,26 @@ func (c *Client) RefreshToken(ctx context.Context, input RefreshTokenRequest) (R
 		return RefreshTokenResponse{}, err
 	}
 	return response, nil
+}
+
+func (c *Client) IssueScopedToken(ctx context.Context, input IssueScopedTokenRequest) (IssueScopedTokenResponse, error) {
+	req, err := c.api.NewRequest(ctx, http.MethodPost, "/v1/tokens", input)
+	if err != nil {
+		return IssueScopedTokenResponse{}, err
+	}
+	var response IssueScopedTokenResponse
+	if err := c.api.DoJSON(req, &response); err != nil {
+		return IssueScopedTokenResponse{}, err
+	}
+	return response, nil
+}
+
+func (c *Client) DeleteTokenWithBearer(ctx context.Context, tokenID string) error {
+	req, err := c.api.NewRequest(ctx, http.MethodDelete, "/v1/tokens/"+url.PathEscape(tokenID), nil)
+	if err != nil {
+		return err
+	}
+	return c.api.DoJSON(req, nil)
 }
 
 func setTiDBCloudCredentialHeaders(req *http.Request, creds TiDBCloudCredentials) {

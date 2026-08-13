@@ -99,6 +99,7 @@ Implemented:
 - `ti fs create-file-system`
 - `ti fs import-file-system-token`
 - `ti fs generate-file-system-token`
+- `ti fs generate-file-system-scoped-token`
 - `ti fs list-file-system-tokens`
 - `ti fs enable-file-system-token`
 - `ti fs disable-file-system-token`
@@ -533,6 +534,7 @@ Implemented command behavior:
 - `ti fs import-file-system-token --from-file ./fs-token`
 - `ti fs generate-file-system-token --file-system-id <file-system-id> --token-name ci --ttl 24h`
 - `ti fs generate-file-system-token --file-system-id <file-system-id> --token-name local --no-expiration --store-locally --replace`
+- `TI_FS_TOKEN=<owner-token> ti fs generate-file-system-scoped-token --ttl 24h --allow /workspace:read,list,write --subject sandbox-agent`
 - `ti fs list-file-system-tokens --file-system-id <file-system-id>`
 - `ti fs disable-file-system-token --file-system-id <file-system-id> --token-id <token-id>`
 - `ti fs enable-file-system-token --file-system-id <file-system-id> --token-id <token-id>`
@@ -636,6 +638,13 @@ Registered command surface:
 - `ti db execute-sql-statement`
 - `ti fs create-file-system`
 - `ti fs import-file-system-token`
+- `ti fs generate-file-system-token`
+- `ti fs generate-file-system-scoped-token`
+- `ti fs list-file-system-tokens`
+- `ti fs enable-file-system-token`
+- `ti fs disable-file-system-token`
+- `ti fs delete-file-system-token`
+- `ti fs refresh-file-system-token`
 - `ti fs delete-file-system`
 - `ti fs list-file-systems`
 - `ti fs describe-file-system`

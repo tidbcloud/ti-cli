@@ -151,6 +151,23 @@ func TestResolveCredentialDerivesIDFromExplicitToken(t *testing.T) {
 	}
 }
 
+func TestExplicitTokenDoesNotInheritStoredTokenMetadata(t *testing.T) {
+	home := t.TempDir()
+	profile := credentialTestProfile()
+	localToken := wrappedToken(t, "tenant-token")
+	if _, err := StoreCredentialRecord(home, profile, Credential{FileSystemID: "tenant-token", RegionCode: "aws-us-east-1", APIKey: localToken, TokenID: "owner-id", ScopeKind: "owner", TokenName: "owner"}, false); err != nil {
+		t.Fatal(err)
+	}
+	explicitToken := wrappedTokenWithVersion(t, "tenant-token", 2)
+	selected, _, err := ResolveCredential(home, profile, ResolveCredentialOptions{Token: explicitToken, TokenExplicit: true, RegionOverride: "aws-us-east-1", TokenRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.FSTokenID != "" || selected.FSTokenScopeKind != "" || selected.FSTokenName != "" {
+		t.Fatalf("explicit token inherited local metadata: %#v", selected)
+	}
+}
+
 func TestResolveCredentialReportsMissingLocalTokenForKnownID(t *testing.T) {
 	_, _, err := ResolveCredential(t.TempDir(), credentialTestProfile(), ResolveCredentialOptions{
 		FileSystemID: "tenant-without-token", FileSystemIDExplicit: true, TokenRequired: true,
@@ -332,9 +349,13 @@ func TestMigrateNameRegistryPreflightsDestinationConflictsBeforeAnyWrite(t *test
 }
 
 func wrappedToken(t *testing.T, tenantID string) string {
+	return wrappedTokenWithVersion(t, tenantID, 1)
+}
+
+func wrappedTokenWithVersion(t *testing.T, tenantID string, version int) string {
 	t.Helper()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	payloadBytes, err := json.Marshal(map[string]any{"tenant_id": tenantID, "token_version": 1, "iat": 1})
+	payloadBytes, err := json.Marshal(map[string]any{"tenant_id": tenantID, "token_version": version, "iat": 1})
 	if err != nil {
 		t.Fatal(err)
 	}

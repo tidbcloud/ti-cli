@@ -114,6 +114,37 @@ func TestRefreshTokenUsesBearerOnly(t *testing.T) {
 	}
 }
 
+func TestIssueScopedTokenUsesBearerAndExpectedShape(t *testing.T) {
+	t.Parallel()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/tokens" {
+			t.Errorf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer drive9_owner" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if r.Header.Get(tidbCloudPublicKeyHeader) != "" || r.Header.Get(tidbCloudPrivateKeyHeader) != "" {
+			t.Error("scoped issue included control-plane credentials")
+		}
+		var body IssueScopedTokenRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Subject != "agent" || body.TTLSeconds != 3600 || len(body.Scopes) != 1 || body.Scopes[0].Prefix != "/workspace" || strings.Join(body.Scopes[0].Ops, ",") != "read,list" {
+			t.Errorf("body = %#v", body)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"token":"drive9_scoped","token_id":"token-scoped","subject":"agent","scope_kind":"fs_scoped","expires_at":"2026-08-13T00:00:00Z","scopes":[{"prefix":"/workspace","ops":["read","list"]}]}`))
+	}))
+	defer server.Close()
+	client := newTokenTestClient(t, server.URL, "drive9_owner")
+	response, err := client.IssueScopedToken(context.Background(), IssueScopedTokenRequest{Subject: "agent", TTLSeconds: 3600, Scopes: []TokenScope{{Prefix: "/workspace", Ops: []string{"read", "list"}}}})
+	if err != nil || response.ScopeKind != "fs_scoped" || len(response.Scopes) != 1 {
+		t.Fatalf("IssueScopedToken() = %#v, %v", response, err)
+	}
+}
+
 func TestRefreshTokenSendsExplicitTTL(t *testing.T) {
 	t.Parallel()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

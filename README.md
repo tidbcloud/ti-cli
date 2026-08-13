@@ -181,7 +181,7 @@ ti fs list-files
 
 `create-file-system` does not accept a user-defined name. Drive9 assigns the stable `file_system_id`, and the command returns the owner credential as `fs_token` once in its JSON result. Treat it as a secret. The example above captures both fields from one provisioning request and removes the temporary owner-only JSON file immediately.
 
-One Filesystem can have multiple independently managed tokens for different machines, CI jobs, and sandboxes. Owner tokens authorize the complete Filesystem; path-and-operation-limited `fs_scoped` tokens can also appear in inventory, although this release does not issue new scoped tokens. The remote service is the source of truth for token inventory, while each local profile stores at most one selected token for each Filesystem. Generate an additional owner token and capture its one-time plaintext response:
+One Filesystem can have multiple independently managed tokens for different machines, CI jobs, and sandboxes. Owner tokens authorize the complete Filesystem and can issue path-and-operation-limited `fs_scoped` tokens. The remote service is the source of truth for token inventory, while each local profile stores at most one selected token for each Filesystem. Generate an additional owner token and capture its one-time plaintext response:
 
 ```shell
 umask 077
@@ -191,6 +191,19 @@ ti fs generate-file-system-token \
   --ttl 24h > ./ci-token.json
 ti fs list-file-system-tokens --file-system-id "$FILE_SYSTEM_ID" --output text
 ```
+
+Use an owner token to issue a finite scoped token. Repeat `--allow`; supported operations are `read`, `list`, `search`, `write`, and `delete`, and `search` requires `read`:
+
+```shell
+export TI_FS_TOKEN="<OWNER_FS_TOKEN>"
+ti fs generate-file-system-scoped-token \
+  --subject sandbox-agent \
+  --ttl 24h \
+  --allow /workspace:read,list,write \
+  --allow /artifacts:read,list
+```
+
+`TI_FS_TOKEN` may contain either token kind. Scoped tokens work only for allowed paths and operations and can self-refresh; they cannot generate child tokens or manage token inventory. Explicit `--fs-token` takes precedence over the environment. Token list, enable, disable, and delete use an explicit/environment owner token when present, otherwise they use configured TiDB Cloud API keys. With owner Bearer authentication, enable and disable apply only to scoped targets; TiDB Cloud credentials can manage either token kind. Because the token JWT does not expose its kind or scopes, the FS backend is the final permission authority.
 
 Generation does not modify local credentials by default. Add `--store-locally` to select the new token locally; if a selected token already exists, add `--replace` explicitly. Replacing local selection does not revoke the previous remote token. Use immutable `token_id` values from the list response to disable, enable, or permanently revoke a token:
 
@@ -254,6 +267,7 @@ ti db execute-sql-statement
 ti fs create-file-system
 ti fs import-file-system-token
 ti fs generate-file-system-token
+ti fs generate-file-system-scoped-token
 ti fs list-file-system-tokens
 ti fs enable-file-system-token
 ti fs disable-file-system-token

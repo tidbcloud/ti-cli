@@ -35,6 +35,7 @@ type Client struct {
 	UserAgent   string
 	MaxRetries  int
 	Redactor    apitransport.Redactor
+	BearerAuth  bool
 }
 
 type Options struct {
@@ -128,7 +129,12 @@ func NewBearerClient(profileName, apiKey string, endpoint endpoints.Endpoint, pe
 	opts.Permission = permission
 	opts.Transport = apitransport.NewBearer(apiKey, opts.Transport)
 	opts.Redactor.Secrets = append(opts.Redactor.Secrets, apiKey)
-	return New(opts)
+	client, err := New(opts)
+	if err != nil {
+		return nil, err
+	}
+	client.BearerAuth = true
+	return client, nil
 }
 
 func (c *Client) NewRequest(ctx context.Context, method, requestPath string, body any) (*http.Request, error) {
@@ -317,7 +323,7 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 	case http.StatusUnauthorized:
 		message := fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
 		if c.Service == endpoints.ServiceFS {
-			if strings.HasPrefix(string(c.Permission), "fs.token.") && c.Permission != authz.FSTokenRefresh {
+			if !c.BearerAuth && strings.HasPrefix(string(c.Permission), "fs.token.") && c.Permission != authz.FSTokenRefresh {
 				message = fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
 			} else {
 				message = fmt.Sprintf("authentication failed: ti fs rejected the selected token for profile %q. It might be disabled, expired, refreshed elsewhere, or revoked; generate or import a valid token and try again.", profileName(c.ProfileName))
@@ -332,12 +338,29 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Body:       string(body),
 		}
 	case http.StatusForbidden:
+		message := permissionDeniedMessage(profileName(c.ProfileName), c.Permission, c.Action, c.Provider, c.RegionCode)
+		if c.Service == endpoints.ServiceFS {
+			switch c.Permission {
+			case authz.FSTokenIssueScoped:
+				message = "permission denied: generating a scoped file system token requires an owner FS token; TI_FS_TOKEN or --fs-token currently contains a scoped token or another token without owner permission"
+			case authz.FSTokenList, authz.FSTokenDelete:
+				if c.BearerAuth {
+					message = "permission denied: this token management operation requires an owner FS token; TI_FS_TOKEN or --fs-token currently contains a scoped token or another token without owner permission"
+				}
+			case authz.FSTokenEnable, authz.FSTokenDisable:
+				if c.BearerAuth {
+					message = "permission denied: enabling or disabling a token requires an owner FS token and the target must be an fs_scoped token"
+				}
+			case authz.FSFileRead, authz.FSFileWrite, authz.FSMount:
+				message = "permission denied: the selected FS token does not allow this operation or path; use an owner token or a scoped token whose prefix and operations include the request"
+			}
+		}
 		return &Error{
 			Code:       "authz.permission_denied",
 			Category:   "authorization",
 			ExitCode:   4,
 			StatusCode: res.StatusCode,
-			Message:    permissionDeniedMessage(profileName(c.ProfileName), c.Permission, c.Action, c.Provider, c.RegionCode),
+			Message:    message,
 			Body:       string(body),
 		}
 	case http.StatusNotFound:

@@ -2,6 +2,7 @@ package fscred
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -30,14 +31,20 @@ const (
 var migrationMu sync.Mutex
 
 type Credential struct {
-	FileSystemID  string     `json:"file_system_id" toml:"file_system_id"`
-	RegionCode    string     `json:"region_code" toml:"region_code"`
-	HasLocalToken bool       `json:"has_local_token" toml:"-"`
-	APIKey        string     `json:"-" toml:"api_key"`
-	TokenID       string     `json:"token_id,omitempty" toml:"token_id,omitempty"`
-	ScopeKind     string     `json:"scope_kind,omitempty" toml:"scope_kind,omitempty"`
-	TokenName     string     `json:"token_name,omitempty" toml:"token_name,omitempty"`
-	ExpiresAt     *time.Time `json:"expires_at,omitempty" toml:"expires_at,omitempty"`
+	FileSystemID  string       `json:"file_system_id" toml:"file_system_id"`
+	RegionCode    string       `json:"region_code" toml:"region_code"`
+	HasLocalToken bool         `json:"has_local_token" toml:"-"`
+	APIKey        string       `json:"-" toml:"api_key"`
+	TokenID       string       `json:"token_id,omitempty" toml:"token_id,omitempty"`
+	ScopeKind     string       `json:"scope_kind,omitempty" toml:"scope_kind,omitempty"`
+	TokenName     string       `json:"token_name,omitempty" toml:"token_name,omitempty"`
+	ExpiresAt     *time.Time   `json:"expires_at,omitempty" toml:"expires_at,omitempty"`
+	Scopes        []TokenScope `json:"scopes,omitempty" toml:"scopes,omitempty"`
+}
+
+type TokenScope struct {
+	Prefix string   `json:"prefix" toml:"prefix"`
+	Ops    []string `json:"ops" toml:"ops"`
 }
 
 type CredentialPaths struct {
@@ -95,6 +102,7 @@ func StoreCredentialRecord(homeDir string, profile *config.Profile, credential C
 	credential.TokenID = strings.TrimSpace(credential.TokenID)
 	credential.ScopeKind = strings.TrimSpace(credential.ScopeKind)
 	credential.TokenName = strings.TrimSpace(credential.TokenName)
+	credential.Scopes = normalizeStoredScopes(credential.Scopes)
 	if credential.ExpiresAt != nil {
 		expiresAt := credential.ExpiresAt.UTC()
 		credential.ExpiresAt = &expiresAt
@@ -217,10 +225,41 @@ func credentialsEqual(left, right Credential) bool {
 	if left.FileSystemID != right.FileSystemID || left.RegionCode != right.RegionCode || left.APIKey != right.APIKey || left.TokenID != right.TokenID || left.ScopeKind != right.ScopeKind || left.TokenName != right.TokenName {
 		return false
 	}
+	if !tokenScopesEqual(left.Scopes, right.Scopes) {
+		return false
+	}
 	if left.ExpiresAt == nil || right.ExpiresAt == nil {
 		return left.ExpiresAt == nil && right.ExpiresAt == nil
 	}
 	return left.ExpiresAt.Equal(*right.ExpiresAt)
+}
+
+func normalizeStoredScopes(scopes []TokenScope) []TokenScope {
+	if len(scopes) == 0 {
+		return nil
+	}
+	result := make([]TokenScope, 0, len(scopes))
+	for _, scope := range scopes {
+		result = append(result, TokenScope{Prefix: strings.TrimSpace(scope.Prefix), Ops: append([]string(nil), scope.Ops...)})
+	}
+	return result
+}
+
+func tokenScopesEqual(left, right []TokenScope) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].Prefix != right[i].Prefix || len(left[i].Ops) != len(right[i].Ops) {
+			return false
+		}
+		for j := range left[i].Ops {
+			if left[i].Ops[j] != right[i].Ops[j] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func GetCredential(homeDir, profileName, fileSystemID string) (Credential, error) {
@@ -469,6 +508,7 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 	if found && credential.RegionCode != placement.Code {
 		return nil, Credential{}, apperr.New("fs.credential_region_mismatch", "config", 2, fmt.Sprintf("file system %q credentials are for %s, not %s", id, credential.RegionCode, placement.Code))
 	}
+	metadataMatchesToken := found && subtle.ConstantTimeCompare([]byte(token), []byte(credential.APIKey)) == 1
 	credential.FileSystemID = id
 	credential.RegionCode = placement.Code
 	credential.APIKey = token
@@ -480,7 +520,7 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 	selected.FSCloudProvider = placement.Provider
 	selected.FSRegionCode = placement.NativeCode
 	selected.FSAPIKey = token
-	if found && token == credential.APIKey {
+	if metadataMatchesToken {
 		selected.FSTokenID = credential.TokenID
 		selected.FSTokenScopeKind = credential.ScopeKind
 		selected.FSTokenName = credential.TokenName
