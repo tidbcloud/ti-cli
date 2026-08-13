@@ -28,13 +28,15 @@ const defaultLiveProfile = "live-e2e"
 var (
 	liveFSResourceMu            sync.Mutex
 	liveFSResourceAutoCreatedID string
+	liveFSTokenAutoCreatedID    string
+	liveFSTokenAutoFileSystemID string
 	liveFSSelectedID            string
 	liveProfileConfigureMu      sync.Mutex
 )
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if liveFSResourceAutoCreatedID != "" {
+	if liveFSResourceAutoCreatedID != "" || liveFSTokenAutoCreatedID != "" {
 		cleanupAutoCreatedLiveFSResource()
 	}
 	os.Exit(code)
@@ -96,12 +98,10 @@ func TestLiveFSRemoteInventoryLifecycle(t *testing.T) {
 	if err := json.Unmarshal([]byte(create.stdout), &created); err != nil || created.FileSystemID == "" || created.FSToken == "" {
 		t.Fatalf("decode live tdc fs create result: %v", err)
 	}
-	defer func() {
-		result := runTI(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-id", created.FileSystemID)
-		if result.exitCode != 0 {
-			t.Logf("cleanup delete failed for tdc fs resource %q: exit=%d stdout=%s stderr=%s", created.FileSystemID, result.exitCode, result.stdout, result.stderr)
-		}
-	}()
+	liveFSResourceMu.Lock()
+	liveFSResourceAutoCreatedID = created.FileSystemID
+	liveFSSelectedID = created.FileSystemID
+	liveFSResourceMu.Unlock()
 
 	list := runTI(t, bin, "--profile", profileName, "fs", "list-file-systems")
 	list.wantExitCode(0)
@@ -214,6 +214,10 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "stat", "help"}, {"fs", "mv", "help"}, {"fs", "rm", "help"},
 		{"fs", "mkdir", "help"}, {"fs", "chmod", "help"}, {"fs", "symlink", "help"},
 		{"fs", "hardlink", "help"}, {"fs", "grep", "help"}, {"fs", "find", "help"},
+		{"fs", "generate-file-system-token", "help"}, {"fs", "list-file-system-tokens", "help"},
+		{"fs", "generate-file-system-scoped-token", "help"},
+		{"fs", "enable-file-system-token", "help"}, {"fs", "disable-file-system-token", "help"},
+		{"fs", "delete-file-system-token", "help"}, {"fs", "refresh-file-system-token", "help"},
 		{"fs", "mount", "help"}, {"fs", "drain", "help"}, {"fs", "umount", "help"},
 	})
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
@@ -225,7 +229,16 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "pack-file-system", "--local-root", "/tmp/ti-e2e-pack", "--remote-root", "/workspace", "--mount-profile", "portable"},
 		{"fs", "unpack-file-system", "--local-root", "/tmp/ti-e2e-pack", "--remote-root", "/workspace", "--mount-profile", "portable"},
 		{"fs", "mount-file-system", "--mount-path", "/tmp/ti-e2e-mount", "--driver", "webdav"},
+		{"fs", "generate-file-system-token", "--file-system-id", selected.FSTenantID, "--token-name", "ti-e2e-dry-run", "--ttl", "1h"},
+		{"fs", "enable-file-system-token", "--file-system-id", selected.FSTenantID, "--token-id", "00000000-0000-0000-0000-000000000000"},
+		{"fs", "disable-file-system-token", "--file-system-id", selected.FSTenantID, "--token-id", "00000000-0000-0000-0000-000000000000"},
+		{"fs", "delete-file-system-token", "--file-system-id", selected.FSTenantID, "--token-id", "00000000-0000-0000-0000-000000000000"},
 	}, "remote_mutation")
+	scopedDryRun := runTI(t, bin, "--profile", profileName, "fs", "generate-file-system-scoped-token", "--file-system-id", selected.FSTenantID, "--ttl", "1h", "--allow", "/ti-e2e:read,list", "--dry-run")
+	scopedDryRun.wantExitCode(0)
+	refreshDryRun := runTIWithInput(t, bin, "", []string{"TI_FS_TOKEN=" + drive9TestTokenWithVersion(selected.FSTenantID, 999), "TI_REGION_CODE=" + selected.FSPlacementRegionCode},
+		"--profile", profileName, "fs", "refresh-file-system-token", "--file-system-id", selected.FSTenantID, "--dry-run")
+	refreshDryRun.wantExitCode(0)
 	unmountDryRun := runTI(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", "/tmp/ti-e2e-mount", "--ignore-absent", "--dry-run", "--query", "checks[].name")
 	unmountDryRun.wantExitCode(0)
 	for _, check := range []string{"input_validation", "mount_locator", "remote_mutation"} {
@@ -254,6 +267,165 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "search-file-content"}, {"fs", "find-files"}, {"fs", "list-layers"},
 		{"fs", "describe-layer"}, {"fs", "diff-layer"},
 	})
+}
+
+func TestLiveFSFileSystemTokenLifecycle(t *testing.T) {
+	requireLive(t)
+	bin := tiBinary(t)
+	profileName := liveProfileName(t)
+	selected := ensureLiveFSResource(t, bin, profileName)
+	regionCode := selected.FSPlacementRegionCode
+	if regionCode == "" {
+		regionCode = selected.PlacementRegionCode
+	}
+	tokenName := fmt.Sprintf("ti-e2e-token-%d", time.Now().UnixNano())
+	generated := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "generate-file-system-token",
+		"--file-system-id", selected.FSTenantID, "--token-name", tokenName, "--ttl", "1h")
+	generated.wantExitCode(0)
+	var generatedResult struct {
+		FileSystemID string `json:"file_system_id"`
+		TokenID      string `json:"token_id"`
+		FSToken      string `json:"fs_token"`
+	}
+	if err := json.Unmarshal([]byte(generated.stdout), &generatedResult); err != nil || generatedResult.TokenID == "" || generatedResult.FSToken == "" {
+		t.Fatalf("decode generated FS token: %v\n%s", err, generated.stdout)
+	}
+	if generatedResult.FileSystemID != selected.FSTenantID {
+		t.Fatalf("generated token file_system_id = %q, want %q", generatedResult.FileSystemID, selected.FSTenantID)
+	}
+	scopedRoot := fmt.Sprintf("/ti-e2e-scoped-%d", time.Now().UnixNano())
+	scopedIssue := runTIWithInput(t, bin, "", []string{"TI_FS_TOKEN=" + generatedResult.FSToken, "TI_REGION_CODE=" + regionCode},
+		"--profile", profileName, "fs", "generate-file-system-scoped-token", "--file-system-id", selected.FSTenantID,
+		"--subject", "ti-e2e-scoped", "--ttl", "1h", "--allow", scopedRoot+":read,list,write,delete")
+	scopedIssue.wantExitCode(0)
+	var scopedResult struct {
+		TokenID string `json:"token_id"`
+		FSToken string `json:"fs_token"`
+	}
+	if err := json.Unmarshal([]byte(scopedIssue.stdout), &scopedResult); err != nil || scopedResult.TokenID == "" || scopedResult.FSToken == "" {
+		t.Fatalf("decode generated scoped FS token: %v\n%s", err, scopedIssue.stdout)
+	}
+	scopedDeleted := false
+	defer func() {
+		if scopedDeleted {
+			return
+		}
+		cleanup := runLiveFSSetupCommand(t, bin, "--profile", profileName, "--region", regionCode, "fs", "delete-file-system-token",
+			"--file-system-id", selected.FSTenantID, "--token-id", scopedResult.TokenID)
+		if cleanup.exitCode != 0 && !strings.Contains(strings.ToLower(cleanup.stderr), "not found") {
+			t.Logf("cleanup generated scoped FS token failed: %s", strings.TrimSpace(cleanup.stderr))
+		}
+	}()
+
+	scopedEnv := []string{"TI_FS_TOKEN=" + scopedResult.FSToken, "TI_REGION_CODE=" + regionCode}
+	mkdir := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "create-directory", "--file-system-id", selected.FSTenantID, "--path", scopedRoot)
+	mkdir.wantExitCode(0)
+	write := runTIWithInput(t, bin, "scoped-data", scopedEnv, "--profile", profileName, "fs", "copy-file", "--file-system-id", selected.FSTenantID, "--from-stdin", "--to-remote", scopedRoot+"/probe.txt")
+	write.wantExitCode(0)
+	read := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "read-file", "--file-system-id", selected.FSTenantID, "--path", scopedRoot+"/probe.txt")
+	read.wantExitCode(0)
+	read.wantStdoutContains("scoped-data")
+	outOfScope := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "list-files", "--file-system-id", selected.FSTenantID, "--path", "/")
+	if outOfScope.exitCode == 0 {
+		outOfScope.fail("scoped token unexpectedly accessed a path outside its prefix")
+	}
+	scopedList := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "list-file-system-tokens", "--file-system-id", selected.FSTenantID)
+	scopedList.wantExitCode(4)
+	scopedChild := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "generate-file-system-scoped-token", "--file-system-id", selected.FSTenantID, "--ttl", "1h", "--allow", scopedRoot+":read")
+	scopedChild.wantExitCode(4)
+	scopedRefresh := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "refresh-file-system-token", "--file-system-id", selected.FSTenantID)
+	scopedRefresh.wantExitCode(0)
+	var scopedRefreshResult struct {
+		TokenID string `json:"token_id"`
+		FSToken string `json:"fs_token"`
+	}
+	if err := json.Unmarshal([]byte(scopedRefresh.stdout), &scopedRefreshResult); err != nil || scopedRefreshResult.TokenID != scopedResult.TokenID || scopedRefreshResult.FSToken == "" {
+		t.Fatalf("decode refreshed scoped FS token: %v\n%s", err, scopedRefresh.stdout)
+	}
+	scopedEnv = []string{"TI_FS_TOKEN=" + scopedRefreshResult.FSToken, "TI_REGION_CODE=" + regionCode}
+	readAfterRefresh := runTIWithInput(t, bin, "", scopedEnv, "--profile", profileName, "fs", "read-file", "--file-system-id", selected.FSTenantID, "--path", scopedRoot+"/probe.txt")
+	readAfterRefresh.wantExitCode(0)
+
+	cleanupPath := runTIWithInput(t, bin, "", []string{"TI_FS_TOKEN=" + generatedResult.FSToken, "TI_REGION_CODE=" + regionCode}, "--profile", profileName, "fs", "delete-file", "--file-system-id", selected.FSTenantID, "--path", scopedRoot, "--recursive")
+	cleanupPath.wantExitCode(0)
+	removeScoped := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "delete-file-system-token", "--file-system-id", selected.FSTenantID, "--token-id", scopedResult.TokenID)
+	removeScoped.wantExitCode(0)
+	scopedDeleted = true
+	deleted := false
+	defer func() {
+		if deleted {
+			return
+		}
+		cleanup := runLiveFSSetupCommand(t, bin, "--profile", profileName, "--region", regionCode, "fs", "delete-file-system-token",
+			"--file-system-id", selected.FSTenantID, "--token-id", generatedResult.TokenID)
+		if cleanup.exitCode != 0 && !strings.Contains(strings.ToLower(cleanup.stderr), "not found") {
+			t.Logf("cleanup generated FS token failed: %s", strings.TrimSpace(cleanup.stderr))
+		}
+	}()
+
+	list := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "list-file-system-tokens", "--file-system-id", selected.FSTenantID)
+	list.wantExitCode(0)
+	list.wantStdoutContains(generatedResult.TokenID)
+	list.wantStdoutContains(tokenName)
+	list.wantStdoutNotContains(generatedResult.FSToken)
+
+	waitLiveFSTokenAccess(t, bin, profileName, regionCode, selected.FSTenantID, generatedResult.FSToken, true, 30*time.Second)
+	disable := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "disable-file-system-token",
+		"--file-system-id", selected.FSTenantID, "--token-id", generatedResult.TokenID)
+	disable.wantExitCode(0)
+	waitLiveFSTokenAccess(t, bin, profileName, regionCode, selected.FSTenantID, generatedResult.FSToken, false, 30*time.Second)
+
+	enable := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "enable-file-system-token",
+		"--file-system-id", selected.FSTenantID, "--token-id", generatedResult.TokenID)
+	enable.wantExitCode(0)
+	waitLiveFSTokenAccess(t, bin, profileName, regionCode, selected.FSTenantID, generatedResult.FSToken, true, 30*time.Second)
+
+	refreshEnv := []string{"TI_FS_TOKEN=" + generatedResult.FSToken, "TI_REGION_CODE=" + regionCode}
+	refresh := runTIWithInput(t, bin, "", refreshEnv, "--profile", profileName, "fs", "refresh-file-system-token", "--file-system-id", selected.FSTenantID)
+	refresh.wantExitCode(0)
+	var refreshResult struct {
+		TokenID string `json:"token_id"`
+		FSToken string `json:"fs_token"`
+	}
+	if err := json.Unmarshal([]byte(refresh.stdout), &refreshResult); err != nil || refreshResult.FSToken == "" {
+		t.Fatalf("decode refreshed FS token: %v\n%s", err, refresh.stdout)
+	}
+	if refreshResult.TokenID != generatedResult.TokenID {
+		t.Fatalf("refresh changed token ID: %q -> %q", generatedResult.TokenID, refreshResult.TokenID)
+	}
+	waitLiveFSTokenAccess(t, bin, profileName, regionCode, selected.FSTenantID, generatedResult.FSToken, false, 30*time.Second)
+	waitLiveFSTokenAccess(t, bin, profileName, regionCode, selected.FSTenantID, refreshResult.FSToken, true, 30*time.Second)
+
+	remove := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "delete-file-system-token",
+		"--file-system-id", selected.FSTenantID, "--token-id", generatedResult.TokenID)
+	remove.wantExitCode(0)
+	deleted = true
+	waitLiveFSTokenAccess(t, bin, profileName, regionCode, selected.FSTenantID, refreshResult.FSToken, false, 30*time.Second)
+	listAfter := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "list-file-system-tokens", "--file-system-id", selected.FSTenantID)
+	listAfter.wantExitCode(0)
+	listAfter.wantStdoutNotContains(generatedResult.TokenID)
+}
+
+func waitLiveFSTokenAccess(t *testing.T, bin, profileName, regionCode, fileSystemID, token string, wantAccess bool, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last commandResult
+	for {
+		last = runTIWithInput(t, bin, "", []string{"TI_FS_TOKEN=" + token, "TI_REGION_CODE=" + regionCode},
+			"--profile", profileName, "fs", "list-files", "--file-system-id", fileSystemID, "--path", "/")
+		hasAccess := last.exitCode == 0
+		if hasAccess == wantAccess {
+			message := strings.ToLower(last.stderr)
+			if !wantAccess && !strings.Contains(message, "authentication") && !strings.Contains(message, "invalid api key") {
+				last.fail("token access failed for a reason other than authentication")
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			last.fail("token access did not converge to %v within %s", wantAccess, timeout)
+		}
+		time.Sleep(time.Second)
+	}
 }
 
 func TestLiveFSVaultCommandSurface(t *testing.T) {
@@ -1153,45 +1325,55 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	suffix := fmt.Sprintf("%s-%d", time.Now().UTC().Format("20060102150405"), os.Getpid())
-	preflightList := runTI(t, bin, "--profile", profileName, "fs", "list-file-systems")
-	preflightList.wantExitCode(0)
-	create := runTI(t, bin, "--profile", profileName, "fs", "create-file-system", "--wait")
-	create.wantExitCode(0)
+	selected := ensureLiveFSResource(t, bin, profileName)
 	var created struct {
 		FileSystemID string `json:"file_system_id"`
 		RegionCode   string `json:"region_code"`
 		FSToken      string `json:"fs_token"`
+		TokenID      string `json:"token_id"`
 		Status       string `json:"status"`
 	}
-	if err := json.Unmarshal([]byte(create.stdout), &created); err != nil {
-		t.Fatalf("decode configuration-free FS create result: %v", err)
+	createToken := runTI(t, bin, "--profile", profileName, "--region", selected.FSPlacementRegionCode, "fs", "generate-file-system-token",
+		"--file-system-id", selected.FSTenantID,
+		"--token-name", "ti-e2e-config-free-"+suffix,
+		"--ttl", "1h")
+	createToken.wantExitCode(0)
+	if err := json.Unmarshal([]byte(createToken.stdout), &created); err != nil {
+		t.Fatalf("decode configuration-free FS token result: %v", err)
 	}
-	create.stdout = ""
-	if created.FileSystemID == "" || created.RegionCode == "" || created.FSToken == "" {
-		t.Fatalf("configuration-free FS create result is incomplete")
+	createToken.stdout = ""
+	created.RegionCode = selected.FSPlacementRegionCode
+	if created.FileSystemID == "" || created.RegionCode == "" || created.FSToken == "" || created.TokenID == "" {
+		t.Fatalf("configuration-free FS token result is incomplete")
 	}
-	if created.Status != "ready" {
-		t.Fatalf("--wait returned ti fs resource in status %q", created.Status)
+	if created.Status != "active" {
+		t.Fatalf("generated configuration-free token is in status %q", created.Status)
 	}
 
-	deletedResource := false
+	deletedToken := false
 	defer func() {
-		if deletedResource {
+		if deletedToken {
 			return
 		}
-		cleanup := runTI(t, bin, "--profile", profileName, "fs", "delete-file-system", "--file-system-id", created.FileSystemID)
+		cleanup := runTI(t, bin, "--profile", profileName, "--region", created.RegionCode, "fs", "delete-file-system-token",
+			"--file-system-id", created.FileSystemID, "--token-id", created.TokenID)
 		if cleanup.exitCode != 0 {
-			t.Logf("cleanup configuration-free FS resource failed for %q: exit=%d stderr=%s", created.FileSystemID, cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
+			t.Logf("cleanup configuration-free FS token failed for %q: exit=%d stderr=%s", created.TokenID, cleanup.exitCode, strings.TrimSpace(cleanup.stderr))
 		}
 	}()
 
 	profile := liveProfile(t)
-	selected := resolveLiveFSResourceByID(t, profile, created.FileSystemID)
-	if selected.FSAPIKey != created.FSToken || selected.FSPlacementRegionCode != created.RegionCode {
-		t.Fatal("stored FS resource credentials or placement differ from create output")
-	}
 	cleanHome := t.TempDir()
-	authEnv := liveFSTokenEnv(selected, cleanHome)
+	authEnv := []string{
+		"HOME=" + cleanHome,
+		"TI_PROFILE=",
+		"TIDB_CLOUD_PUBLIC_KEY=",
+		"TIDB_CLOUD_PRIVATE_KEY=",
+		"TI_REGION_CODE=" + created.RegionCode,
+		"TI_FS_FILE_SYSTEM_ID=",
+		"TI_FS_TOKEN=" + created.FSToken,
+	}
+	waitLiveFSTokenAccess(t, bin, profileName, created.RegionCode, created.FileSystemID, created.FSToken, true, 30*time.Second)
 	remoteRoot := "/ti-e2e-token-" + suffix
 	remoteDeleted := false
 	defer func() {
@@ -1334,15 +1516,11 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 	deleteRemote := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--file-system-id", created.FileSystemID, "--path", remoteRoot, "--recursive")
 	deleteRemote.wantExitCode(0)
 	remoteDeleted = true
-	deleteResource := runTIWithInput(t, bin, "", controlEnv, "fs", "delete-file-system", "--file-system-id", created.FileSystemID)
-	deleteResource.wantExitCode(0)
-	deleteResource.wantStdoutContains(`"status": "deleting"`)
-	deleteResource.wantStdoutContains(`"remote_deletion_state": "deleting"`)
-	deletedResource = true
-	if _, err := fscred.DeleteCredential(profile.HomeDir, profileName, created.FileSystemID); err != nil {
-		t.Fatalf("remove original local credential after remote deletion acceptance: %v", err)
-	}
-	waitLiveFSInventoryAbsent(t, bin, controlEnv, created.FileSystemID, 2*time.Minute)
+	deleteToken := runTIWithInput(t, bin, "", controlEnv, "fs", "delete-file-system-token",
+		"--file-system-id", created.FileSystemID, "--token-id", created.TokenID)
+	deleteToken.wantExitCode(0)
+	deleteToken.wantStdoutContains(`"status": "revoked"`)
+	deletedToken = true
 }
 
 func TestLiveFSWebDAVMountRuntime(t *testing.T) {
@@ -1928,14 +2106,17 @@ func ensureLiveFSResource(t *testing.T, bin, profileName string) *config.Profile
 	list := runTI(t, bin, "--profile", profileName, "fs", "list-file-systems")
 	list.wantExitCode(0)
 	var inventory struct {
+		RegionCode  string `json:"region_code"`
 		FileSystems []struct {
 			FileSystemID  string `json:"file_system_id"`
+			RegionCode    string `json:"region_code"`
 			HasLocalToken bool   `json:"has_local_token"`
 		} `json:"file_systems"`
 	}
 	if err := json.Unmarshal([]byte(list.stdout), &inventory); err != nil {
 		t.Fatalf("decode live fs inventory: %v", err)
 	}
+	var unusableResources []string
 	for _, resource := range inventory.FileSystems {
 		if !resource.HasLocalToken || (requestedID != "" && requestedID != resource.FileSystemID) {
 			continue
@@ -1946,8 +2127,54 @@ func ensureLiveFSResource(t *testing.T, bin, profileName string) *config.Profile
 		return selected
 	}
 
+	for _, resource := range inventory.FileSystems {
+		if requestedID != "" && requestedID != resource.FileSystemID {
+			continue
+		}
+		regionCode := resource.RegionCode
+		if regionCode == "" {
+			regionCode = inventory.RegionCode
+		}
+		if regionCode == "" {
+			regionCode = profile.PlacementRegionCode
+		}
+		generate := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "generate-file-system-token",
+			"--file-system-id", resource.FileSystemID,
+			"--token-name", fmt.Sprintf("ti-e2e-session-%d", time.Now().UnixNano()),
+			"--ttl", "1h",
+			"--store-locally")
+		generate.wantExitCode(0)
+		var generated struct {
+			TokenID string `json:"token_id"`
+		}
+		if err := json.Unmarshal([]byte(generate.stdout), &generated); err != nil || generated.TokenID == "" {
+			t.Fatalf("decode temporary live FS token: %v\n%s", err, generate.stdout)
+		}
+		probe := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "list-files", "--file-system-id", resource.FileSystemID, "--path", "/")
+		if probe.exitCode != 0 {
+			cleanup := runTI(t, bin, "--profile", profileName, "--region", regionCode, "fs", "delete-file-system-token",
+				"--file-system-id", resource.FileSystemID, "--token-id", generated.TokenID)
+			if cleanup.exitCode != 0 {
+				cleanup.fail("clean up temporary token for unusable live FS %s", resource.FileSystemID)
+			}
+			unusableResources = append(unusableResources, fmt.Sprintf("%s: %s", resource.FileSystemID, strings.TrimSpace(probe.stderr)))
+			if requestedID != "" {
+				t.Fatalf("TI_LIVE_FS_ID %q is not data-plane accessible: %s", requestedID, strings.TrimSpace(probe.stderr))
+			}
+			continue
+		}
+		liveFSTokenAutoCreatedID = generated.TokenID
+		liveFSTokenAutoFileSystemID = resource.FileSystemID
+		liveFSSelectedID = resource.FileSystemID
+		selected := resolveLiveFSResourceByID(t, profile, resource.FileSystemID)
+		return selected
+	}
+
 	if requestedID != "" {
-		t.Fatalf("TI_LIVE_FS_ID %q is not remotely visible with a local token", requestedID)
+		t.Fatalf("TI_LIVE_FS_ID %q is not remotely visible", requestedID)
+	}
+	if len(inventory.FileSystems) > 0 {
+		t.Fatalf("no remotely visible Filesystem has a working data plane:\n%s", strings.Join(unusableResources, "\n"))
 	}
 	create := runTI(t, bin, "--profile", profileName, "fs", "create-file-system", "--wait")
 	create.wantExitCode(0)
@@ -2083,6 +2310,22 @@ func cleanupAutoCreatedLiveFSResource() {
 		return
 	}
 	profileName := liveProfileNameFromEnv()
+	if liveFSTokenAutoCreatedID != "" && liveFSTokenAutoFileSystemID != "" {
+		cmd := exec.Command(
+			bin,
+			"--profile", profileName,
+			"fs", "delete-file-system-token",
+			"--file-system-id", liveFSTokenAutoFileSystemID,
+			"--token-id", liveFSTokenAutoCreatedID,
+		)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			_, _ = fmt.Fprintf(os.Stderr, "ti live e2e cleanup warning: delete temporary FS token %q failed: %v\n%s", liveFSTokenAutoCreatedID, err, string(output))
+		}
+	}
+	if liveFSResourceAutoCreatedID == "" {
+		return
+	}
 	fileSystemID := liveFSResourceAutoCreatedID
 	cmd := exec.Command(
 		bin,
@@ -2100,6 +2343,20 @@ func releaseAutoCreatedLiveFSResource(t *testing.T, bin, profileName string) {
 	t.Helper()
 	liveFSResourceMu.Lock()
 	defer liveFSResourceMu.Unlock()
+	if liveFSTokenAutoCreatedID != "" && liveFSTokenAutoFileSystemID != "" {
+		result := runTI(
+			t,
+			bin,
+			"--profile", profileName,
+			"fs", "delete-file-system-token",
+			"--file-system-id", liveFSTokenAutoFileSystemID,
+			"--token-id", liveFSTokenAutoCreatedID,
+		)
+		result.wantExitCode(0)
+		liveFSTokenAutoCreatedID = ""
+		liveFSTokenAutoFileSystemID = ""
+		liveFSSelectedID = ""
+	}
 	if liveFSResourceAutoCreatedID == "" {
 		return
 	}

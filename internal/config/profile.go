@@ -37,6 +37,9 @@ type Profile struct {
 	FSCloudProvider       string
 	FSRegionCode          string
 	FSAPIKey              string
+	FSTokenID             string
+	FSTokenScopeKind      string
+	FSTokenName           string
 }
 
 func Load(ctx context.Context, opts LoadOptions) (*Profile, error) {

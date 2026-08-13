@@ -1,12 +1,14 @@
 package fscred
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
@@ -51,6 +53,84 @@ func TestCredentialStoreAndResolveByID(t *testing.T) {
 	}
 }
 
+func TestCredentialOptionalTokenMetadataAndExactDelete(t *testing.T) {
+	home := t.TempDir()
+	profile := credentialTestProfile()
+	expiresAt := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	stored, err := StoreCredentialRecord(home, profile, Credential{
+		FileSystemID: "tenant-meta", RegionCode: "aws-us-east-1", APIKey: wrappedToken(t, "tenant-meta"),
+		TokenID: "token-id", ScopeKind: "owner", TokenName: "local-owner", ExpiresAt: &expiresAt,
+	}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.TokenID != "token-id" || stored.ScopeKind != "owner" || stored.TokenName != "local-owner" || stored.ExpiresAt == nil || !stored.ExpiresAt.Equal(expiresAt) {
+		t.Fatalf("stored metadata = %#v", stored)
+	}
+	if removed, reason, err := DeleteCredentialIfTokenID(home, profile.Name, "tenant-meta", "other"); err != nil || removed || reason != "local_token_id_mismatch" {
+		t.Fatalf("mismatched delete = %v %q %v", removed, reason, err)
+	}
+	if removed, reason, err := DeleteCredentialIfTokenID(home, profile.Name, "tenant-meta", "token-id"); err != nil || !removed || reason != "" {
+		t.Fatalf("matching delete = %v %q %v", removed, reason, err)
+	}
+}
+
+func TestOldCredentialWithoutTokenMetadataRemainsReadable(t *testing.T) {
+	home := t.TempDir()
+	profile := credentialTestProfile()
+	if _, err := StoreCredential(home, profile, "tenant-old", "aws-us-east-1", wrappedToken(t, "tenant-old"), false); err != nil {
+		t.Fatal(err)
+	}
+	credential, err := GetCredential(home, profile.Name, "tenant-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.TokenID != "" || credential.ScopeKind != "" || credential.TokenName != "" || credential.ExpiresAt != nil {
+		t.Fatalf("legacy credential gained guessed metadata: %#v", credential)
+	}
+	removed, reason, err := DeleteCredentialIfTokenID(home, profile.Name, "tenant-old", "token-id")
+	if err != nil || removed || reason != "local_token_id_unknown" {
+		t.Fatalf("legacy delete = %v %q %v", removed, reason, err)
+	}
+}
+
+func TestCredentialLockSerializesWriters(t *testing.T) {
+	home := t.TempDir()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- WithCredentialLock(ctx, home, "stage", "tenant-lock", func() error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+	<-entered
+	secondEntered := make(chan struct{})
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- WithCredentialLock(ctx, home, "stage", "tenant-lock", func() error {
+			close(secondEntered)
+			return nil
+		})
+	}()
+	select {
+	case <-secondEntered:
+		t.Fatal("second writer entered while first lock was held")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestResolveCredentialDerivesIDFromExplicitToken(t *testing.T) {
 	profile := credentialTestProfile()
 	token := wrappedToken(t, "tenant-token")
@@ -68,6 +148,23 @@ func TestResolveCredentialDerivesIDFromExplicitToken(t *testing.T) {
 	})
 	if apperr.CodeFor(err) != "fs.token_file_system_mismatch" {
 		t.Fatalf("mismatch error = %v", err)
+	}
+}
+
+func TestExplicitTokenDoesNotInheritStoredTokenMetadata(t *testing.T) {
+	home := t.TempDir()
+	profile := credentialTestProfile()
+	localToken := wrappedToken(t, "tenant-token")
+	if _, err := StoreCredentialRecord(home, profile, Credential{FileSystemID: "tenant-token", RegionCode: "aws-us-east-1", APIKey: localToken, TokenID: "owner-id", ScopeKind: "owner", TokenName: "owner"}, false); err != nil {
+		t.Fatal(err)
+	}
+	explicitToken := wrappedTokenWithVersion(t, "tenant-token", 2)
+	selected, _, err := ResolveCredential(home, profile, ResolveCredentialOptions{Token: explicitToken, TokenExplicit: true, RegionOverride: "aws-us-east-1", TokenRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.FSTokenID != "" || selected.FSTokenScopeKind != "" || selected.FSTokenName != "" {
+		t.Fatalf("explicit token inherited local metadata: %#v", selected)
 	}
 }
 
@@ -252,9 +349,13 @@ func TestMigrateNameRegistryPreflightsDestinationConflictsBeforeAnyWrite(t *test
 }
 
 func wrappedToken(t *testing.T, tenantID string) string {
+	return wrappedTokenWithVersion(t, tenantID, 1)
+}
+
+func wrappedTokenWithVersion(t *testing.T, tenantID string, version int) string {
 	t.Helper()
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
-	payloadBytes, err := json.Marshal(map[string]any{"tenant_id": tenantID, "token_version": 1, "iat": 1})
+	payloadBytes, err := json.Marshal(map[string]any{"tenant_id": tenantID, "token_version": version, "iat": 1})
 	if err != nil {
 		t.Fatal(err)
 	}

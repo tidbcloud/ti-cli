@@ -1,6 +1,8 @@
 package fscred
 
 import (
+	"context"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -8,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/pelletier/go-toml/v2"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
@@ -27,10 +31,20 @@ const (
 var migrationMu sync.Mutex
 
 type Credential struct {
-	FileSystemID  string `json:"file_system_id" toml:"file_system_id"`
-	RegionCode    string `json:"region_code" toml:"region_code"`
-	HasLocalToken bool   `json:"has_local_token" toml:"-"`
-	APIKey        string `json:"-" toml:"api_key"`
+	FileSystemID  string       `json:"file_system_id" toml:"file_system_id"`
+	RegionCode    string       `json:"region_code" toml:"region_code"`
+	HasLocalToken bool         `json:"has_local_token" toml:"-"`
+	APIKey        string       `json:"-" toml:"api_key"`
+	TokenID       string       `json:"token_id,omitempty" toml:"token_id,omitempty"`
+	ScopeKind     string       `json:"scope_kind,omitempty" toml:"scope_kind,omitempty"`
+	TokenName     string       `json:"token_name,omitempty" toml:"token_name,omitempty"`
+	ExpiresAt     *time.Time   `json:"expires_at,omitempty" toml:"expires_at,omitempty"`
+	Scopes        []TokenScope `json:"scopes,omitempty" toml:"scopes,omitempty"`
+}
+
+type TokenScope struct {
+	Prefix string   `json:"prefix" toml:"prefix"`
+	Ops    []string `json:"ops" toml:"ops"`
 }
 
 type CredentialPaths struct {
@@ -54,18 +68,26 @@ type ResolveCredentialOptions struct {
 }
 
 func StoreCredential(homeDir string, profile *config.Profile, fileSystemID, regionCode, apiKey string, replace bool) (Credential, error) {
+	return StoreCredentialRecord(homeDir, profile, Credential{
+		FileSystemID: fileSystemID,
+		RegionCode:   regionCode,
+		APIKey:       apiKey,
+	}, replace)
+}
+
+func StoreCredentialRecord(homeDir string, profile *config.Profile, credential Credential, replace bool) (Credential, error) {
 	if profile == nil {
 		return Credential{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
-	fileSystemID, err := ValidateFileSystemID(fileSystemID)
+	fileSystemID, err := ValidateFileSystemID(credential.FileSystemID)
 	if err != nil {
 		return Credential{}, err
 	}
-	apiKey = strings.TrimSpace(apiKey)
+	apiKey := strings.TrimSpace(credential.APIKey)
 	if apiKey == "" {
 		return Credential{}, apperr.New("fs.missing_token", "authentication", 3, "authentication required: missing FS token")
 	}
-	placementCode := strings.TrimSpace(regionCode)
+	placementCode := strings.TrimSpace(credential.RegionCode)
 	if placementCode == "" {
 		placementCode = strings.TrimSpace(profile.PlacementRegionCode)
 	}
@@ -73,9 +95,20 @@ func StoreCredential(homeDir string, profile *config.Profile, fileSystemID, regi
 	if err != nil {
 		return Credential{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
-	credential := Credential{FileSystemID: fileSystemID, RegionCode: placement.Code, HasLocalToken: true, APIKey: apiKey}
+	credential.FileSystemID = fileSystemID
+	credential.RegionCode = placement.Code
+	credential.HasLocalToken = true
+	credential.APIKey = apiKey
+	credential.TokenID = strings.TrimSpace(credential.TokenID)
+	credential.ScopeKind = strings.TrimSpace(credential.ScopeKind)
+	credential.TokenName = strings.TrimSpace(credential.TokenName)
+	credential.Scopes = normalizeStoredScopes(credential.Scopes)
+	if credential.ExpiresAt != nil {
+		expiresAt := credential.ExpiresAt.UTC()
+		credential.ExpiresAt = &expiresAt
+	}
 	if existing, getErr := GetCredential(homeDir, profile.Name, fileSystemID); getErr == nil {
-		if existing.RegionCode == credential.RegionCode && existing.APIKey == credential.APIKey {
+		if credentialsEqual(existing, credential) {
 			return existing, nil
 		}
 		if !replace {
@@ -102,6 +135,131 @@ func StoreCredential(homeDir string, profile *config.Profile, fileSystemID, regi
 		return Credential{}, credentialError("fs.credential_store_failed", profile.Name, fileSystemID, "stored credential verification failed")
 	}
 	return stored, nil
+}
+
+func WithCredentialLock(ctx context.Context, homeDir, profileName, fileSystemID string, fn func() error) error {
+	dir, err := credentialDir(homeDir, profileName, fileSystemID)
+	if err != nil {
+		return err
+	}
+	profileDir := credentialProfileDir(homeDir, profileName)
+	if err := os.MkdirAll(profileDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Chmod(profileDir, 0o700); err != nil {
+		return err
+	}
+	lockPath := filepath.Join(profileDir, "."+filepath.Base(dir)+".credentials.lock")
+	for {
+		lock, lockErr := os.OpenFile(lockPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if lockErr == nil {
+			_, _ = lock.WriteString(strconv.Itoa(os.Getpid()) + "\n" + time.Now().UTC().Format(time.RFC3339Nano) + "\n")
+			_ = lock.Sync()
+			_ = lock.Close()
+			defer os.Remove(lockPath)
+			return fn()
+		}
+		if !errors.Is(lockErr, os.ErrExist) {
+			return lockErr
+		}
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > 10*time.Minute {
+			_ = os.Remove(lockPath)
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+func WriteRecoveryCredential(homeDir, profileName string, credential Credential) (string, error) {
+	dir, err := credentialDir(homeDir, profileName, credential.FileSystemID)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, ".credentials.recovery")
+	if err := writeTOML(path, credential, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func CommitRecoveryCredential(homeDir, profileName, fileSystemID, recoveryPath string) error {
+	paths, err := CredentialPath(homeDir, profileName, fileSystemID)
+	if err != nil {
+		return err
+	}
+	if filepath.Dir(paths.Credentials) != filepath.Dir(recoveryPath) {
+		return credentialError("fs.credential_store_failed", profileName, fileSystemID, "recovery file is outside the credential directory")
+	}
+	if err := os.Rename(recoveryPath, paths.Credentials); err != nil {
+		return err
+	}
+	return os.Chmod(paths.Credentials, 0o600)
+}
+
+func DeleteCredentialIfTokenID(homeDir, profileName, fileSystemID, tokenID string) (bool, string, error) {
+	credential, err := GetCredential(homeDir, profileName, fileSystemID)
+	if err != nil {
+		if apperr.CodeFor(err) == "fs.credential_not_found" {
+			return false, "local_credentials_not_found", nil
+		}
+		return false, "", err
+	}
+	if credential.TokenID == "" {
+		return false, "local_token_id_unknown", nil
+	}
+	if credential.TokenID != strings.TrimSpace(tokenID) {
+		return false, "local_token_id_mismatch", nil
+	}
+	removed, err := DeleteCredential(homeDir, profileName, fileSystemID)
+	return removed, "", err
+}
+
+func credentialsEqual(left, right Credential) bool {
+	if left.FileSystemID != right.FileSystemID || left.RegionCode != right.RegionCode || left.APIKey != right.APIKey || left.TokenID != right.TokenID || left.ScopeKind != right.ScopeKind || left.TokenName != right.TokenName {
+		return false
+	}
+	if !tokenScopesEqual(left.Scopes, right.Scopes) {
+		return false
+	}
+	if left.ExpiresAt == nil || right.ExpiresAt == nil {
+		return left.ExpiresAt == nil && right.ExpiresAt == nil
+	}
+	return left.ExpiresAt.Equal(*right.ExpiresAt)
+}
+
+func normalizeStoredScopes(scopes []TokenScope) []TokenScope {
+	if len(scopes) == 0 {
+		return nil
+	}
+	result := make([]TokenScope, 0, len(scopes))
+	for _, scope := range scopes {
+		result = append(result, TokenScope{Prefix: strings.TrimSpace(scope.Prefix), Ops: append([]string(nil), scope.Ops...)})
+	}
+	return result
+}
+
+func tokenScopesEqual(left, right []TokenScope) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i].Prefix != right[i].Prefix || len(left[i].Ops) != len(right[i].Ops) {
+			return false
+		}
+		for j := range left[i].Ops {
+			if left[i].Ops[j] != right[i].Ops[j] {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func GetCredential(homeDir, profileName, fileSystemID string) (Credential, error) {
@@ -224,6 +382,37 @@ func PrepareCredentialStore(homeDir, profileName string) error {
 	return nil
 }
 
+func PrepareCredentialTarget(homeDir, profileName, fileSystemID string) error {
+	if err := PrepareCredentialStore(homeDir, profileName); err != nil {
+		return err
+	}
+	dir, err := credentialDir(homeDir, profileName, fileSystemID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("prepare ti fs credential directory: %w", err)
+	}
+	if err := os.Chmod(dir, 0o700); err != nil {
+		return fmt.Errorf("restrict ti fs credential directory: %w", err)
+	}
+	probe, err := os.CreateTemp(dir, ".credential-write-probe-*")
+	if err != nil {
+		return fmt.Errorf("verify ti fs credential target is writable: %w", err)
+	}
+	probePath := probe.Name()
+	defer os.Remove(probePath)
+	if err := probe.Chmod(0o600); err != nil {
+		_ = probe.Close()
+		return err
+	}
+	if err := probe.Sync(); err != nil {
+		_ = probe.Close()
+		return err
+	}
+	return probe.Close()
+}
+
 func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCredentialOptions) (*config.Profile, Credential, error) {
 	if profile == nil {
 		return nil, Credential{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
@@ -319,6 +508,7 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 	if found && credential.RegionCode != placement.Code {
 		return nil, Credential{}, apperr.New("fs.credential_region_mismatch", "config", 2, fmt.Sprintf("file system %q credentials are for %s, not %s", id, credential.RegionCode, placement.Code))
 	}
+	metadataMatchesToken := found && subtle.ConstantTimeCompare([]byte(token), []byte(credential.APIKey)) == 1
 	credential.FileSystemID = id
 	credential.RegionCode = placement.Code
 	credential.APIKey = token
@@ -330,6 +520,11 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 	selected.FSCloudProvider = placement.Provider
 	selected.FSRegionCode = placement.NativeCode
 	selected.FSAPIKey = token
+	if metadataMatchesToken {
+		selected.FSTokenID = credential.TokenID
+		selected.FSTokenScopeKind = credential.ScopeKind
+		selected.FSTokenName = credential.TokenName
+	}
 	return &selected, credential, nil
 }
 

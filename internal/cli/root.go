@@ -602,6 +602,11 @@ func newControlPlaneCommand(spec controlPlaneCommandSpec, info version.Info) *co
 			}
 			result, err := run(ctx)
 			if err != nil {
+				if partial, ok := err.(interface{ StructuredResult() any }); ok {
+					if renderErr := renderStructured(cmd, partial.StructuredResult()); renderErr != nil {
+						return renderErr
+					}
+				}
 				return err
 			}
 			return renderStructured(cmd, result)

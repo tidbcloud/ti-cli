@@ -34,6 +34,8 @@ type Client struct {
 	Service     endpoints.Service
 	UserAgent   string
 	MaxRetries  int
+	Redactor    apitransport.Redactor
+	BearerAuth  bool
 }
 
 type Options struct {
@@ -96,6 +98,7 @@ func New(opts Options) (*Client, error) {
 		Service:     opts.Endpoint.Service,
 		UserAgent:   userAgent,
 		MaxRetries:  maxRetries,
+		Redactor:    opts.Redactor,
 	}, nil
 }
 
@@ -126,7 +129,12 @@ func NewBearerClient(profileName, apiKey string, endpoint endpoints.Endpoint, pe
 	opts.Permission = permission
 	opts.Transport = apitransport.NewBearer(apiKey, opts.Transport)
 	opts.Redactor.Secrets = append(opts.Redactor.Secrets, apiKey)
-	return New(opts)
+	client, err := New(opts)
+	if err != nil {
+		return nil, err
+	}
+	client.BearerAuth = true
+	return client, nil
 }
 
 func (c *Client) NewRequest(ctx context.Context, method, requestPath string, body any) (*http.Request, error) {
@@ -293,6 +301,7 @@ func retryableRequest(req *http.Request) bool {
 
 func (c *Client) statusError(req *http.Request, res *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 64*1024))
+	body = []byte(c.Redactor.Redact(string(body)))
 	apiMessage := responseMessage(body)
 	switch res.StatusCode {
 	case http.StatusBadRequest:
@@ -314,7 +323,11 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 	case http.StatusUnauthorized:
 		message := fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
 		if c.Service == endpoints.ServiceFS {
-			message = fmt.Sprintf("authentication failed: ti fs rejected fs_api_key for profile %q. Run `ti fs create-file-system` or recreate the ti fs resource.", profileName(c.ProfileName))
+			if !c.BearerAuth && strings.HasPrefix(string(c.Permission), "fs.token.") && c.Permission != authz.FSTokenRefresh {
+				message = fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
+			} else {
+				message = fmt.Sprintf("authentication failed: ti fs rejected the selected token for profile %q. It might be disabled, expired, refreshed elsewhere, or revoked; generate or import a valid token and try again.", profileName(c.ProfileName))
+			}
 		}
 		return &Error{
 			Code:       "auth.invalid_credentials",
@@ -325,12 +338,29 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Body:       string(body),
 		}
 	case http.StatusForbidden:
+		message := permissionDeniedMessage(profileName(c.ProfileName), c.Permission, c.Action, c.Provider, c.RegionCode)
+		if c.Service == endpoints.ServiceFS {
+			switch c.Permission {
+			case authz.FSTokenIssueScoped:
+				message = "permission denied: generating a scoped file system token requires an owner FS token; TI_FS_TOKEN or --fs-token currently contains a scoped token or another token without owner permission"
+			case authz.FSTokenList, authz.FSTokenDelete:
+				if c.BearerAuth {
+					message = "permission denied: this token management operation requires an owner FS token; TI_FS_TOKEN or --fs-token currently contains a scoped token or another token without owner permission"
+				}
+			case authz.FSTokenEnable, authz.FSTokenDisable:
+				if c.BearerAuth {
+					message = "permission denied: enabling or disabling a token requires an owner FS token and the target must be an fs_scoped token"
+				}
+			case authz.FSFileRead, authz.FSFileWrite, authz.FSMount:
+				message = "permission denied: the selected FS token does not allow this operation or path; use an owner token or a scoped token whose prefix and operations include the request"
+			}
+		}
 		return &Error{
 			Code:       "authz.permission_denied",
 			Category:   "authorization",
 			ExitCode:   4,
 			StatusCode: res.StatusCode,
-			Message:    permissionDeniedMessage(profileName(c.ProfileName), c.Permission, c.Action, c.Provider, c.RegionCode),
+			Message:    message,
 			Body:       string(body),
 		}
 	case http.StatusNotFound:
@@ -369,6 +399,12 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Message:    messageOrDefault(apiMessage, "API rate limit exceeded: retry later"),
 			Body:       string(body),
 		}
+	case http.StatusConflict:
+		message := messageOrDefault(apiMessage, "remote lifecycle conflict: inspect the resource state and retry only when safe")
+		if c.Permission == authz.FSTokenEnable && strings.Contains(strings.ToLower(message), "expired") {
+			message = "the token is expired and cannot be enabled; generate a new token instead"
+		}
+		return &Error{Code: "api.conflict", Category: "api", ExitCode: 1, StatusCode: res.StatusCode, Message: message, Body: string(body)}
 	default:
 		return &Error{
 			Code:       "api.remote_error",

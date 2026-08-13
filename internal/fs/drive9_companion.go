@@ -1512,6 +1512,7 @@ func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kin
 	if err != nil {
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "construct ti fs mount locator", err)
 	}
+	locator = locator.WithTokenCorrelation(profile.FSTenantID, profile.FSTokenID, fsTokenFingerprint(profile.FSAPIKey))
 	if _, err := mountlocator.Write(homeDir, locator); err != nil {
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "write ti fs mount locator", err)
 	}
