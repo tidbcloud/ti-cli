@@ -244,6 +244,8 @@ ti db create-db-cluster --db-cluster-type starter --db-cluster-name my-distribut
 - `ti <command> help`
 - `ti <command> <subcommand> help`
 
+Structured commands output JSON by default. Use `--output text` for command-specific tables or readable key-value output; it never falls back to JSON. When combined with `--query`, scalar lists are printed one item per line and object lists are printed as tables. Commands that intentionally stream raw bytes preserve those bytes and reject `--query`.
+
 <details>
 <summary>All commands</summary>
 

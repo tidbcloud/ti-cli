@@ -206,6 +206,56 @@ type GitDeleteResult struct {
 	Status    string `json:"status"`
 }
 
+func (r GitWorkspaceCloneResult) Human() string {
+	lines := []string{
+		"Operation: " + r.Operation,
+		"Workspace ID: " + r.Workspace.WorkspaceID,
+		"Target path: " + r.TargetPath,
+		"Remote path: " + r.RemotePath,
+		"Head commit: " + r.HeadCommit,
+		fmt.Sprintf("Tree entries: %d", r.TreeEntries),
+	}
+	if r.BranchName != "" {
+		lines = append(lines, "Branch: "+r.BranchName)
+	}
+	if r.Hydrate != nil {
+		lines = append(lines, "Hydrate: "+r.Hydrate.Operation)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (r GitHydrateResult) Human() string {
+	return strings.Join([]string{
+		"Operation: " + r.Operation,
+		"Workspace ID: " + r.WorkspaceID,
+		"Target path: " + r.TargetPath,
+		"Commit: " + r.CommitSHA,
+		fmt.Sprintf("Files: %d", r.Files),
+		fmt.Sprintf("Objects: %d", r.Objects),
+		fmt.Sprintf("Skipped: %d", r.Skipped),
+		"Duration: " + r.Duration.String(),
+	}, "\n")
+}
+
+func (r GitRestoreResult) Human() string {
+	return strings.Join([]string{
+		"Operation: " + r.Operation,
+		"Workspace ID: " + r.WorkspaceID,
+		"Target path: " + r.TargetPath,
+		"Status: " + r.Status,
+		fmt.Sprintf("State restored: %t", r.StateRestored),
+		fmt.Sprintf("Object packs: %d", r.ObjectPacks),
+	}, "\n")
+}
+
+func (r GitWorktreeRemoveResult) Human() string {
+	return strings.Join([]string{"Operation: " + r.Operation, "Workspace ID: " + r.WorkspaceID, "Remote path: " + r.RemotePath, "Status: " + r.Status}, "\n")
+}
+
+func (r GitDeleteResult) Human() string {
+	return strings.Join([]string{"Operation: " + r.Operation, "ID: " + r.ID, "Status: " + r.Status}, "\n")
+}
+
 type mountedGitTarget struct {
 	MountPoint  string
 	MountRel    string
