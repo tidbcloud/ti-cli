@@ -34,6 +34,7 @@ type Client struct {
 	Service     endpoints.Service
 	UserAgent   string
 	MaxRetries  int
+	Redactor    apitransport.Redactor
 }
 
 type Options struct {
@@ -96,6 +97,7 @@ func New(opts Options) (*Client, error) {
 		Service:     opts.Endpoint.Service,
 		UserAgent:   userAgent,
 		MaxRetries:  maxRetries,
+		Redactor:    opts.Redactor,
 	}, nil
 }
 
@@ -293,6 +295,7 @@ func retryableRequest(req *http.Request) bool {
 
 func (c *Client) statusError(req *http.Request, res *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 64*1024))
+	body = []byte(c.Redactor.Redact(string(body)))
 	apiMessage := responseMessage(body)
 	switch res.StatusCode {
 	case http.StatusBadRequest:
@@ -314,7 +317,11 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 	case http.StatusUnauthorized:
 		message := fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
 		if c.Service == endpoints.ServiceFS {
-			message = fmt.Sprintf("authentication failed: ti fs rejected fs_api_key for profile %q. Run `ti fs create-file-system` or recreate the ti fs resource.", profileName(c.ProfileName))
+			if strings.HasPrefix(string(c.Permission), "fs.token.") && c.Permission != authz.FSTokenRefresh {
+				message = fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
+			} else {
+				message = fmt.Sprintf("authentication failed: ti fs rejected the selected token for profile %q. It might be disabled, expired, refreshed elsewhere, or revoked; generate or import a valid token and try again.", profileName(c.ProfileName))
+			}
 		}
 		return &Error{
 			Code:       "auth.invalid_credentials",
@@ -369,6 +376,12 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Message:    messageOrDefault(apiMessage, "API rate limit exceeded: retry later"),
 			Body:       string(body),
 		}
+	case http.StatusConflict:
+		message := messageOrDefault(apiMessage, "remote lifecycle conflict: inspect the resource state and retry only when safe")
+		if c.Permission == authz.FSTokenEnable && strings.Contains(strings.ToLower(message), "expired") {
+			message = "the token is expired and cannot be enabled; generate a new token instead"
+		}
+		return &Error{Code: "api.conflict", Category: "api", ExitCode: 1, StatusCode: res.StatusCode, Message: message, Body: string(body)}
 	default:
 		return &Error{
 			Code:       "api.remote_error",

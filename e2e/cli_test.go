@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 )
 
@@ -941,9 +942,124 @@ func TestFSImportFileSystemToken(t *testing.T) {
 	}
 }
 
+func TestFSFileSystemTokenLifecycle(t *testing.T) {
+	bin := tiBinary(t)
+	home := t.TempDir()
+	generatedToken := drive9TestTokenWithVersion("tenant-tokens", 1)
+	refreshedToken := drive9TestTokenWithVersion("tenant-tokens", 2)
+	remoteRequests := 0
+	tokenServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remoteRequests++
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Path != "/v1/tokens/refresh" {
+			if r.Header.Get("X-TiDBCloud-Public-Key") != "e2e-public" || r.Header.Get("X-TiDBCloud-Private-Key") != "e2e-private" || r.Header.Get("Authorization") != "" {
+				t.Errorf("control-plane token authentication headers = %#v", r.Header)
+			}
+		}
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/generate":
+			w.WriteHeader(http.StatusCreated)
+			_, _ = fmt.Fprintf(w, `{"token":%q,"token_id":"token-e2e","tenant_id":"tenant-tokens","key_name":"e2e-owner","scope_kind":"owner","status":"active","issued_at":"2026-08-12T00:00:00Z","expires_at":"2026-08-13T00:00:00Z"}`, generatedToken)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tokens":
+			if r.URL.Query().Get("tenant_id") != "tenant-tokens" || r.URL.Query().Get("limit") != "50" {
+				t.Errorf("list query = %s", r.URL.RawQuery)
+			}
+			_, _ = fmt.Fprint(w, `{"tokens":[{"token_id":"token-e2e","tenant_id":"tenant-tokens","key_name":"e2e-owner","scope_kind":"owner","status":"active","expired":false,"issued_at":"2026-08-12T00:00:00Z","expires_at":"2026-08-13T00:00:00Z","created_at":"2026-08-12T00:00:00Z","updated_at":"2026-08-12T00:00:00Z"}]}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/token-e2e/deactivate":
+			_, _ = fmt.Fprint(w, `{"token_id":"token-e2e","tenant_id":"tenant-tokens","status":"disabled"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/token-e2e/activate":
+			_, _ = fmt.Fprint(w, `{"token_id":"token-e2e","tenant_id":"tenant-tokens","status":"active"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/refresh":
+			if r.Header.Get("Authorization") != "Bearer "+generatedToken || r.Header.Get("X-TiDBCloud-Public-Key") != "" {
+				t.Errorf("refresh authentication headers = %#v", r.Header)
+			}
+			_, _ = fmt.Fprintf(w, `{"token":%q,"token_id":"token-e2e","tenant_id":"tenant-tokens","scope_kind":"owner","expires_at":"2026-08-14T00:00:00Z"}`, refreshedToken)
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tokens/token-e2e":
+			_, _ = fmt.Fprint(w, `{"token_id":"token-e2e","tenant_id":"tenant-tokens","status":"revoked"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer tokenServer.Close()
+	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprintf(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":%q,"cloud_provider":"aws","tidb_region":"us-east-1"}]}`, tokenServer.URL)
+	}))
+	defer manifestServer.Close()
+	env := []string{
+		"HOME=" + home, "TI_ALLOW_TEST_ENDPOINTS=1", "TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+		"TI_REGION_CODE=aws-us-east-1", "TIDB_CLOUD_PUBLIC_KEY=e2e-public", "TIDB_CLOUD_PRIVATE_KEY=e2e-private",
+	}
+	configured := runTIWithInput(t, bin, "", env, "configure", "--profile", "stage", "--non-interactive")
+	configured.wantExitCode(0)
+	env = append(env, "TI_REGION_CODE=")
+
+	missingLifetime := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "generate-file-system-token", "--file-system-id", "tenant-tokens", "--token-name", "e2e-owner")
+	missingLifetime.wantExitCode(2)
+	missingLifetime.wantStderrContains("exactly one of --ttl or --no-expiration")
+
+	beforeDryRun := remoteRequests
+	dryRun := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "generate-file-system-token", "--file-system-id", "tenant-tokens", "--token-name", "e2e-owner", "--ttl", "24h", "--dry-run")
+	dryRun.wantExitCode(0)
+	dryRun.wantStdoutNotContains("drive9_")
+	if remoteRequests != beforeDryRun {
+		t.Fatalf("dry-run sent a remote request: before=%d after=%d", beforeDryRun, remoteRequests)
+	}
+
+	generated := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "generate-file-system-token", "--file-system-id", "tenant-tokens", "--token-name", "e2e-owner", "--ttl", "24h", "--store-locally", "--query", "fs_token", "--output", "text")
+	generated.wantExitCode(0)
+	if strings.TrimSpace(generated.stdout) != generatedToken {
+		generated.fail("generate query did not return the one-time token")
+	}
+	credential, err := fscred.GetCredential(home, "stage", "tenant-tokens")
+	if err != nil || credential.TokenID != "token-e2e" || credential.APIKey != generatedToken {
+		t.Fatalf("generated credential = %#v, %v", credential, err)
+	}
+
+	listed := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "list-file-system-tokens", "--file-system-id", "tenant-tokens", "--output", "text")
+	listed.wantExitCode(0)
+	listed.wantStdoutContains("token-e2e")
+	listed.wantStdoutContains("e2e-owner")
+	listed.wantStdoutNotContains("drive9_")
+
+	disabled := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "disable-file-system-token", "--file-system-id", "tenant-tokens", "--token-id", "token-e2e")
+	disabled.wantExitCode(0)
+	disabled.wantStdoutContains(`"status": "disabled"`)
+	enabled := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "enable-file-system-token", "--file-system-id", "tenant-tokens", "--token-id", "token-e2e")
+	enabled.wantExitCode(0)
+	enabled.wantStdoutContains(`"status": "active"`)
+
+	refreshed := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "refresh-file-system-token", "--file-system-id", "tenant-tokens", "--query", "fs_token", "--output", "text")
+	refreshed.wantExitCode(0)
+	if strings.TrimSpace(refreshed.stdout) != refreshedToken {
+		refreshed.fail("refresh query did not return the rotated token")
+	}
+	credential, err = fscred.GetCredential(home, "stage", "tenant-tokens")
+	if err != nil || credential.APIKey != refreshedToken {
+		t.Fatalf("refreshed credential = %#v, %v", credential, err)
+	}
+
+	deleted := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "delete-file-system-token", "--file-system-id", "tenant-tokens", "--token-id", "token-e2e")
+	deleted.wantExitCode(0)
+	deleted.wantStdoutContains(`"local_credentials_updated": true`)
+	if _, err := fscred.GetCredential(home, "stage", "tenant-tokens"); apperr.CodeFor(err) != "fs.credential_not_found" {
+		t.Fatalf("deleted token left local credentials: %v", err)
+	}
+	logData, err := os.ReadFile(filepath.Join(home, ".ti", "logs", "ti.jsonl"))
+	if err == nil && (strings.Contains(string(logData), generatedToken) || strings.Contains(string(logData), refreshedToken)) {
+		t.Fatal("operation log leaked a file system token")
+	}
+}
+
 func drive9TestToken(fileSystemID string) string {
 	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
 	payload, _ := json.Marshal(map[string]string{"tenant_id": fileSystemID})
+	jwt := header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+	return "drive9_" + base64.RawURLEncoding.EncodeToString([]byte(jwt))
+}
+
+func drive9TestTokenWithVersion(fileSystemID string, version int) string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"none"}`))
+	payload, _ := json.Marshal(map[string]any{"tenant_id": fileSystemID, "token_version": version})
 	jwt := header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
 	return "drive9_" + base64.RawURLEncoding.EncodeToString([]byte(jwt))
 }

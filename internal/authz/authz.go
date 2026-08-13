@@ -25,6 +25,12 @@ const (
 	FSVolumeRead         Permission = "fs.volume.read"
 	FSVolumeCreate       Permission = "fs.volume.create"
 	FSVolumeDelete       Permission = "fs.volume.delete"
+	FSTokenList          Permission = "fs.token.list"
+	FSTokenGenerate      Permission = "fs.token.generate"
+	FSTokenEnable        Permission = "fs.token.enable"
+	FSTokenDisable       Permission = "fs.token.disable"
+	FSTokenDelete        Permission = "fs.token.delete"
+	FSTokenRefresh       Permission = "fs.token.refresh"
 	FSFileRead           Permission = "fs.file.read"
 	FSFileWrite          Permission = "fs.file.write"
 	FSVaultSecretRead    Permission = "fs.vault.secret.read"
@@ -50,6 +56,12 @@ var commandPermissions = map[string]Permission{
 	"ti fs list-file-systems":              FSVolumeRead,
 	"ti fs describe-file-system":           FSVolumeRead,
 	"ti fs check-file-system":              FSVolumeRead,
+	"ti fs generate-file-system-token":     FSTokenGenerate,
+	"ti fs list-file-system-tokens":        FSTokenList,
+	"ti fs enable-file-system-token":       FSTokenEnable,
+	"ti fs disable-file-system-token":      FSTokenDisable,
+	"ti fs delete-file-system-token":       FSTokenDelete,
+	"ti fs refresh-file-system-token":      FSTokenRefresh,
 	"ti fs copy-file":                      FSFileWrite,
 	"ti fs read-file":                      FSFileRead,
 	"ti fs list-files":                     FSFileRead,

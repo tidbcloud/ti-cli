@@ -67,3 +67,42 @@ func TestReadRejectsIncompleteLocator(t *testing.T) {
 		t.Fatal("expected incomplete locator to fail")
 	}
 }
+
+func TestTokenCorrelationAndLegacyListCompatibility(t *testing.T) {
+	home := t.TempDir()
+	legacy, err := New("default", "tenant-old", "aws-us-east-1", "/tmp/legacy-home", t.TempDir(), "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Write(home, legacy); err != nil {
+		t.Fatal(err)
+	}
+	correlated, err := New("default", "tenant-new", "aws-us-east-1", "/tmp/new-home", t.TempDir(), "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	correlated = correlated.WithTokenCorrelation("tenant-new", "token-id", "0123456789abcdef0123456789abcdef")
+	path, err := Write(home, correlated)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "drive9_") || !strings.Contains(string(data), `"token_id": "token-id"`) {
+		t.Fatalf("correlated locator = %s", data)
+	}
+	locators, err := List(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(locators) != 2 {
+		t.Fatalf("locators = %#v", locators)
+	}
+	for _, locator := range locators {
+		if locator.FileSystemName == "tenant-old" && (locator.TokenID != "" || locator.TokenFingerprint != "") {
+			t.Fatalf("legacy locator gained correlation: %#v", locator)
+		}
+	}
+}

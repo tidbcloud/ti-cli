@@ -13,13 +13,16 @@ import (
 const schema = "ti.fs.mount-locator/v1"
 
 type Locator struct {
-	Schema         string `json:"schema"`
-	Profile        string `json:"profile"`
-	FileSystemName string `json:"file_system_name"`
-	RegionCode     string `json:"region_code"`
-	CompanionHome  string `json:"companion_home"`
-	MountPath      string `json:"mount_path"`
-	Kind           string `json:"kind,omitempty"`
+	Schema           string `json:"schema"`
+	Profile          string `json:"profile"`
+	FileSystemName   string `json:"file_system_name"`
+	RegionCode       string `json:"region_code"`
+	CompanionHome    string `json:"companion_home"`
+	MountPath        string `json:"mount_path"`
+	Kind             string `json:"kind,omitempty"`
+	FileSystemID     string `json:"file_system_id,omitempty"`
+	TokenID          string `json:"token_id,omitempty"`
+	TokenFingerprint string `json:"token_fingerprint,omitempty"`
 }
 
 func New(profile, fileSystemName, regionCode, companionHome, mountPath, kind string) (Locator, error) {
@@ -45,6 +48,43 @@ func New(profile, fileSystemName, regionCode, companionHome, mountPath, kind str
 		MountPath:      canonical,
 		Kind:           strings.TrimSpace(kind),
 	}, nil
+}
+
+func (l Locator) WithTokenCorrelation(fileSystemID, tokenID, fingerprint string) Locator {
+	l.FileSystemID = strings.TrimSpace(fileSystemID)
+	l.TokenID = strings.TrimSpace(tokenID)
+	l.TokenFingerprint = strings.TrimSpace(fingerprint)
+	return l
+}
+
+func List(homeDir string) ([]Locator, error) {
+	dir := filepath.Join(homeDir, ".ti", "mounts")
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return []Locator{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	locators := make([]Locator, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".locator.json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return nil, err
+		}
+		var locator Locator
+		if err := json.Unmarshal(data, &locator); err != nil {
+			return nil, err
+		}
+		if locator.Schema != schema || locator.FileSystemName == "" || locator.MountPath == "" {
+			continue
+		}
+		locators = append(locators, locator)
+	}
+	return locators, nil
 }
 
 func CanonicalMountPath(mountPath string) (string, error) {

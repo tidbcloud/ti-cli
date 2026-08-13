@@ -75,6 +75,8 @@ Implemented:
   `docs/spec/done/0020-explicit-file-system-selection.md`
 - FS token authentication and configuration-free access from
   `docs/spec/done/0018-fs-token-auth-and-config-free-access.md`
+- Server-backed Filesystem token lifecycle management from
+  `docs/spec/done/0030-file-system-token-lifecycle-management.md`
 - install and update distribution from
   `docs/spec/done/0012-install-and-update-distribution.md`
 - English PingCAP Preview documentation from
@@ -96,6 +98,12 @@ Implemented:
 - `ti db execute-sql-statement`
 - `ti fs create-file-system`
 - `ti fs import-file-system-token`
+- `ti fs generate-file-system-token`
+- `ti fs list-file-system-tokens`
+- `ti fs enable-file-system-token`
+- `ti fs disable-file-system-token`
+- `ti fs delete-file-system-token`
+- `ti fs refresh-file-system-token`
 - `ti fs delete-file-system`
 - `ti fs list-file-systems`
 - `ti fs describe-file-system`
@@ -264,6 +272,12 @@ vault grant reads, vault mount read on macOS/Linux hosts when available,
 journal create/append/read/search/verify, public Git clone/hydrate/worktree
 flows, mount and drain through the companion runtime, and explicit WebDAV
 fallback when the platform supports it.
+The live FS family also generates one uniquely named finite token on the test
+Filesystem, verifies secret-free list metadata and data-plane access, then
+disables, enables, refreshes, and deletes only that token while tolerating the
+documented authentication-cache convergence delay. It must verify that refresh
+preserves token ID, invalidates the old plaintext, and never mutates a
+provisioning or pre-existing token.
 If remote inventory has no resource with a local token, the suite creates one
 temporary ti fs resource, records the server-assigned ID, and deletes only
 that ID before the DB lifecycle needs the Starter slot or when the process
@@ -325,6 +339,7 @@ internal/dryrun/            shared dry-run result envelope
 internal/fs/                ti fs control-plane, data-plane, and mount use cases
 internal/fs/fscred/         ID-keyed ti fs credentials, selection, and legacy migration
 internal/fs/mountlocator/   non-secret Drive9 background mount routing state
+internal/fs/tokenmgmt/      Filesystem token lifecycle and local rotation safety
 internal/oplog/             local JSONL operation log writer
 internal/output/            structured JSON/text/raw rendering
 internal/query/             JMESPath query application
@@ -388,6 +403,17 @@ Follow these rules unless `docs/priciples.md` is updated:
   resource and local credentials when waiting fails.
 - `ti fs delete-file-system` is asynchronous. After Drive9 accepts deletion,
   output status is `deleting`, not `deleted`.
+- One remote Filesystem can have multiple tokens, but one profile stores at
+  most one selected local token per Filesystem. Remote token inventory and
+  lifecycle state are authoritative; local credentials are not a token wallet.
+- Filesystem token generation returns plaintext once and does not change local
+  selection unless `--store-locally` is explicit. Replacing local selection
+  never revokes the previous remote token.
+- Filesystem token refresh is bearer-only and non-idempotent. Do not retry it
+  after an ambiguous network failure. Generate, list, enable, disable, and
+  delete use only TiDB Cloud public/private keys.
+- Reject refresh, disable, or deletion of a token correlated with a known
+  active local mount. The error must show exact drain and unmount commands.
 - Read-only commands reject `--dry-run`.
 - Apply `--query` after command execution and before rendering.
 - Users provide cloud placement as one canonical `region_code`, never as
@@ -505,6 +531,13 @@ Implemented command behavior:
 - `ti fs create-file-system --wait`
 - `ti fs create-file-system --dry-run`
 - `ti fs import-file-system-token --from-file ./fs-token`
+- `ti fs generate-file-system-token --file-system-id <file-system-id> --token-name ci --ttl 24h`
+- `ti fs generate-file-system-token --file-system-id <file-system-id> --token-name local --no-expiration --store-locally --replace`
+- `ti fs list-file-system-tokens --file-system-id <file-system-id>`
+- `ti fs disable-file-system-token --file-system-id <file-system-id> --token-id <token-id>`
+- `ti fs enable-file-system-token --file-system-id <file-system-id> --token-id <token-id>`
+- `ti fs delete-file-system-token --file-system-id <file-system-id> --token-id <token-id>`
+- `ti fs refresh-file-system-token --file-system-id <file-system-id>`
 - `ti fs delete-file-system --file-system-id <file-system-id>`
 - `ti fs delete-file-system --file-system-id <file-system-id> --dry-run`
 - `ti fs list-file-systems`
@@ -878,6 +911,14 @@ persist ephemeral flag/environment credentials or create a synthetic `[env]`
 profile. `ti fs create-file-system`, remote list/describe, and
 `ti fs delete-file-system` remain TiDB Cloud-authenticated. Delete requires an
 ID but does not require a locally stored owner token.
+
+Filesystem token generate/list/enable/disable/delete commands also use only
+TiDB Cloud public/private keys and always require an explicit File System ID.
+Refresh instead resolves exactly one bearer token from `--fs-token`,
+`TI_FS_TOKEN`, or the selected local credential. A local refresh atomically
+replaces that selected credential; a flag or environment refresh returns the
+new plaintext without writing local or external secret-manager state. Never
+infer a missing token ID from names, list order, timestamps, or token claims.
 
 The ID selector is available on ti fs data-plane/runtime commands and all
 `fs-git`, `fs-journal`, and `fs-vault` subcommands. Creation accepts no ID;
