@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"strings"
+	"text/tabwriter"
 
 	apiiam "github.com/tidbcloud/ti-cli/internal/api/iam"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
@@ -38,6 +39,22 @@ type RoleUserStatus struct {
 	BuiltinRole string             `json:"builtin_role"`
 	AuthMethod  string             `json:"auth_method"`
 	Status      string             `json:"status"`
+}
+
+func (r Result) Human() string {
+	var out strings.Builder
+	_, _ = fmt.Fprintf(&out, "Cluster ID: %s\n", r.ClusterID)
+	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(writer, "ACCESS_MODE\tUSERNAME\tBUILTIN_ROLE\tAUTH_METHOD\tSTATUS")
+	for _, plan := range Plans() {
+		user, ok := r.Users[string(plan.Mode)]
+		if !ok {
+			continue
+		}
+		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\n", user.AccessMode, user.Username, user.BuiltinRole, user.AuthMethod, user.Status)
+	}
+	_ = writer.Flush()
+	return strings.TrimRight(out.String(), "\n")
 }
 
 type Plan struct {

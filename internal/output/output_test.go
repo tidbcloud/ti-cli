@@ -38,6 +38,39 @@ func TestRenderText(t *testing.T) {
 	}
 }
 
+func TestRenderTextRejectsMissingFormatter(t *testing.T) {
+	var out bytes.Buffer
+	err := Render(&out, map[string]any{"id": "cluster-1"}, Options{Format: FormatText})
+	if apperr.CodeFor(err) != "output.text_formatter_missing" {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestRenderQueryText(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		value any
+		want  string
+	}{
+		{name: "scalar", query: "id", value: map[string]any{"id": "cluster-1"}, want: "cluster-1\n"},
+		{name: "scalar list", query: "ids", value: map[string]any{"ids": []string{"one", "two"}}, want: "one\ntwo\n"},
+		{name: "object", query: "item", value: map[string]any{"item": map[string]any{"state": "ACTIVE", "id": "one"}}, want: "id     one\nstate  ACTIVE\n"},
+		{name: "object list", query: "items", value: map[string]any{"items": []map[string]any{{"id": "one", "state": "ACTIVE"}, {"id": "two", "state": "PAUSED"}}}, want: "id   state\none  ACTIVE\ntwo  PAUSED\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := Render(&out, tt.value, Options{Format: FormatText, Query: tt.query}); err != nil {
+				t.Fatal(err)
+			}
+			if got := out.String(); got != tt.want {
+				t.Fatalf("output = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRenderAppliesQueryBeforeRendering(t *testing.T) {
 	var out bytes.Buffer
 	value := map[string]any{

@@ -87,6 +87,29 @@ type UnpackFileSystemResult struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
+func (r PackFileSystemResult) Human() string {
+	return strings.Join([]string{
+		"Status: " + r.Status,
+		"Archive path: " + r.ArchivePath,
+		"Local root: " + r.LocalRoot,
+		"Remote root: " + r.RemoteRoot,
+		fmt.Sprintf("Entries: %d", r.Entries),
+		fmt.Sprintf("Archive bytes: %d", r.ArchiveSizeBytes),
+		fmt.Sprintf("Uploaded bytes: %d", r.UploadedBytes),
+	}, "\n")
+}
+
+func (r UnpackFileSystemResult) Human() string {
+	return strings.Join([]string{
+		"Status: " + r.Status,
+		"Archive path: " + r.ArchivePath,
+		"Local root: " + r.LocalRoot,
+		"Remote root: " + r.RemoteRoot,
+		fmt.Sprintf("Entries: %d", r.Entries),
+		fmt.Sprintf("Replaced: %t", r.Replaced),
+	}, "\n")
+}
+
 type packProfileConfig struct {
 	Name      string
 	PackPaths []string

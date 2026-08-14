@@ -1104,3 +1104,78 @@ func (r ListResult) Human() string {
 	_ = w.Flush()
 	return strings.TrimRight(out.String(), "\n")
 }
+
+func (r GenerateResult) Human() string {
+	lines := []string{
+		"File system ID: " + r.FileSystemID,
+		"Token ID: " + r.TokenID,
+		"Token name: " + r.TokenName,
+		"Scope: " + r.ScopeKind,
+		"Status: " + r.Status,
+		"Expires: " + formatTokenExpiry(r.ExpiresAt),
+		fmt.Sprintf("Credentials stored: %t", r.CredentialsStored),
+		"FS token: " + r.FSToken,
+	}
+	if r.PreviousTokenNote != "" {
+		lines = append(lines, "Note: "+r.PreviousTokenNote)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (r GenerateScopedResult) Human() string {
+	var out strings.Builder
+	_, _ = fmt.Fprintf(&out, "File system ID: %s\nToken ID: %s\nScope: %s\nExpires: %s\nCredentials stored: %t\nFS token: %s\n", r.FileSystemID, r.TokenID, r.ScopeKind, formatTokenExpiry(r.ExpiresAt), r.CredentialsStored, r.FSToken)
+	if r.Subject != "" {
+		_, _ = fmt.Fprintf(&out, "Subject: %s\n", r.Subject)
+	}
+	if r.PreviousTokenNote != "" {
+		_, _ = fmt.Fprintf(&out, "Note: %s\n", r.PreviousTokenNote)
+	}
+	if len(r.Scopes) > 0 {
+		writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
+		_, _ = fmt.Fprintln(writer, "PREFIX\tOPERATIONS")
+		for _, scope := range r.Scopes {
+			_, _ = fmt.Fprintf(writer, "%s\t%s\n", scope.Prefix, strings.Join(scope.Ops, ","))
+		}
+		_ = writer.Flush()
+	}
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func (r MutationResult) Human() string {
+	lines := []string{
+		"File system ID: " + r.FileSystemID,
+		"Token ID: " + r.TokenID,
+		"Status: " + r.Status,
+		fmt.Sprintf("Local credentials updated: %t", r.LocalCredentialsUpdated),
+	}
+	if r.LocalCredentialsReason != "" {
+		lines = append(lines, "Local credentials: "+r.LocalCredentialsReason)
+	}
+	if r.CacheConvergenceNote != "" {
+		lines = append(lines, "Note: "+r.CacheConvergenceNote)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (r RefreshResult) Human() string {
+	lines := []string{
+		"File system ID: " + r.FileSystemID,
+		"Token ID: " + r.TokenID,
+		"Scope: " + r.ScopeKind,
+		"Expires: " + formatTokenExpiry(r.ExpiresAt),
+		fmt.Sprintf("Credentials stored: %t", r.CredentialsStored),
+		"FS token: " + r.FSToken,
+	}
+	if r.RecoveryPath != "" {
+		lines = append(lines, "Recovery path: "+r.RecoveryPath)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatTokenExpiry(expiresAt *time.Time) string {
+	if expiresAt == nil {
+		return "never"
+	}
+	return expiresAt.UTC().Format(time.RFC3339)
+}

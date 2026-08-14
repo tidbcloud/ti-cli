@@ -48,6 +48,10 @@ type Result struct {
 	ConnectionString string             `json:"connection_string"`
 }
 
+func (r Result) Human() string {
+	return r.ConnectionString
+}
+
 func Build(input Input) (Result, error) {
 	format := input.Format
 	if format == "" {

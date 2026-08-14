@@ -433,6 +433,34 @@ func (r FileSystemResult) Human() string {
 	if r.CredentialsStored {
 		lines = append(lines, "Credentials: stored locally")
 	}
+	if r.FSToken != "" {
+		lines = append(lines, "FS token: "+r.FSToken)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (r ListFileSystemsResult) Human() string {
+	var out strings.Builder
+	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(writer, "FILE_SYSTEM_ID\tREGION\tSTATUS\tKIND\tLOCAL_TOKEN")
+	for _, fileSystem := range r.FileSystems {
+		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%t\n", fileSystem.FileSystemID, fileSystem.RegionCode, fileSystem.Status, fileSystem.Kind, fileSystem.HasLocalToken)
+	}
+	_ = writer.Flush()
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func (r DescribeFileSystemResult) Human() string {
+	lines := []string{
+		"File system ID: " + r.FileSystemID,
+		"Region: " + r.RegionCode,
+		"Status: " + r.Status,
+		"Kind: " + r.Kind,
+		fmt.Sprintf("Local token: %t", r.HasLocalToken),
+	}
+	if r.Quota != nil {
+		lines = append(lines, fmt.Sprintf("Quota: %v", r.Quota))
+	}
 	return strings.Join(lines, "\n")
 }
 
