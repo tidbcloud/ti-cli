@@ -11,6 +11,7 @@ type Error struct {
 	Category   string
 	ExitCode   int
 	StatusCode int
+	RequestID  string
 	Message    string
 	Body       string
 	Cause      error

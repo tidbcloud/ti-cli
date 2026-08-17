@@ -157,6 +157,9 @@ Implemented:
 - region-scoped remote ti fs inventory, profile-scoped ID-keyed credentials,
   and legacy credential migration from
   `docs/spec/done/0028-remote-fs-resource-inventory.md`
+- direct TiDB Cloud Filesystem tenant create/list/describe/delete control plane,
+  authoritative display metadata, quota output, and inventory filters from
+  `docs/spec/done/0031-fs-tenant-metadata-control-plane.md`
 - ti fs/fs-git/fs-journal/fs-vault commands routed through the bundled
   `ti-drive9` companion, with ti-owned profile loading, credential storage,
   region resolution, and output/error handling

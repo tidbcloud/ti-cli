@@ -1,5 +1,7 @@
 # Remote File System Resource Inventory
 
+> **Superseding note:** `docs/spec/done/0031-fs-tenant-metadata-control-plane.md` later moved create, list, describe, and delete from companion commands to the typed admin tenant HTTP API and added organization-visible display names and labels. This document remains authoritative for ID-based selection, remote inventory ownership, local credential migration, and configuration-free access; its no-name and companion control-plane statements are historical.
+
 ## Goal
 
 Make the Drive9 backend the source of truth for TiDB Cloud Filesystem resource inventory. Replace locally assigned file system names with one stable public identifier, `file_system_id`, whose value is the Drive9 tenant ID returned by provisioning.

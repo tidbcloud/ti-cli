@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -77,6 +79,14 @@ func TestHelpAndVersion(t *testing.T) {
 	deleteFileSystem.wantStdoutContains("--file-system-id")
 	deleteFileSystem.wantStdoutNotContains("--file-system-name")
 	deleteFileSystem.wantStdoutNotContains("--confirm-file-system-name")
+	createFileSystem := runTI(t, bin, "fs", "create-file-system", "help")
+	createFileSystem.wantExitCode(0)
+	createFileSystem.wantStdoutContains("[--display-name <string>]")
+	createFileSystem.wantStdoutContains("[--label <string>]")
+	listFileSystems := runTI(t, bin, "fs", "list-file-systems", "help")
+	listFileSystems.wantExitCode(0)
+	listFileSystems.wantStdoutContains("[--display-name <string>]")
+	listFileSystems.wantStdoutContains("[--label <string>]")
 
 	createDBCluster := runTI(t, bin, "db", "create-db-cluster", "help")
 	createDBCluster.wantExitCode(0)
@@ -640,16 +650,18 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
 	}
 	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
-	statePath := filepath.Join(t.TempDir(), "state.json")
+	eastControl := newFakeFSTenantControlPlane(t, "aws-us-east-1", "tenant-aws-us-east-1")
+	defer eastControl.close()
+	westControl := newFakeFSTenantControlPlane(t, "aws-us-west-2", "tenant-aws-us-west-2")
+	defer westControl.close()
 	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":"https://fs-east.test","cloud_provider":"aws","tidb_region":"us-east-1"},{"region_code":"aws-us-west-2","mode":"tidb_cloud_native","server_url":"https://fs-west.test","cloud_provider":"aws","tidb_region":"us-west-2"}]}`)
+		_, _ = fmt.Fprintf(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":%q,"cloud_provider":"aws","tidb_region":"us-east-1"},{"region_code":"aws-us-west-2","mode":"tidb_cloud_native","server_url":%q,"cloud_provider":"aws","tidb_region":"us-west-2"}]}`, eastControl.URL(), westControl.URL())
 	}))
 	defer manifestServer.Close()
 	baseEnv := []string{
 		"HOME=" + home,
 		"TI_DRIVE9_BIN=" + companion,
 		"FAKE_DRIVE9_RECORD=" + recordPath,
-		"FAKE_DRIVE9_STATE=" + statePath,
 		"TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
 	}
@@ -659,15 +671,28 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 		"TIDB_CLOUD_PRIVATE_KEY=e2e-private",
 	), "configure", "--profile", "stage", "--non-interactive")
 	configured.wantExitCode(0)
+	invalidDisplayName := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-file-system", "--display-name", "bad name")
+	invalidDisplayName.wantExitCode(2)
+	invalidDisplayName.wantStderrContains("--display-name must be 4-64 characters")
+	duplicateLabel := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-file-system", "--label", "team=ai", "--label", "team=data")
+	duplicateLabel.wantExitCode(2)
+	duplicateLabel.wantStderrContains("duplicate label key")
+	multipleListLabels := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-file-systems", "--label", "team=ai", "--label", "environment=test")
+	multipleListLabels.wantExitCode(2)
+	multipleListLabels.wantStderrContains("--label can be provided at most once")
 	missingWithZeroResources := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
 	missingWithZeroResources.wantExitCode(2)
 	missingWithZeroResources.wantStderrContains("file system ID is required")
 
-	createWorkspace := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-file-system", "--wait")
+	createWorkspace := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-file-system",
+		"--display-name", "agent-workspace", "--label", "environment=production", "--label", "team=ai", "--wait")
 	createWorkspace.wantExitCode(0)
 	createWorkspace.wantStdoutContains(`"status": "ready"`)
 	createWorkspace.wantStdoutContains(`"credentials_stored": true`)
 	createWorkspace.wantStdoutContains(`"file_system_id": "tenant-aws-us-east-1"`)
+	createWorkspace.wantStdoutContains(`"display_name": "agent-workspace"`)
+	createWorkspace.wantStdoutContains(`"environment": "production"`)
+	createWorkspace.wantStdoutContains(`"team": "ai"`)
 	missingWithOneResource := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
 	missingWithOneResource.wantExitCode(2)
 	missingWithOneResource.wantStderrContains("file system ID is required")
@@ -675,20 +700,43 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	createScratch.wantExitCode(0)
 	createScratch.wantStdoutContains(`"status": "ready"`)
 	createScratch.wantStdoutContains(`"credentials_stored": true`)
+	createScratch.wantStdoutContains(`"display_name": "tenant-aws-us-west-2"`)
+	createScratch.wantStdoutContains(`"labels": {}`)
 
 	list := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-file-systems")
 	list.wantExitCode(0)
 	list.wantStdoutContains(`"file_system_id": "tenant-aws-us-east-1"`)
 	list.wantStdoutNotContains(`"file_system_id": "tenant-aws-us-west-2"`)
 	list.wantStdoutContains(`"has_local_token": true`)
+	list.wantStdoutContains(`"display_name": "agent-workspace"`)
+	list.wantStdoutContains(`"labels": {`)
 	list.wantStdoutNotContains("drive9_")
 	list.wantStdoutNotContains("default_file_system_name")
 	list.wantStdoutNotContains("is_default")
 	textList := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-file-systems", "--output", "text")
 	textList.wantExitCode(0)
 	textList.wantStdoutContains("FILE_SYSTEM_ID")
+	textList.wantStdoutContains("DISPLAY_NAME")
+	textList.wantStdoutContains("agent-workspace")
 	textList.wantStdoutContains("tenant-aws-us-east-1")
 	textList.wantStdoutNotContains(`"file_system_id"`)
+	filteredList := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-file-systems",
+		"--display-name", "agent", "--label", "environment=production")
+	filteredList.wantExitCode(0)
+	filteredList.wantStdoutContains(`"file_system_id": "tenant-aws-us-east-1"`)
+	filteredList.wantStdoutNotContains(`"file_system_id": "tenant-aws-us-west-2"`)
+	queriedList := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-file-systems",
+		"--label", "team=ai", "--query", "file_systems[0].display_name")
+	queriedList.wantExitCode(0)
+	queriedList.wantStdoutContains(`"agent-workspace"`)
+	dryRunCreate := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "create-file-system",
+		"--display-name", "dry-run-workspace", "--label", "environment=test", "--wait", "--dry-run")
+	dryRunCreate.wantExitCode(0)
+	dryRunCreate.wantStdoutContains(`"path": "/v1/admin/tenants"`)
+	dryRunCreate.wantStdoutContains(`"display_name": "dry-run-workspace"`)
+	dryRunCreate.wantStdoutContains(`"environment": "test"`)
+	dryRunCreate.wantStdoutNotContains("e2e-public")
+	dryRunCreate.wantStdoutNotContains("e2e-private")
 	westList := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "list-file-systems")
 	westList.wantExitCode(0)
 	westList.wantStdoutContains(`"file_system_id": "tenant-aws-us-west-2"`)
@@ -696,11 +744,16 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	describe := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "describe-file-system", "--file-system-id", "tenant-aws-us-west-2")
 	describe.wantExitCode(0)
 	describe.wantStdoutContains(`"file_system_id": "tenant-aws-us-west-2"`)
+	describe.wantStdoutContains(`"display_name": "tenant-aws-us-west-2"`)
+	describe.wantStdoutContains(`"labels": {}`)
+	describe.wantStdoutContains(`"quota": {`)
 	describe.wantStdoutContains(`"region_code": "aws-us-west-2"`)
 	describe.wantStdoutNotContains("drive9_")
 	textDescribe := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "describe-file-system", "--file-system-id", "tenant-aws-us-west-2", "--output", "text")
 	textDescribe.wantExitCode(0)
 	textDescribe.wantStdoutContains("File system ID: tenant-aws-us-west-2")
+	textDescribe.wantStdoutContains("Display name: tenant-aws-us-west-2")
+	textDescribe.wantStdoutContains("Labels: none")
 	textDescribe.wantStdoutNotContains(`"file_system_id"`)
 	callsBeforeMissingSelectorCommands := len(readFakeDrive9Calls(t, recordPath))
 	for _, args := range [][]string{
@@ -732,10 +785,18 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	mount.wantExitCode(0)
 
 	calls := readFakeDrive9Calls(t, recordPath)
-	assertFakeDrive9TransientCall(t, calls, []string{"create"}, "", home, "https://fs-east.test", "aws-us-east-1")
-	assertFakeDrive9Call(t, calls, []string{"admin", "tenant", "list"}, "", home, "stage", "_control-plane", "https://fs-east.test", "aws-us-east-1")
-	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, drive9TestToken("tenant-aws-us-west-2"), home, "stage", "tenant-aws-us-west-2", "https://fs-west.test", "aws-us-west-2")
-	assertFakeDrive9Call(t, calls, []string{"vault", "ls"}, drive9TestToken("tenant-aws-us-east-1"), home, "stage", "tenant-aws-us-east-1", "https://fs-east.test", "aws-us-east-1")
+	for _, call := range calls {
+		if len(call.Args) > 0 && call.Args[0] == "create" || len(call.Args) >= 3 && call.Args[0] == "admin" && call.Args[1] == "tenant" {
+			t.Fatalf("direct file system control plane unexpectedly invoked ti-drive9: %#v", call.Args)
+		}
+	}
+	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, drive9TestToken("tenant-aws-us-west-2"), home, "stage", "tenant-aws-us-west-2", westControl.URL(), "aws-us-west-2")
+	assertFakeDrive9Call(t, calls, []string{"vault", "ls"}, drive9TestToken("tenant-aws-us-east-1"), home, "stage", "tenant-aws-us-east-1", eastControl.URL(), "aws-us-east-1")
+	if !eastControl.hasRequest(http.MethodPost, "/v1/admin/tenants") ||
+		!eastControl.hasRequest(http.MethodGet, "/v1/admin/tenants", "display_name=agent", "label=environment%3D%3Dproduction") ||
+		!westControl.hasRequest(http.MethodGet, "/v1/admin/tenants/tenant-aws-us-west-2") {
+		t.Fatalf("direct control-plane requests were incomplete: east=%#v west=%#v", eastControl.requests, westControl.requests)
+	}
 
 	deleteScratch := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-file-system", "--file-system-id", "tenant-aws-us-west-2")
 	deleteScratch.wantExitCode(0)
@@ -750,7 +811,9 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	stillMissingAfterDelete := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-files", "--path", "/")
 	stillMissingAfterDelete.wantExitCode(2)
 	stillMissingAfterDelete.wantStderrContains("file system ID is required")
-	assertFakeDrive9Call(t, readFakeDrive9Calls(t, recordPath), []string{"admin", "tenant", "delete"}, "", home, "stage", "_control-plane", "https://fs-west.test", "aws-us-west-2")
+	if !westControl.hasRequest(http.MethodDelete, "/v1/admin/tenants/tenant-aws-us-west-2") {
+		t.Fatalf("delete did not use the direct control plane: %#v", westControl.requests)
+	}
 
 	for _, args := range [][]string{
 		{"--profile", "stage", "fs", "set-default-file-system"},
@@ -1101,6 +1164,148 @@ func drive9TestTokenWithVersion(fileSystemID string, version int) string {
 	payload, _ := json.Marshal(map[string]any{"tenant_id": fileSystemID, "token_version": version})
 	jwt := header + "." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
 	return "drive9_" + base64.RawURLEncoding.EncodeToString([]byte(jwt))
+}
+
+type fakeFSTenant struct {
+	TenantID    string            `json:"tenant_id"`
+	DisplayName string            `json:"display_name"`
+	Labels      map[string]string `json:"label"`
+	Status      string            `json:"status"`
+	Kind        string            `json:"kind"`
+	Quota       map[string]any    `json:"quota"`
+}
+
+type fakeFSTenantRequest struct {
+	Method string
+	Path   string
+	Query  string
+}
+
+type fakeFSTenantControlPlane struct {
+	t          *testing.T
+	regionCode string
+	tenantID   string
+	server     *httptest.Server
+	mu         sync.Mutex
+	tenants    map[string]fakeFSTenant
+	requests   []fakeFSTenantRequest
+}
+
+func newFakeFSTenantControlPlane(t *testing.T, regionCode, tenantID string) *fakeFSTenantControlPlane {
+	t.Helper()
+	fake := &fakeFSTenantControlPlane{t: t, regionCode: regionCode, tenantID: tenantID, tenants: map[string]fakeFSTenant{}}
+	fake.server = httptest.NewServer(http.HandlerFunc(fake.serveHTTP))
+	return fake
+}
+
+func (f *fakeFSTenantControlPlane) close() {
+	f.server.Close()
+}
+
+func (f *fakeFSTenantControlPlane) URL() string {
+	return f.server.URL
+}
+
+func (f *fakeFSTenantControlPlane) serveHTTP(w http.ResponseWriter, r *http.Request) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.requests = append(f.requests, fakeFSTenantRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery})
+	if r.Header.Get("X-TiDBCloud-Public-Key") != "e2e-public" || r.Header.Get("X-TiDBCloud-Private-Key") != "e2e-private" {
+		http.Error(w, `{"error":"missing TiDB Cloud credentials"}`, http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case r.Method == http.MethodPost && r.URL.Path == "/v1/admin/tenants":
+		var body struct {
+			DisplayName string            `json:"display_name"`
+			Labels      map[string]string `json:"label"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		displayName := body.DisplayName
+		if displayName == "" {
+			displayName = f.tenantID
+		}
+		labels := map[string]string{}
+		for key, value := range body.Labels {
+			labels[key] = value
+		}
+		tenant := fakeFSTenant{
+			TenantID: f.tenantID, DisplayName: displayName, Labels: labels, Status: "active", Kind: "live", Quota: fakeFSTenantQuota(),
+		}
+		f.tenants[tenant.TenantID] = tenant
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"tenant_id": tenant.TenantID, "display_name": tenant.DisplayName, "label": tenant.Labels, "api_key": drive9TestToken(tenant.TenantID),
+			"status": "provisioning", "cloud_provider": "aws", "region": strings.TrimPrefix(f.regionCode, "aws-"),
+		})
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/admin/tenants":
+		items := make([]fakeFSTenant, 0, len(f.tenants))
+		displayFilter := r.URL.Query().Get("display_name")
+		labelFilter := r.URL.Query().Get("label")
+		labelKey, labelValue, hasLabelFilter := strings.Cut(labelFilter, "==")
+		for _, tenant := range f.tenants {
+			if displayFilter != "" && !strings.Contains(tenant.DisplayName, displayFilter) {
+				continue
+			}
+			if hasLabelFilter && tenant.Labels[labelKey] != labelValue {
+				continue
+			}
+			items = append(items, tenant)
+		}
+		sort.Slice(items, func(i, j int) bool { return items[i].TenantID < items[j].TenantID })
+		_ = json.NewEncoder(w).Encode(map[string]any{"tenants": items, "page": 1, "page_size": 100, "next_page": 0})
+	case strings.HasPrefix(r.URL.Path, "/v1/admin/tenants/"):
+		id := strings.TrimPrefix(r.URL.Path, "/v1/admin/tenants/")
+		tenant, ok := f.tenants[id]
+		if !ok {
+			http.Error(w, `{"error":"tenant not found"}`, http.StatusNotFound)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(tenant)
+		case http.MethodDelete:
+			delete(f.tenants, id)
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]string{"tenant_id": id, "status": "deleting"})
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		}
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func (f *fakeFSTenantControlPlane) hasRequest(method, path string, queryParts ...string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, request := range f.requests {
+		if request.Method != method || request.Path != path {
+			continue
+		}
+		matched := true
+		for _, part := range queryParts {
+			if !strings.Contains(request.Query, part) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
+}
+
+func fakeFSTenantQuota() map[string]any {
+	return map[string]any{
+		"config": map[string]any{"max_storage_size": 1024, "max_file_size": 128, "max_file_count": 1000, "tidbcloud_spending_limit": nil},
+		"usage":  map[string]any{"storage_bytes": 0, "reserved_bytes": 0, "file_count": 0},
+	}
 }
 
 type fakeDrive9Call struct {

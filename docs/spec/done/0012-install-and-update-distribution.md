@@ -2,7 +2,7 @@
 
 ## Goal
 
-Make `tdc` installable and updatable through deterministic GitHub Releases artifacts. The MVP channel is GoReleaser plus GitHub Releases, with shell and PowerShell installers. Homebrew and Scoop are intentionally deferred to `docs/spec/0031-homebrew-and-scoop-distribution.md`.
+Make `tdc` installable and updatable through deterministic GitHub Releases artifacts. The MVP channel is GoReleaser plus GitHub Releases, with shell and PowerShell installers. Homebrew and Scoop are intentionally deferred to `docs/spec/0032-homebrew-and-scoop-distribution.md`.
 
 ## User-facing Commands
 
@@ -266,7 +266,7 @@ Installer scripts:
 - Silent auto-update.
 - Updating TiDB Cloud credentials or DB SQL credentials.
 - Config migrations that modify user config during update.
-- Homebrew tap and Scoop bucket publishing. See `0031-homebrew-and-scoop-distribution.md`.
+- Homebrew tap and Scoop bucket publishing. See `0032-homebrew-and-scoop-distribution.md`.
 - Linux apt/yum repositories.
 - Winget publishing.
 - Notarization or binary signing beyond SHA-256 checksums for MVP.
