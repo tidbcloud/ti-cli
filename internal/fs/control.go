@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -41,6 +42,19 @@ type Service struct {
 type CreateFileSystemOptions struct {
 	Profile        *config.Profile
 	WaitUntilReady bool
+	DisplayName    *string
+	Labels         map[string]string
+}
+
+type LabelFilter struct {
+	Key   string
+	Value string
+}
+
+type ListFileSystemsOptions struct {
+	Profile     *config.Profile
+	DisplayName *string
+	Label       *LabelFilter
 }
 
 type DeleteFileSystemOptions struct {
@@ -60,12 +74,14 @@ type ImportFileSystemTokenOptions struct {
 }
 
 type FileSystemSummary struct {
-	FileSystemID  string `json:"file_system_id"`
-	RegionCode    string `json:"region_code,omitempty"`
-	Status        string `json:"status,omitempty"`
-	Kind          string `json:"kind,omitempty"`
-	Quota         any    `json:"quota,omitempty"`
-	HasLocalToken bool   `json:"has_local_token"`
+	FileSystemID  string                  `json:"file_system_id"`
+	DisplayName   string                  `json:"display_name"`
+	Labels        map[string]string       `json:"labels"`
+	RegionCode    string                  `json:"region_code,omitempty"`
+	Status        string                  `json:"status,omitempty"`
+	Kind          string                  `json:"kind,omitempty"`
+	Quota         *apifs.AdminTenantQuota `json:"quota,omitempty"`
+	HasLocalToken bool                    `json:"has_local_token"`
 }
 
 type ListFileSystemsResult struct {
@@ -78,11 +94,13 @@ type DescribeFileSystemResult struct {
 }
 
 type FileSystemResult struct {
-	FileSystemID      string `json:"file_system_id"`
-	RegionCode        string `json:"region_code,omitempty"`
-	FSToken           string `json:"fs_token,omitempty"`
-	Status            string `json:"status"`
-	CredentialsStored bool   `json:"credentials_stored"`
+	FileSystemID      string            `json:"file_system_id"`
+	DisplayName       string            `json:"display_name"`
+	Labels            map[string]string `json:"labels"`
+	RegionCode        string            `json:"region_code,omitempty"`
+	FSToken           string            `json:"fs_token,omitempty"`
+	Status            string            `json:"status"`
+	CredentialsStored bool              `json:"credentials_stored"`
 }
 
 type DeleteResult struct {
@@ -115,23 +133,23 @@ type Check struct {
 }
 
 func (s Service) CreateFileSystem(ctx context.Context, opts CreateFileSystemOptions) (FileSystemResult, error) {
-	return s.drive9CreateFileSystem(ctx, opts)
+	return s.createFileSystem(ctx, opts)
 }
 
 func (s Service) DeleteFileSystem(ctx context.Context, opts DeleteFileSystemOptions) (DeleteResult, error) {
-	return s.drive9DeleteFileSystem(ctx, opts)
+	return s.deleteFileSystem(ctx, opts)
 }
 
 func (s Service) CheckFileSystem(ctx context.Context, opts CheckFileSystemOptions) (CheckResult, error) {
 	return s.drive9CheckFileSystem(ctx, opts)
 }
 
-func (s Service) ListFileSystems(ctx context.Context, profile *config.Profile) (ListFileSystemsResult, error) {
-	return s.drive9ListFileSystems(ctx, profile)
+func (s Service) ListFileSystems(ctx context.Context, opts ListFileSystemsOptions) (ListFileSystemsResult, error) {
+	return s.listFileSystems(ctx, opts)
 }
 
 func (s Service) DescribeFileSystem(ctx context.Context, profile *config.Profile, fileSystemID string) (DescribeFileSystemResult, error) {
-	return s.drive9DescribeFileSystem(ctx, profile, fileSystemID)
+	return s.describeFileSystem(ctx, profile, fileSystemID)
 }
 
 func (s Service) ImportFileSystemToken(ctx context.Context, opts ImportFileSystemTokenOptions) (ImportFileSystemTokenResult, error) {
@@ -157,16 +175,16 @@ func (s Service) DryRunImportFileSystemToken(ctx context.Context, commandPath st
 }
 
 func (s Service) DryRunCreateFileSystem(ctx context.Context, commandPath string, opts CreateFileSystemOptions) (dryrun.Result, error) {
-	request, endpoint, endpointErr, err := s.createDryRunInputs(opts)
+	request, _, _, endpoint, err := s.adminCreateInputs(opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
 	checks := []dryrun.Check{
 		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		{Name: "permission_requirement", Status: "passed", Message: string(authz.FSVolumeCreate)},
-		{Name: "remote_identity", Status: "passed", Message: "Drive9 assigns file_system_id"},
+		{Name: "remote_identity", Status: "passed", Message: "the File System backend assigns file_system_id"},
 	}
-	checks = append(checks, endpointDryRunCheck(endpoint, endpointErr))
+	checks = append(checks, endpointDryRunCheck(endpoint, nil))
 	if opts.WaitUntilReady {
 		checks = append(checks, dryrun.Check{
 			Name:    "post_create_wait",
@@ -178,16 +196,17 @@ func (s Service) DryRunCreateFileSystem(ctx context.Context, commandPath string,
 		commandPath,
 		"create_file_system",
 		dryrun.RequestSummary{
-			Method: http.MethodPost,
-			Path:   "/v1/provision",
-			Body:   redactedProvisionRequest(request),
+			Method:      http.MethodPost,
+			Path:        "/v1/admin/tenants",
+			Body:        request,
+			Description: "normal execution authenticates with TiDB Cloud API-key headers; credential values are not included in the request body or dry-run output",
 		},
 		checks...,
 	), nil
 }
 
 func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string, opts DeleteFileSystemOptions) (dryrun.Result, error) {
-	fileSystemID, endpoint, endpointErr, err := s.deleteDryRunInputs(opts)
+	fileSystemID, _, _, endpoint, err := s.adminDeleteInputs(opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -209,69 +228,17 @@ func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string,
 		Status:  "passed",
 		Message: fmt.Sprintf("would remove %s after Drive9 accepts deletion if it exists", credentialPaths.Credentials),
 	})
-	checks = append(checks, endpointDryRunCheck(endpoint, endpointErr))
-	body, bodyErr := deprovisionRequest(opts.Profile)
-	if bodyErr != nil {
-		return dryrun.Result{}, bodyErr
-	}
+	checks = append(checks, endpointDryRunCheck(endpoint, nil))
 	return dryrun.New(
 		commandPath,
 		"delete_file_system",
 		dryrun.RequestSummary{
 			Method:      http.MethodDelete,
 			Path:        "/v1/admin/tenants/" + fileSystemID,
-			Body:        redactedDeprovisionRequest(body),
-			Description: "normal execution uses TiDB Cloud credentials and removes matching local credentials only after Drive9 accepts deletion",
+			Description: "normal execution authenticates with TiDB Cloud API-key headers and removes matching local credentials only after the backend accepts deletion",
 		},
 		checks...,
 	), nil
-}
-
-func (s Service) createRequestAndEndpoint(opts CreateFileSystemOptions, requireEndpoint bool) (apifs.ProvisionRequest, endpoints.Endpoint, error) {
-	request, endpoint, endpointErr, err := s.createDryRunInputs(opts)
-	if err != nil {
-		return apifs.ProvisionRequest{}, endpoints.Endpoint{}, err
-	}
-	if endpointErr != nil && requireEndpoint {
-		return apifs.ProvisionRequest{}, endpoints.Endpoint{}, endpointErr
-	}
-	return request, endpoint, nil
-}
-
-func (s Service) createDryRunInputs(opts CreateFileSystemOptions) (apifs.ProvisionRequest, endpoints.Endpoint, error, error) {
-	creds, err := auth.ValidateProfile(opts.Profile)
-	if err != nil {
-		return apifs.ProvisionRequest{}, endpoints.Endpoint{}, nil, err
-	}
-	endpoint, endpointErr := s.resolveFS(opts.Profile)
-	request := apifs.ProvisionRequest{
-		PublicKey:  creds.PublicKey,
-		PrivateKey: creds.PrivateKey,
-	}
-	return request, endpoint, endpointErr, nil
-}
-
-func (s Service) deleteInputsAndEndpoint(opts DeleteFileSystemOptions, requireEndpoint bool) (string, endpoints.Endpoint, error) {
-	fileSystemID, endpoint, endpointErr, err := s.deleteDryRunInputs(opts)
-	if err != nil {
-		return "", endpoints.Endpoint{}, err
-	}
-	if endpointErr != nil && requireEndpoint {
-		return "", endpoints.Endpoint{}, endpointErr
-	}
-	return fileSystemID, endpoint, nil
-}
-
-func (s Service) deleteDryRunInputs(opts DeleteFileSystemOptions) (string, endpoints.Endpoint, error, error) {
-	if err := validateProfile(opts.Profile); err != nil {
-		return "", endpoints.Endpoint{}, nil, err
-	}
-	fileSystemID, err := fscred.ValidateFileSystemID(opts.FileSystemID)
-	if err != nil {
-		return "", endpoints.Endpoint{}, nil, err
-	}
-	endpoint, endpointErr := s.resolveFS(opts.Profile)
-	return fileSystemID, endpoint, endpointErr, nil
 }
 
 func (s Service) resolveFS(profile *config.Profile) (endpoints.Endpoint, error) {
@@ -310,55 +277,6 @@ func (s Service) resolver() endpoints.Resolver {
 		return endpoints.NewResolver()
 	}
 	return s.Resolver
-}
-
-func deprovisionRequest(profile *config.Profile) (apifs.DeprovisionRequest, error) {
-	creds, err := auth.ValidateProfile(profile)
-	if err != nil {
-		return apifs.DeprovisionRequest{}, err
-	}
-	return apifs.DeprovisionRequest{
-		PublicKey:  creds.PublicKey,
-		PrivateKey: creds.PrivateKey,
-	}, nil
-}
-
-type redactedProvisionBody struct {
-	PublicKey  string `json:"public_key,omitempty"`
-	PrivateKey string `json:"private_key,omitempty"`
-}
-
-type redactedDeprovisionBody struct {
-	PublicKey  string `json:"public_key,omitempty"`
-	PrivateKey string `json:"private_key,omitempty"`
-}
-
-func redactedProvisionRequest(request apifs.ProvisionRequest) redactedProvisionBody {
-	return redactedProvisionBody{
-		PublicKey:  redactedConfiguredValue(request.PublicKey),
-		PrivateKey: redactedSecretValue(request.PrivateKey),
-	}
-}
-
-func redactedDeprovisionRequest(request apifs.DeprovisionRequest) redactedDeprovisionBody {
-	return redactedDeprovisionBody{
-		PublicKey:  redactedConfiguredValue(request.PublicKey),
-		PrivateKey: redactedSecretValue(request.PrivateKey),
-	}
-}
-
-func redactedConfiguredValue(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-	return "[configured]"
-}
-
-func redactedSecretValue(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return ""
-	}
-	return "[redacted]"
 }
 
 func (s Service) homeDir() (string, error) {
@@ -425,6 +343,8 @@ func profileName(profile *config.Profile) string {
 func (r FileSystemResult) Human() string {
 	lines := []string{
 		"File system ID: " + r.FileSystemID,
+		"Display name: " + r.DisplayName,
+		"Labels: " + humanLabels(r.Labels),
 		"Status: " + r.Status,
 	}
 	if r.RegionCode != "" {
@@ -442,9 +362,9 @@ func (r FileSystemResult) Human() string {
 func (r ListFileSystemsResult) Human() string {
 	var out strings.Builder
 	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(writer, "FILE_SYSTEM_ID\tREGION\tSTATUS\tKIND\tLOCAL_TOKEN")
+	_, _ = fmt.Fprintln(writer, "FILE_SYSTEM_ID\tDISPLAY_NAME\tREGION\tSTATUS\tKIND\tLOCAL_TOKEN")
 	for _, fileSystem := range r.FileSystems {
-		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%t\n", fileSystem.FileSystemID, fileSystem.RegionCode, fileSystem.Status, fileSystem.Kind, fileSystem.HasLocalToken)
+		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%t\n", fileSystem.FileSystemID, fileSystem.DisplayName, fileSystem.RegionCode, fileSystem.Status, fileSystem.Kind, fileSystem.HasLocalToken)
 	}
 	_ = writer.Flush()
 	return strings.TrimRight(out.String(), "\n")
@@ -453,6 +373,8 @@ func (r ListFileSystemsResult) Human() string {
 func (r DescribeFileSystemResult) Human() string {
 	lines := []string{
 		"File system ID: " + r.FileSystemID,
+		"Display name: " + r.DisplayName,
+		"Labels: " + humanLabels(r.Labels),
 		"Region: " + r.RegionCode,
 		"Status: " + r.Status,
 		"Kind: " + r.Kind,
@@ -462,6 +384,22 @@ func (r DescribeFileSystemResult) Human() string {
 		lines = append(lines, fmt.Sprintf("Quota: %v", r.Quota))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func humanLabels(labels map[string]string) string {
+	if len(labels) == 0 {
+		return "none"
+	}
+	keys := make([]string, 0, len(labels))
+	for key := range labels {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	values := make([]string, 0, len(keys))
+	for _, key := range keys {
+		values = append(values, key+"="+labels[key])
+	}
+	return strings.Join(values, ", ")
 }
 
 func (r DeleteResult) Human() string {

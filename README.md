@@ -161,7 +161,10 @@ The following example uses `jq` to extract the server-assigned ID and one-time t
 ```shell
 mkdir ~/my-workspace
 umask 077
-ti fs create-file-system --wait > ./filesystem.json
+ti fs create-file-system \
+  --display-name my-workspace \
+  --label environment=development \
+  --wait > ./filesystem.json
 export FILE_SYSTEM_ID="$(jq -r '.file_system_id' ./filesystem.json)"
 export TI_FS_TOKEN="$(jq -r '.fs_token' ./filesystem.json)"
 rm ./filesystem.json
@@ -179,7 +182,15 @@ export TI_FS_FILE_SYSTEM_ID="$FILE_SYSTEM_ID"
 ti fs list-files
 ```
 
-`create-file-system` does not accept a user-defined name. Drive9 assigns the stable `file_system_id`, and the command returns the owner credential as `fs_token` once in its JSON result. Treat it as a secret. The example above captures both fields from one provisioning request and removes the temporary owner-only JSON file immediately.
+`--display-name` and repeatable `--label key=value` flags add organization-visible metadata to the remote inventory. They do not identify a resource for later operations: Drive9 still assigns the stable `file_system_id`, and describe, delete, data-plane, mount, and token commands select by that ID. Do not store passwords, tokens, connection strings, private paths, or personal data in labels. The create response returns the owner credential as `fs_token` once; treat it as a secret. The example above captures the ID and token from one provisioning request and removes the temporary owner-only JSON file immediately.
+
+List results include authoritative display names, labels, status, region, quota and usage, plus the non-secret `has_local_token` hint. Filter the remote inventory by a display-name substring and one exact label without exposing token values:
+
+```shell
+ti fs list-file-systems \
+  --display-name workspace \
+  --label environment=development
+```
 
 One Filesystem can have multiple independently managed tokens for different machines, CI jobs, and sandboxes. Owner tokens authorize the complete Filesystem and can issue path-and-operation-limited `fs_scoped` tokens. The remote service is the source of truth for token inventory, while each local profile stores at most one selected token for each Filesystem. Generate an additional owner token and capture its one-time plaintext response:
 

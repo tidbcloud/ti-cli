@@ -1289,7 +1289,7 @@ func addFSAuthFlags(commands []*cobra.Command, excluded ...string) {
 func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "create-file-system",
-		Short:      "Create a file system (agentFS) in TiDB Cloud.",
+		Short:      "Create a TiDB Cloud Filesystem.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVolumeCreate,
 		Run: func(ctx commandContext) (any, error) {
@@ -1300,36 +1300,32 @@ func newFSCreateFileSystemCommand(info version.Info) *cobra.Command {
 			if err := fscred.MigrateNameRegistry(profile.HomeDir, profile); err != nil {
 				return nil, err
 			}
-			waitUntilReady, err := ctx.BoolFlag("wait")
+			opts, err := fsCreateFileSystemOptions(ctx, profile)
 			if err != nil {
 				return nil, err
 			}
-			return service.CreateFileSystem(ctx.cmd.Context(), tifs.CreateFileSystemOptions{
-				Profile:        profile,
-				WaitUntilReady: waitUntilReady,
-			})
+			return service.CreateFileSystem(ctx.cmd.Context(), opts)
 		},
 		DryRun: func(ctx commandContext) (dryrun.Result, error) {
 			service, profile, err := fsTIServiceAndProfile(ctx)
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			waitUntilReady, err := ctx.BoolFlag("wait")
+			opts, err := fsCreateFileSystemOptions(ctx, profile)
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunCreateFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tifs.CreateFileSystemOptions{
-				Profile:        profile,
-				WaitUntilReady: waitUntilReady,
-			})
+			return service.DryRunCreateFileSystem(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
+	cmd.Flags().String("display-name", "", "Organization-visible file system display name. It is metadata, not a resource selector.")
+	cmd.Flags().StringArray("label", nil, "Organization-visible metadata label in key=value form. Repeat up to 30 times; do not store secrets.")
 	cmd.Flags().Bool("wait", false, "Wait until the created file system is active.")
 	return cmd
 }
 
 func newFSListFileSystemsCommand(info version.Info) *cobra.Command {
-	return newControlPlaneCommand(controlPlaneCommandSpec{
+	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "list-file-systems",
 		Short:      "List remote file systems in the selected region. (preview)",
 		Mutation:   readOnlyCommand,
@@ -1339,9 +1335,16 @@ func newFSListFileSystemsCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return nil, err
 			}
-			return service.ListFileSystems(ctx.cmd.Context(), profile)
+			displayName, label, err := fsListFileSystemFilters(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return service.ListFileSystems(ctx.cmd.Context(), tifs.ListFileSystemsOptions{Profile: profile, DisplayName: displayName, Label: label})
 		},
 	}, info)
+	cmd.Flags().String("display-name", "", "Filter by a substring of the effective display name.")
+	cmd.Flags().StringArray("label", nil, "Filter by one exact organization-visible label in key=value form.")
+	return cmd
 }
 
 func newFSDescribeFileSystemCommand(info version.Info) *cobra.Command {
@@ -2801,6 +2804,38 @@ func fsService(ctx commandContext, profile *config.Profile) (tifs.Service, *conf
 
 func fsServiceAndProfile(ctx commandContext) (tifs.Service, *config.Profile, error) {
 	return fsAuthenticatedServiceAndProfile(ctx, true)
+}
+
+func fsCreateFileSystemOptions(ctx commandContext, profile *config.Profile) (tifs.CreateFileSystemOptions, error) {
+	waitUntilReady, err := ctx.BoolFlag("wait")
+	if err != nil {
+		return tifs.CreateFileSystemOptions{}, err
+	}
+	displayName, err := ctx.StringFlag("display-name")
+	if err != nil {
+		return tifs.CreateFileSystemOptions{}, err
+	}
+	labels, err := ctx.StringArrayFlag("label")
+	if err != nil {
+		return tifs.CreateFileSystemOptions{}, err
+	}
+	parsedDisplayName, parsedLabels, err := tifs.ParseTenantMetadata(displayName, ctx.FlagChanged("display-name"), labels)
+	if err != nil {
+		return tifs.CreateFileSystemOptions{}, err
+	}
+	return tifs.CreateFileSystemOptions{Profile: profile, WaitUntilReady: waitUntilReady, DisplayName: parsedDisplayName, Labels: parsedLabels}, nil
+}
+
+func fsListFileSystemFilters(ctx commandContext) (*string, *tifs.LabelFilter, error) {
+	displayName, err := ctx.StringFlag("display-name")
+	if err != nil {
+		return nil, nil, err
+	}
+	labels, err := ctx.StringArrayFlag("label")
+	if err != nil {
+		return nil, nil, err
+	}
+	return tifs.ParseTenantListFilters(displayName, ctx.FlagChanged("display-name"), labels)
 }
 
 func fsAuthenticatedServiceAndProfile(ctx commandContext, tokenRequired bool) (tifs.Service, *config.Profile, error) {

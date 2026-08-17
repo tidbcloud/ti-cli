@@ -84,30 +84,62 @@ func TestLiveFSRemoteInventoryLifecycle(t *testing.T) {
 
 	bin := tiBinary(t)
 	profileName := liveProfileName(t)
+	displayName := fmt.Sprintf("ti-e2e-fs-%d-%d", os.Getpid(), time.Now().UnixNano())
+	labelKey := "ti-e2e-run"
+	labelValue := fmt.Sprintf("run-%d-%d", os.Getpid(), time.Now().UnixNano())
 	preflightList := runTI(t, bin, "--profile", profileName, "fs", "list-file-systems")
 	preflightList.wantExitCode(0)
-	create := runTI(t, bin, "--profile", profileName, "fs", "create-file-system", "--wait")
+	create := runTI(t, bin, "--profile", profileName, "fs", "create-file-system",
+		"--display-name", displayName,
+		"--label", labelKey+"="+labelValue,
+		"--wait")
 	if create.exitCode != 0 && isLiveFSQuotaError(create.stderr) {
 		t.Skipf("tdc fs live inventory lifecycle requires one free Starter slot: %s", strings.TrimSpace(create.stderr))
 	}
 	create.wantExitCode(0)
 	var created struct {
-		FileSystemID string `json:"file_system_id"`
-		FSToken      string `json:"fs_token"`
+		FileSystemID      string            `json:"file_system_id"`
+		DisplayName       string            `json:"display_name"`
+		Labels            map[string]string `json:"labels"`
+		FSToken           string            `json:"fs_token"`
+		Status            string            `json:"status"`
+		CredentialsStored bool              `json:"credentials_stored"`
 	}
 	if err := json.Unmarshal([]byte(create.stdout), &created); err != nil || created.FileSystemID == "" || created.FSToken == "" {
 		t.Fatalf("decode live tdc fs create result: %v", err)
+	}
+	if created.DisplayName != displayName || created.Labels[labelKey] != labelValue {
+		t.Fatalf("created live FS metadata mismatch: display_name=%q labels=%v", created.DisplayName, created.Labels)
+	}
+	if created.Status != "ready" || !created.CredentialsStored {
+		t.Fatalf("created live FS readiness mismatch: status=%q credentials_stored=%t", created.Status, created.CredentialsStored)
 	}
 	liveFSResourceMu.Lock()
 	liveFSResourceAutoCreatedID = created.FileSystemID
 	liveFSSelectedID = created.FileSystemID
 	liveFSResourceMu.Unlock()
 
-	list := runTI(t, bin, "--profile", profileName, "fs", "list-file-systems")
+	list := runTI(t, bin, "--profile", profileName, "fs", "list-file-systems",
+		"--display-name", displayName,
+		"--label", labelKey+"="+labelValue)
 	list.wantExitCode(0)
 	list.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
+	list.wantStdoutContains(`"display_name": "` + displayName + `"`)
+	list.wantStdoutContains(`"` + labelKey + `": "` + labelValue + `"`)
+	list.wantStdoutContains(`"quota":`)
 	list.wantStdoutContains(`"has_local_token": true`)
 	list.wantStdoutNotContains(created.FSToken)
+	var filtered struct {
+		FileSystems []struct {
+			FileSystemID string `json:"file_system_id"`
+		} `json:"file_systems"`
+	}
+	if err := json.Unmarshal([]byte(list.stdout), &filtered); err != nil {
+		t.Fatalf("decode filtered live FS inventory: %v", err)
+	}
+	if len(filtered.FileSystems) != 1 || filtered.FileSystems[0].FileSystemID != created.FileSystemID {
+		t.Fatalf("filtered live FS inventory mismatch: %#v", filtered.FileSystems)
+	}
 
 	missingSelector := runTIWithInput(t, bin, "", []string{"TI_FS_FILE_SYSTEM_ID="}, "--profile", profileName, "fs", "check-file-system")
 	missingSelector.wantExitCode(2)
@@ -121,6 +153,11 @@ func TestLiveFSRemoteInventoryLifecycle(t *testing.T) {
 	describe := runTI(t, bin, "--profile", profileName, "fs", "describe-file-system", "--file-system-id", created.FileSystemID)
 	describe.wantExitCode(0)
 	describe.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
+	describe.wantStdoutContains(`"display_name": "` + displayName + `"`)
+	describe.wantStdoutContains(`"` + labelKey + `": "` + labelValue + `"`)
+	describe.wantStdoutContains(`"quota":`)
+	describe.wantStdoutContains(`"has_local_token": true`)
+	describe.wantStdoutNotContains(created.FSToken)
 }
 
 func TestLiveCLICommandSurface(t *testing.T) {
@@ -221,7 +258,7 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "mount", "help"}, {"fs", "drain", "help"}, {"fs", "umount", "help"},
 	})
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
-		{"fs", "create-file-system", "--wait"},
+		{"fs", "create-file-system", "--display-name", "ti-e2e-dry-run", "--label", "environment=test", "--wait"},
 		{"fs", "delete-file-system", "--file-system-id", selected.FSTenantID},
 		{"fs", "create-layer", "--layer-id", "layer-1", "--base-root-path", "/workspace", "--layer-name", "dev"},
 		{"fs", "create-layer-checkpoint", "--layer-id", "layer-1", "--checkpoint-id", "cp-1"},

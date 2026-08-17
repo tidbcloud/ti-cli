@@ -303,6 +303,7 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 64*1024))
 	body = []byte(c.Redactor.Redact(string(body)))
 	apiMessage := responseMessage(body)
+	requestID := responseRequestID(res.Header)
 	switch res.StatusCode {
 	case http.StatusBadRequest:
 		message := messageOrDefault(apiMessage, "remote API rejected the request: check command flags and try again")
@@ -317,13 +318,14 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Category:   "api",
 			ExitCode:   2,
 			StatusCode: res.StatusCode,
+			RequestID:  requestID,
 			Message:    message,
 			Body:       string(body),
 		}
 	case http.StatusUnauthorized:
 		message := fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
 		if c.Service == endpoints.ServiceFS {
-			if !c.BearerAuth && strings.HasPrefix(string(c.Permission), "fs.token.") && c.Permission != authz.FSTokenRefresh {
+			if !c.BearerAuth {
 				message = fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
 			} else {
 				message = fmt.Sprintf("authentication failed: ti fs rejected the selected token for profile %q. It might be disabled, expired, refreshed elsewhere, or revoked; generate or import a valid token and try again.", profileName(c.ProfileName))
@@ -334,6 +336,7 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Category:   "authentication",
 			ExitCode:   3,
 			StatusCode: res.StatusCode,
+			RequestID:  requestID,
 			Message:    message,
 			Body:       string(body),
 		}
@@ -354,12 +357,16 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			case authz.FSFileRead, authz.FSFileWrite, authz.FSMount:
 				message = "permission denied: the selected FS token does not allow this operation or path; use an owner token or a scoped token whose prefix and operations include the request"
 			}
+			if !c.BearerAuth && apiMessage != "" {
+				message += " Backend: " + apiMessage
+			}
 		}
 		return &Error{
 			Code:       "authz.permission_denied",
 			Category:   "authorization",
 			ExitCode:   4,
 			StatusCode: res.StatusCode,
+			RequestID:  requestID,
 			Message:    message,
 			Body:       string(body),
 		}
@@ -369,6 +376,7 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Category:   "api",
 			ExitCode:   5,
 			StatusCode: res.StatusCode,
+			RequestID:  requestID,
 			Message:    fmt.Sprintf("remote resource not found: %s %s", req.Method, req.URL.Path),
 			Body:       string(body),
 		}
@@ -378,6 +386,7 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Category:   "api",
 			ExitCode:   1,
 			StatusCode: res.StatusCode,
+			RequestID:  requestID,
 			Message:    fmt.Sprintf("API gap: %s %s is not available from the remote service; keep this command behind its service-specific client until the API contract is confirmed", req.Method, req.URL.Path),
 			Body:       string(body),
 		}
@@ -387,6 +396,7 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Category:   "api",
 			ExitCode:   1,
 			StatusCode: res.StatusCode,
+			RequestID:  requestID,
 			Message:    "payment required: " + messageOrDefault(apiMessage, "the remote service rejected the request because payment could not be processed"),
 			Body:       string(body),
 		}
@@ -396,6 +406,7 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Category:   "api",
 			ExitCode:   1,
 			StatusCode: res.StatusCode,
+			RequestID:  requestID,
 			Message:    messageOrDefault(apiMessage, "API rate limit exceeded: retry later"),
 			Body:       string(body),
 		}
@@ -404,13 +415,14 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 		if c.Permission == authz.FSTokenEnable && strings.Contains(strings.ToLower(message), "expired") {
 			message = "the token is expired and cannot be enabled; generate a new token instead"
 		}
-		return &Error{Code: "api.conflict", Category: "api", ExitCode: 1, StatusCode: res.StatusCode, Message: message, Body: string(body)}
+		return &Error{Code: "api.conflict", Category: "api", ExitCode: 1, StatusCode: res.StatusCode, RequestID: requestID, Message: message, Body: string(body)}
 	default:
 		return &Error{
 			Code:       "api.remote_error",
 			Category:   "api",
 			ExitCode:   1,
 			StatusCode: res.StatusCode,
+			RequestID:  requestID,
 			Message:    messageOrDefault(apiMessage, fmt.Sprintf("API request failed with HTTP %d", res.StatusCode)),
 			Body:       string(body),
 		}
