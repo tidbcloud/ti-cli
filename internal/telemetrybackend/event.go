@@ -62,14 +62,15 @@ var disallowedFieldNames = map[string]struct{}{
 }
 
 var allowedRegions = map[string]struct{}{
-	"":                   {},
-	"unknown":            {},
-	"aws-us-east-1":      {},
-	"aws-us-west-2":      {},
-	"aws-eu-central-1":   {},
-	"aws-ap-northeast-1": {},
-	"aws-ap-southeast-1": {},
-	"ali-ap-southeast-1": {},
+	"":                        {},
+	"unknown":                 {},
+	"aws-us-east-1":           {},
+	"aws-us-west-2":           {},
+	"aws-eu-central-1":        {},
+	"aws-ap-northeast-1":      {},
+	"aws-ap-southeast-1":      {},
+	"ali-ap-southeast-1":      {},
+	"alicloud-ap-southeast-1": {},
 }
 
 var allowedOperatingSystems = map[string]struct{}{

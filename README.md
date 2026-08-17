@@ -102,9 +102,9 @@ Automation should move to `TI_*` and `TIDB_CLOUD_*` environment variables. The v
 ### Configure
 
 - Authentication: a TiDB Cloud Public Key and a Private Key from the [TiDB Cloud API Keys](https://tidbcloud.com/org-settings/api-keys) console.
-- Default region: one of aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or ali-ap-southeast-1.
-    - Regions support TiDB Cloud Filesystem: aws-us-east-1, aws-us-west-2, aws-ap-southeast-1, or ali-ap-southeast-1.
-    - Regions support TiDB Cloud Starter: aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or ali-ap-southeast-1.
+- Default region: one of aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or alicloud-ap-southeast-1.
+    - Regions supporting TiDB Cloud Filesystem: aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, or alicloud-ap-southeast-1. These endpoints are built into `ti`; endpoint resolution does not download a Drive9 region manifest.
+    - Regions supporting TiDB Cloud Starter: aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or alicloud-ap-southeast-1.
 
 Set up a default profile with one command:
 

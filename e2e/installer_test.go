@@ -173,7 +173,6 @@ case "$url" in
   */%s) source=%q ;;
   */checksums.txt) source=%q ;;
   */%s) source=%q ;;
-  */drive9-regions.json) printf '{"regions":[]}'; exit 0 ;;
   *) printf 'unexpected URL: %%s\n' "$url" >&2; exit 1 ;;
 esac
 if [ -n "$out" ]; then
@@ -195,6 +194,14 @@ fi
 	}
 	if !strings.Contains(string(output), "PATH shadowing detected") || !strings.Contains(string(output), shadow) {
 		t.Fatalf("installer did not report the unrelated ti on PATH:\n%s", output)
+	}
+	if strings.Contains(string(output), "ti fs companion installed to") {
+		t.Fatalf("installer exposed the companion installation path:\n%s", output)
+	}
+	for _, regionCode := range []string{"aws-us-east-1", "aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1"} {
+		if !strings.Contains(string(output), regionCode) {
+			t.Fatalf("installer did not list ti fs region %q:\n%s", regionCode, output)
+		}
 	}
 	if data, err := os.ReadFile(shadow); err != nil || !strings.Contains(string(data), "unrelated ti") {
 		t.Fatalf("installer replaced PATH shadow: %q, %v", data, err)
@@ -243,6 +250,30 @@ func TestInstallersDoNotEscalatePrivileges(t *testing.T) {
 	powerShell := string(powerShellBytes)
 	if !strings.Contains(powerShell, `$DefaultInstallDir = Join-Path (Join-Path $HOME ".ti") "bin"`) {
 		t.Fatalf("install.ps1 should default to $HOME\\.ti\\bin")
+	}
+}
+
+func TestInstallersUseProductOwnedFSRegionsAndHideCompanionPath(t *testing.T) {
+	for _, path := range []string{
+		filepath.Join("..", "scripts", "install.sh"),
+		filepath.Join("..", "scripts", "install.ps1"),
+	} {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		content := string(data)
+		if strings.Contains(content, "drive9-regions.json") {
+			t.Fatalf("%s still downloads the Drive9 region manifest", path)
+		}
+		if strings.Contains(content, "ti fs companion installed to") {
+			t.Fatalf("%s still reports the companion installation path", path)
+		}
+		for _, regionCode := range []string{"aws-us-east-1", "aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1"} {
+			if !strings.Contains(content, regionCode) {
+				t.Fatalf("%s does not list ti fs region %q", path, regionCode)
+			}
+		}
 	}
 }
 

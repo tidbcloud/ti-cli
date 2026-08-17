@@ -1155,7 +1155,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		args = append(args, "--no-auto-unpack")
 	}
 	args = append(args, drive9Remote(remotePath), opts.MountPath)
-	result, err := s.drive9Run(ctx, opts.Profile, args, false)
+	result, err := s.drive9Run(ctx, opts.Profile, args, !opts.Foreground)
 	if err != nil {
 		return MountResult{}, err
 	}

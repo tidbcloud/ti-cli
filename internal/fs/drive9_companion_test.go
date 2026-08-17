@@ -2,6 +2,7 @@ package fs
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -407,6 +408,49 @@ func TestDrive9MountLocatorRoutesDrainAndUnmountWithoutCredentials(t *testing.T)
 	}
 }
 
+func TestDrive9MountSuppressesCompanionSuccessChatter(t *testing.T) {
+	home := t.TempDir()
+	companion, _ := buildFakeDrive9(t)
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	service := testCompanionService(home, companion)
+	service.Stdout = &stdout
+	service.Stderr = &stderr
+
+	result, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile:        dataProfile(),
+		FileSystemName: "workspace",
+		MountPath:      filepath.Join(t.TempDir(), "workspace"),
+		RemotePath:     "/",
+	})
+	if err != nil {
+		t.Fatalf("MountFileSystem failed: %v", err)
+	}
+	if stdout.Len() != 0 || stderr.Len() != 0 {
+		t.Fatalf("companion mount output leaked to ti output: stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+	if result.Driver != "webdav" || result.Status != "mounted" {
+		t.Fatalf("mount result did not retain captured companion state: %#v", result)
+	}
+}
+
+func TestDrive9MountPreservesCapturedFailureDiagnostics(t *testing.T) {
+	companion, _ := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_MOUNT_FAIL", "1")
+	_, err := testCompanionService(t.TempDir(), companion).MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile:        dataProfile(),
+		FileSystemName: "workspace",
+		MountPath:      filepath.Join(t.TempDir(), "workspace"),
+		RemotePath:     "/",
+	})
+	if err == nil {
+		t.Fatal("expected mount failure")
+	}
+	if message := apperr.MessageFor(err); !strings.Contains(message, "background mount exited before becoming ready") {
+		t.Fatalf("mount failure lost companion diagnostics: %q", message)
+	}
+}
+
 func TestDrive9FailedUnmountPreservesMountLocator(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
@@ -565,6 +609,15 @@ func main() {
 			"region_code":    os.Getenv("DRIVE9_REGION_CODE"),
 			"server":         os.Getenv("DRIVE9_SERVER"),
 		})
+	case args[0] == "mount" && (len(args) == 1 || args[1] != "drain"):
+		fmt.Fprintln(os.Stderr, "component: drive9 mount")
+		fmt.Fprintln(os.Stderr, "drive9: mount mode: webdav")
+		if os.Getenv("TI_FAKE_DRIVE9_MOUNT_FAIL") == "1" {
+			fmt.Fprintln(os.Stderr, "mount: drive9 mount: background mount exited before becoming ready")
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stderr, "drive9: mount running in background")
+		fmt.Fprintln(os.Stderr, "drive9: unmount with drive9 umount /workspace")
 	case len(args) >= 3 && args[0] == "admin" && args[1] == "tenant" && args[2] == "delete":
 		if os.Getenv("TI_FAKE_DRIVE9_NOT_FOUND") == "1" {
 			fmt.Fprintln(os.Stderr, "delete admin tenant: HTTP 404: tenant not found")

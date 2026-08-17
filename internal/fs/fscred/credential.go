@@ -505,8 +505,15 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 	if err != nil {
 		return nil, Credential{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
-	if found && credential.RegionCode != placement.Code {
-		return nil, Credential{}, apperr.New("fs.credential_region_mismatch", "config", 2, fmt.Sprintf("file system %q credentials are for %s, not %s", id, credential.RegionCode, placement.Code))
+	if found {
+		storedPlacement, storedErr := region.ParsePlacementCode(credential.RegionCode)
+		if storedErr != nil {
+			return nil, Credential{}, apperr.Wrap("config.invalid_region", "config", 2, storedErr.Error(), storedErr)
+		}
+		if storedPlacement.Code != placement.Code {
+			return nil, Credential{}, apperr.New("fs.credential_region_mismatch", "config", 2, fmt.Sprintf("file system %q credentials are for %s, not %s", id, storedPlacement.Code, placement.Code))
+		}
+		credential.RegionCode = storedPlacement.Code
 	}
 	metadataMatchesToken := found && subtle.ConstantTimeCompare([]byte(token), []byte(credential.APIKey)) == 1
 	credential.FileSystemID = id

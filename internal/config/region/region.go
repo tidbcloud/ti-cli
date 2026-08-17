@@ -10,8 +10,9 @@ const (
 	ProviderAWS          = "aws"
 	ProviderAlibabaCloud = "alibaba_cloud"
 
-	ProviderPrefixAWS          = "aws"
-	ProviderPrefixAlibabaCloud = "ali"
+	ProviderPrefixAWS                = "aws"
+	ProviderPrefixAlibabaCloud       = "alicloud"
+	ProviderPrefixAlibabaCloudLegacy = "ali"
 )
 
 type Region struct {
@@ -42,8 +43,9 @@ var supported = map[string][]Region{
 }
 
 var providerPrefixes = map[string]string{
-	ProviderPrefixAWS:          ProviderAWS,
-	ProviderPrefixAlibabaCloud: ProviderAlibabaCloud,
+	ProviderPrefixAWS:                ProviderAWS,
+	ProviderPrefixAlibabaCloud:       ProviderAlibabaCloud,
+	ProviderPrefixAlibabaCloudLegacy: ProviderAlibabaCloud,
 }
 
 var providerToPrefix = map[string]string{
@@ -134,8 +136,8 @@ func ParsePlacementCode(code string) (Placement, error) {
 		}
 	}
 	return Placement{
-		Code:        prefix + "-" + nativeCode,
-		Prefix:      prefix,
+		Code:        providerToPrefix[provider] + "-" + nativeCode,
+		Prefix:      providerToPrefix[provider],
 		Provider:    provider,
 		NativeCode:  nativeCode,
 		RegionLabel: regionLabel,

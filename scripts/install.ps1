@@ -91,26 +91,10 @@ function Print-Regions {
     Write-Output ""
     Write-Output "  Config regions:"
     Write-Output "    aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1"
-    Write-Output "    ali-ap-southeast-1"
+    Write-Output "    alicloud-ap-southeast-1"
     Write-Output ""
     Write-Output "  ti fs regions:"
-    try {
-        $manifest = Invoke-RestMethod -Uri "https://drive9.ai/manifest/regions/drive9-regions.json"
-        $regions = @($manifest.regions | Where-Object { $_.mode -eq "tidb_cloud_native" } | ForEach-Object {
-            $prefix = $_.cloud_provider
-            if ($prefix -eq "alicloud" -or $prefix -eq "alibaba_cloud") {
-                $prefix = "ali"
-            }
-            "    $prefix-$($_.tidb_region)"
-        } | Sort-Object -Unique)
-        if ($regions.Count -gt 0) {
-            $regions | ForEach-Object { Write-Output $_ }
-            return
-        }
-    } catch {
-    }
-    Write-Output "    aws-us-east-1, aws-us-west-2, aws-ap-southeast-1, ali-ap-southeast-1"
-    Warn "Could not fetch the latest ti fs region manifest; run ti fs check-file-system after configure"
+    Write-Output "    aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1"
 }
 
 function Print-NextSteps {
@@ -248,7 +232,6 @@ try {
     Move-Item -Force -Path $CompanionPath -Destination $CompanionTarget
     & $Target --version
     Write-Output "ti installed to $Target"
-    Write-Output "ti fs companion installed to $CompanionTarget"
     Bootstrap-Config
     Report-PathStatus
     Print-Regions

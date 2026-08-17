@@ -94,6 +94,40 @@ func TestOldCredentialWithoutTokenMetadataRemainsReadable(t *testing.T) {
 	}
 }
 
+func TestCredentialWithLegacyAlibabaRegionRemainsReadable(t *testing.T) {
+	home := t.TempDir()
+	profile := credentialTestProfile()
+	profile.PlacementRegionCode = "alicloud-ap-southeast-1"
+	profile.CloudProvider = "alibaba_cloud"
+	profile.RegionCode = "ap-southeast-1"
+	paths, err := CredentialPath(home, profile.Name, "tenant-legacy-region")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(paths.Credentials), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeTOML(paths.Credentials, Credential{
+		FileSystemID: "tenant-legacy-region",
+		RegionCode:   "ali-ap-southeast-1",
+		APIKey:       wrappedToken(t, "tenant-legacy-region"),
+	}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	selected, credential, err := ResolveCredential(home, profile, ResolveCredentialOptions{
+		FileSystemID:         "tenant-legacy-region",
+		FileSystemIDExplicit: true,
+		TokenRequired:        true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.FSPlacementRegionCode != "alicloud-ap-southeast-1" || credential.RegionCode != "alicloud-ap-southeast-1" {
+		t.Fatalf("legacy region was not normalized: selected=%#v credential=%#v", selected, credential)
+	}
+}
+
 func TestCredentialLockSerializesWriters(t *testing.T) {
 	home := t.TempDir()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
