@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
@@ -148,6 +147,36 @@ func TestResolveFSFromRegionManifest(t *testing.T) {
 	}
 }
 
+func TestResolveFSUsesBuiltInFourRegionMapping(t *testing.T) {
+	tests := []struct {
+		name       string
+		provider   string
+		regionCode string
+		baseURL    string
+		regionName string
+	}{
+		{name: "AWS N. Virginia", provider: region.ProviderAWS, regionCode: "us-east-1", baseURL: "https://aws-us-east-1.drive9.ai", regionName: "aws-us-east-1"},
+		{name: "AWS Singapore", provider: region.ProviderAWS, regionCode: "ap-southeast-1", baseURL: "https://aws-ap-southeast-1.drive9.ai", regionName: "aws-ap-southeast-1"},
+		{name: "AWS Oregon", provider: region.ProviderAWS, regionCode: "us-west-2", baseURL: "https://aws-us-west-2.drive9.ai", regionName: "aws-us-west-2"},
+		{name: "Alibaba Cloud Singapore", provider: region.ProviderAlibabaCloud, regionCode: "ap-southeast-1", baseURL: "https://alicloud-ap-southeast-1.drive9.ai", regionName: "alicloud-ap-southeast-1"},
+	}
+	resolver := NewResolver()
+	if resolver.FSManifestURL != "" {
+		t.Fatalf("production resolver has external manifest URL %q", resolver.FSManifestURL)
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			endpoint, err := resolver.ResolveFS(tt.provider, tt.regionCode)
+			if err != nil {
+				t.Fatalf("ResolveFS failed: %v", err)
+			}
+			if endpoint.BaseURL != tt.baseURL || endpoint.RegionName != tt.regionName {
+				t.Fatalf("endpoint = %#v, want base URL %q and region %q", endpoint, tt.baseURL, tt.regionName)
+			}
+		})
+	}
+}
+
 func TestResolveFSUnsupportedManifestRegion(t *testing.T) {
 	resolver := Resolver{
 		FSManifest: &FSRegionManifest{
@@ -171,7 +200,7 @@ func TestResolveFSUnsupportedManifestRegion(t *testing.T) {
 		t.Fatalf("expected exit 2, got %d", got)
 	}
 	message := apperr.MessageFor(err)
-	if !strings.Contains(message, "ti fs is not available") || !strings.Contains(message, "aws/us-east-1") {
+	if !strings.Contains(message, "ti fs is not available") || !strings.Contains(message, "aws-us-east-1") {
 		t.Fatalf("unexpected message: %q", message)
 	}
 }
@@ -199,77 +228,6 @@ func TestResolveFSFetchesManifestURL(t *testing.T) {
 	}
 	if endpoint.BaseURL != "https://aws-us-east-1.drive9.ai" {
 		t.Fatalf("unexpected endpoint: %#v", endpoint)
-	}
-}
-
-func TestResolveFSRetriesManifestFetch(t *testing.T) {
-	var calls int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if atomic.AddInt32(&calls, 1) == 1 {
-			http.Error(w, "temporary manifest failure", http.StatusInternalServerError)
-			return
-		}
-		_, _ = w.Write([]byte(`{
-			"service": "drive9",
-			"regions": [
-				{
-					"region_code": "aws-us-east-1",
-					"mode": "tidb_cloud_native",
-					"server_url": "https://aws-us-east-1.drive9.ai",
-					"cloud_provider": "aws",
-					"tidb_region": "us-east-1"
-				}
-			]
-		}`))
-	}))
-	defer server.Close()
-
-	endpoint, err := (Resolver{FSManifestURL: server.URL}).ResolveFS(region.ProviderAWS, "us-east-1")
-	if err != nil {
-		t.Fatalf("ResolveFS failed after retry: %v", err)
-	}
-	if endpoint.BaseURL != "https://aws-us-east-1.drive9.ai" {
-		t.Fatalf("unexpected endpoint: %#v", endpoint)
-	}
-	if got := atomic.LoadInt32(&calls); got != 2 {
-		t.Fatalf("manifest calls = %d, want 2", got)
-	}
-}
-
-func TestResolveFSUsesCachedManifestAfterFetchFailure(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	var fail atomic.Bool
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if fail.Load() {
-			http.Error(w, "temporary manifest failure", http.StatusInternalServerError)
-			return
-		}
-		_, _ = w.Write([]byte(`{
-			"service": "drive9",
-			"regions": [
-				{
-					"region_code": "aws-us-east-1",
-					"mode": "tidb_cloud_native",
-					"server_url": "https://aws-us-east-1.drive9.ai",
-					"cloud_provider": "aws",
-					"tidb_region": "us-east-1"
-				}
-			]
-		}`))
-	}))
-	defer server.Close()
-
-	resolver := Resolver{FSManifestURL: server.URL}
-	if _, err := resolver.ResolveFS(region.ProviderAWS, "us-east-1"); err != nil {
-		t.Fatalf("initial ResolveFS failed: %v", err)
-	}
-	fail.Store(true)
-	endpoint, err := resolver.ResolveFS(region.ProviderAWS, "us-east-1")
-	if err != nil {
-		t.Fatalf("ResolveFS did not fall back to cache: %v", err)
-	}
-	if endpoint.BaseURL != "https://aws-us-east-1.drive9.ai" {
-		t.Fatalf("unexpected endpoint from cache: %#v", endpoint)
 	}
 }
 

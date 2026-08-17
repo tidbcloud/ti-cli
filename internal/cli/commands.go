@@ -617,7 +617,7 @@ func newDBExecuteSQLCommand(info version.Info) *cobra.Command {
 	addSQLCredentialFlags(cmd)
 	cmd.Flags().String("database", "", "Default database (aka. schema) name.")
 	cmd.Flags().String("sql", "", "The SQL statement to execute.")
-	cmd.Flags().String("transport", "https", "SQL execution transport protocal: https or mysql.")
+	cmd.Flags().String("transport", "https", "SQL execution transport protocol: https or mysql.")
 	markUsageRequired(cmd, "db-cluster-id", "sql")
 	return cmd
 }
@@ -1501,7 +1501,7 @@ func newFSCopyFileCommand(info version.Info) *cobra.Command {
 	cmd.Flags().Bool("to-stdout", false, "Write --from-remote to stdout.")
 	cmd.Flags().Bool("overwrite", false, "Replace an existing destination file.")
 	cmd.Flags().Bool("create-parents", false, "Create missing local parent directories when copying from a TiDB Cloud file system.")
-	cmd.Flags().Bool("append", false, "Append a local file content to a file in the TiDB Cloudfile system.")
+	cmd.Flags().Bool("append", false, "Append a local file content to a file in the TiDB Cloud file system.")
 	cmd.Flags().Bool("recursive", false, "Copy directory structure recursively.")
 	cmd.Flags().Bool("resume", false, "Resume an active copy operation.")
 	cmd.Flags().String("layer-id", "", "Write the copied file content into a file system layer instead of the base file system.")
@@ -1871,7 +1871,7 @@ func newFSFindFilesCommand(info version.Info) *cobra.Command {
 	cmd.Flags().String("file-name-pattern", "", "File name pattern filter, such as *.md.")
 	cmd.Flags().String("resource-type", "", "Resource type filter: file or directory.")
 	cmd.Flags().String("tag", "", "Tag filter.")
-	cmd.Flags().String("layer-id", "", "Search files and directorieswithin a specific file system layer.")
+	cmd.Flags().String("layer-id", "", "Search files and directories within a specific file system layer.")
 	cmd.Flags().String("newer", "", "Only return files newer than the filter.")
 	cmd.Flags().String("older", "", "Only return files older than the filter.")
 	cmd.Flags().Int64("min-size-bytes", 0, "Minimum file size in bytes.")
@@ -2131,7 +2131,7 @@ func newFSPackFileSystemCommand(info version.Info) *cobra.Command {
 		},
 	}, info)
 	cmd.Flags().String("local-root", "", "Local overlay root containing the overlay directory.")
-	cmd.Flags().String("remote-root", "/", "The TiDB Cloudfile system root represented by the local overlay.")
+	cmd.Flags().String("remote-root", "/", "The TiDB Cloud file system root represented by the local overlay.")
 	cmd.Flags().String("mount-path", "", "The local mounted path.")
 	cmd.Flags().String("mount-profile", "", "The mount profile: coding-agent, portable, or none. Default: none.")
 	cmd.Flags().String("archive-path", "", "The path for the packed archive.")
@@ -3049,7 +3049,7 @@ func newVaultCreateSecretCommand(info version.Info) *cobra.Command {
 func newVaultReplaceSecretCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "replace-secret",
-		Short:      "Replace all fields in a file systemvault secret from a directory.",
+		Short:      "Replace all fields in a file system vault secret from a directory.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVaultSecretUpdate,
 		Run: func(ctx commandContext) (any, error) {
@@ -3212,7 +3212,7 @@ func newVaultCreateGrantCommand(info version.Info) *cobra.Command {
 func newVaultDeleteGrantCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "delete-grant",
-		Short:      "Delete a file systemvault grant.",
+		Short:      "Delete a file system vault grant.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVaultGrantDelete,
 		Run: func(ctx commandContext) (any, error) {
@@ -3324,7 +3324,7 @@ func newVaultRunWithSecretCommand(info version.Info) *cobra.Command {
 func newVaultMountCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "mount-vault",
-		Short:      "Mount readable file system vaule secrets as a local read-only FUSE filesystem.",
+		Short:      "Mount readable file system vault secrets as a local read-only FUSE filesystem.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVaultSecretRead,
 		Run: func(ctx commandContext) (any, error) {

@@ -75,9 +75,9 @@ Supported TiDB Cloud Starter placement values are:
 | `aws-eu-central-1` | AWS | Frankfurt |
 | `aws-ap-northeast-1` | AWS | Tokyo |
 | `aws-ap-southeast-1` | AWS | Singapore |
-| `ali-ap-southeast-1` | Alibaba Cloud | Singapore |
+| `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
 
-`aws` maps to the internal provider `aws`; `ali` maps to `alibaba_cloud`. TiDB Cloud Filesystem availability is resolved from the hosted Drive9 region manifest and can be a subset of the Starter regions.
+`aws` maps to the internal provider `aws`; `alicloud` maps to `alibaba_cloud`. TiDB Cloud Filesystem supports `aws-us-east-1`, `aws-ap-southeast-1`, `aws-us-west-2`, and `alicloud-ap-southeast-1` through endpoint mappings built into `ti`.
 
 ## TiDB Cloud Authentication
 

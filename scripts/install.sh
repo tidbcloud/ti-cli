@@ -101,16 +101,6 @@ download() {
   fi
 }
 
-download_quiet_stdout() {
-  if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$1" 2>/dev/null || true
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q -O - "$1" 2>/dev/null || true
-  else
-    true
-  fi
-}
-
 case "$(uname -s)" in
   Darwin) OS="darwin" ;;
   Linux) OS="linux" ;;
@@ -265,39 +255,10 @@ print_regions() {
   printf "\n"
   printf "  ${BOLD}Config regions:${RESET}\n"
   printf "    aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1\n"
-  printf "    ali-ap-southeast-1\n"
+  printf "    alicloud-ap-southeast-1\n"
   printf "\n"
   printf "  ${BOLD}ti fs regions:${RESET}\n"
-  MANIFEST="$(download_quiet_stdout "https://drive9.ai/manifest/regions/drive9-regions.json")"
-  FS_REGIONS="$(printf "%s\n" "$MANIFEST" | awk '
-    /"mode"[[:space:]]*:[[:space:]]*"tidb_cloud_native"/ { native=1 }
-    /"cloud_provider"[[:space:]]*:/ {
-      provider=$0
-      sub(/^.*"cloud_provider"[[:space:]]*:[[:space:]]*"/, "", provider)
-      sub(/".*$/, "", provider)
-    }
-    /"tidb_region"[[:space:]]*:/ {
-      region=$0
-      sub(/^.*"tidb_region"[[:space:]]*:[[:space:]]*"/, "", region)
-      sub(/".*$/, "", region)
-    }
-    /^[[:space:]]*}/ {
-      if (native && provider != "" && region != "") {
-        prefix=provider
-        if (prefix == "alicloud" || prefix == "alibaba_cloud") {
-          prefix="ali"
-        }
-        print "    " prefix "-" region
-      }
-      native=0; provider=""; region=""
-    }
-  ' | sort -u)"
-  if [ -n "$FS_REGIONS" ]; then
-    printf "%s\n" "$FS_REGIONS"
-  else
-    printf "    aws-us-east-1, aws-us-west-2, aws-ap-southeast-1, ali-ap-southeast-1\n"
-    warn "Could not fetch the latest ti fs region manifest; run ti fs check-file-system after configure"
-  fi
+  printf "    aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1\n"
 }
 
 print_next_steps() {
@@ -404,7 +365,6 @@ install_file "${TMP_DIR}/${COMPANION_ARTIFACT}" "$COMPANION_TARGET"
 
 "$TARGET" --version
 success "ti installed to ${TARGET}"
-success "ti fs companion installed to ${COMPANION_TARGET}"
 bootstrap_config
 report_path_status
 print_regions

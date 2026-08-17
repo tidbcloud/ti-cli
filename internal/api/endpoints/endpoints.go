@@ -2,14 +2,11 @@ package endpoints
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -29,23 +26,8 @@ const (
 const (
 	DefaultStarterBaseURL = "https://serverless.tidbapi.com"
 	DefaultIAMBaseURL     = "https://iam.tidbapi.com"
-	DefaultFSManifestURL  = "https://drive9.ai/manifest/regions/drive9-regions.json"
 	DefaultFSMode         = "tidb_cloud_native"
 )
-
-var errFSManifestUnavailable = errors.New("ti fs region manifest unavailable")
-
-const (
-	fsManifestFetchAttempts = 3
-	fsManifestRetryDelay    = 200 * time.Millisecond
-	fsManifestCacheMaxAge   = 24 * time.Hour
-)
-
-type cachedFSRegionManifest struct {
-	ManifestURL string           `json:"manifest_url"`
-	FetchedAt   time.Time        `json:"fetched_at"`
-	Manifest    FSRegionManifest `json:"manifest"`
-}
 
 type ProviderRegion struct {
 	Provider string
@@ -75,7 +57,6 @@ func NewResolver() Resolver {
 	resolver := Resolver{
 		StarterBaseURL: DefaultStarterBaseURL,
 		IAMBaseURL:     DefaultIAMBaseURL,
-		FSManifestURL:  DefaultFSManifestURL,
 		FSMode:         DefaultFSMode,
 	}
 	if os.Getenv("TI_ALLOW_TEST_ENDPOINTS") == "1" {
@@ -217,10 +198,14 @@ func (r Resolver) fsManifest() (*FSRegionManifest, error) {
 		return &manifest, nil
 	}
 	manifestURL := strings.TrimSpace(r.FSManifestURL)
-	if manifestURL == "" {
-		manifestURL = DefaultFSManifestURL
+	if manifestURL != "" {
+		return fetchFSManifest(context.Background(), manifestURL, r.FSManifestHTTPClient)
 	}
-	return fetchFSManifest(context.Background(), manifestURL, r.FSManifestHTTPClient)
+	manifest := builtInFSRegionManifest()
+	if err := validateFSManifest(manifest); err != nil {
+		return nil, err
+	}
+	return manifest, nil
 }
 
 func fetchFSManifest(ctx context.Context, manifestURL string, client *http.Client) (*FSRegionManifest, error) {
@@ -230,119 +215,38 @@ func fetchFSManifest(ctx context.Context, manifestURL string, client *http.Clien
 		client = http.DefaultClient
 	}
 
-	var lastErr error
-	for attempt := 0; attempt < fsManifestFetchAttempts; attempt++ {
-		manifest, retry, err := fetchFSManifestOnce(ctx, manifestURL, client)
-		if err == nil {
-			storeCachedFSManifest(manifestURL, manifest)
-			return manifest, nil
-		}
-		lastErr = err
-		if !retry || attempt == fsManifestFetchAttempts-1 {
-			break
-		}
-		timer := time.NewTimer(time.Duration(attempt+1) * fsManifestRetryDelay)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			lastErr = apperr.Wrap("api.fs_manifest_unavailable", "api", 1, fmt.Sprintf("%s: fetch %s", errFSManifestUnavailable, manifestURL), ctx.Err())
-			if cached, cacheErr := loadCachedFSManifest(manifestURL); cacheErr == nil {
-				return cached, nil
-			}
-			return nil, lastErr
-		case <-timer.C:
-		}
-	}
-	if cached, cacheErr := loadCachedFSManifest(manifestURL); cacheErr == nil {
-		return cached, nil
-	}
-	return nil, lastErr
-}
-
-func fetchFSManifestOnce(ctx context.Context, manifestURL string, client *http.Client) (*FSRegionManifest, bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, manifestURL, nil)
 	if err != nil {
-		return nil, false, apperr.Wrap("api.fs_manifest_request", "api", 1, "build ti fs region manifest request", err)
+		return nil, apperr.Wrap("api.fs_manifest_request", "api", 1, "build test ti fs region manifest request", err)
 	}
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, true, apperr.Wrap("api.fs_manifest_unavailable", "api", 1, fmt.Sprintf("%s: fetch %s", errFSManifestUnavailable, manifestURL), err)
+		return nil, apperr.Wrap("api.fs_manifest_unavailable", "api", 1, fmt.Sprintf("test ti fs region manifest unavailable: fetch %s", manifestURL), err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, retryableFSManifestStatus(res.StatusCode), apperr.New("api.fs_manifest_unavailable", "api", 1, fmt.Sprintf("%s: fetch %s returned HTTP %d", errFSManifestUnavailable, manifestURL, res.StatusCode))
+		return nil, apperr.New("api.fs_manifest_unavailable", "api", 1, fmt.Sprintf("test ti fs region manifest fetch %s returned HTTP %d", manifestURL, res.StatusCode))
 	}
 	var manifest FSRegionManifest
 	if err := json.NewDecoder(res.Body).Decode(&manifest); err != nil {
-		return nil, true, apperr.Wrap("api.fs_manifest_decode", "api", 1, "decode ti fs region manifest", err)
+		return nil, apperr.Wrap("api.fs_manifest_decode", "api", 1, "decode test ti fs region manifest", err)
 	}
-	if err := validateFSManifest(&manifest); err != nil {
-		return nil, false, err
-	}
-	return &manifest, false, nil
-}
-
-func retryableFSManifestStatus(statusCode int) bool {
-	return statusCode == http.StatusTooManyRequests || statusCode >= 500
-}
-
-func loadCachedFSManifest(manifestURL string) (*FSRegionManifest, error) {
-	cachePath, err := fsManifestCachePath(manifestURL)
-	if err != nil {
-		return nil, err
-	}
-	data, err := os.ReadFile(cachePath)
-	if err != nil {
-		return nil, err
-	}
-	var cached cachedFSRegionManifest
-	if err := json.Unmarshal(data, &cached); err != nil {
-		return nil, err
-	}
-	if cached.ManifestURL != manifestURL {
-		return nil, fmt.Errorf("cached ti fs manifest belongs to a different URL")
-	}
-	if cached.FetchedAt.IsZero() || time.Since(cached.FetchedAt) > fsManifestCacheMaxAge {
-		return nil, fmt.Errorf("cached ti fs manifest is expired")
-	}
-	manifest := cached.Manifest
 	if err := validateFSManifest(&manifest); err != nil {
 		return nil, err
 	}
 	return &manifest, nil
 }
 
-func storeCachedFSManifest(manifestURL string, manifest *FSRegionManifest) {
-	if manifest == nil {
-		return
+func builtInFSRegionManifest() *FSRegionManifest {
+	return &FSRegionManifest{
+		Service: "ti-fs",
+		Regions: []FSRegionManifestEntry{
+			{RegionCode: "aws-us-east-1", Mode: DefaultFSMode, ServerURL: "https://aws-us-east-1.drive9.ai", CloudProvider: "aws", TiDBRegion: "us-east-1"},
+			{RegionCode: "aws-ap-southeast-1", Mode: DefaultFSMode, ServerURL: "https://aws-ap-southeast-1.drive9.ai", CloudProvider: "aws", TiDBRegion: "ap-southeast-1"},
+			{RegionCode: "aws-us-west-2", Mode: DefaultFSMode, ServerURL: "https://aws-us-west-2.drive9.ai", CloudProvider: "aws", TiDBRegion: "us-west-2"},
+			{RegionCode: "alicloud-ap-southeast-1", Mode: DefaultFSMode, ServerURL: "https://alicloud-ap-southeast-1.drive9.ai", CloudProvider: "alicloud", TiDBRegion: "ap-southeast-1"},
+		},
 	}
-	cachePath, err := fsManifestCachePath(manifestURL)
-	if err != nil {
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
-		return
-	}
-	cached := cachedFSRegionManifest{
-		ManifestURL: manifestURL,
-		FetchedAt:   time.Now().UTC(),
-		Manifest:    *manifest,
-	}
-	data, err := json.MarshalIndent(cached, "", "  ")
-	if err != nil {
-		return
-	}
-	_ = os.WriteFile(cachePath, data, 0o644)
-}
-
-func fsManifestCachePath(manifestURL string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil || strings.TrimSpace(home) == "" {
-		return "", fmt.Errorf("resolve ti fs manifest cache home: %w", err)
-	}
-	sum := sha256.Sum256([]byte(manifestURL))
-	name := fmt.Sprintf("fs-region-manifest-%x.json", sum[:8])
-	return filepath.Join(home, ".ti", "cache", name), nil
 }
 
 func validateFSManifest(manifest *FSRegionManifest) error {
@@ -428,11 +332,7 @@ func fsManifestEntryMatches(entry FSRegionManifestEntry, provider, apiProvider, 
 }
 
 func fsRegionCode(provider, regionCode string) string {
-	prefix := APIProvider(provider)
-	if provider == region.ProviderAlibabaCloud {
-		prefix = "ali"
-	}
-	return prefix + "-" + regionCode
+	return APIProvider(provider) + "-" + regionCode
 }
 
 func supportedFSRegions(entries []FSRegionManifestEntry, mode string) string {
@@ -442,15 +342,7 @@ func supportedFSRegions(entries []FSRegionManifestEntry, mode string) string {
 		if strings.TrimSpace(entry.Mode) != mode {
 			continue
 		}
-		provider := entry.CloudProvider
-		if provider == "" {
-			provider = strings.SplitN(entry.RegionCode, "-", 2)[0]
-		}
-		regionCode := entry.TiDBRegion
-		if regionCode == "" {
-			regionCode = strings.TrimPrefix(entry.RegionCode, provider+"-")
-		}
-		value := provider + "/" + regionCode
+		value := entry.RegionCode
 		if _, ok := seen[value]; ok {
 			continue
 		}

@@ -46,12 +46,14 @@ func TestValidateRejectsUnsupportedProviderRegions(t *testing.T) {
 func TestParsePlacementCode(t *testing.T) {
 	tests := []struct {
 		code       string
+		canonical  string
 		provider   string
 		nativeCode string
 	}{
-		{"aws-us-east-1", ProviderAWS, "us-east-1"},
-		{"aws-ap-southeast-1", ProviderAWS, "ap-southeast-1"},
-		{"ali-ap-southeast-1", ProviderAlibabaCloud, "ap-southeast-1"},
+		{"aws-us-east-1", "aws-us-east-1", ProviderAWS, "us-east-1"},
+		{"aws-ap-southeast-1", "aws-ap-southeast-1", ProviderAWS, "ap-southeast-1"},
+		{"alicloud-ap-southeast-1", "alicloud-ap-southeast-1", ProviderAlibabaCloud, "ap-southeast-1"},
+		{"ali-ap-southeast-1", "alicloud-ap-southeast-1", ProviderAlibabaCloud, "ap-southeast-1"},
 	}
 
 	for _, tt := range tests {
@@ -60,7 +62,7 @@ func TestParsePlacementCode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ParsePlacementCode failed: %v", err)
 			}
-			if placement.Code != tt.code || placement.Provider != tt.provider || placement.NativeCode != tt.nativeCode {
+			if placement.Code != tt.canonical || placement.Provider != tt.provider || placement.NativeCode != tt.nativeCode {
 				t.Fatalf("unexpected placement: %#v", placement)
 			}
 		})

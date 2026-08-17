@@ -855,12 +855,11 @@ for SQL execution Basic Auth.
 Use `internal/api/endpoints` for Starter, IAM/account, and fs endpoint
 selection. Do not add service URLs to user config. The default Starter host is
 `https://serverless.tidbapi.com`; the default IAM host is
-`https://iam.tidbapi.com`. The ti fs host is resolved from the hosted ti fs
-region manifest at
-`https://drive9.ai/manifest/regions/drive9-regions.json`, matching the active
-profile's cloud provider and region against `tidb_cloud_native` entries. If the
-manifest does not contain the profile placement, return a clear unsupported
-endpoint error; do not add a user-facing raw server URL flag or config key.
+`https://iam.tidbapi.com`. The ti fs host is resolved from the four-region
+endpoint mapping owned by `internal/api/endpoints`. If the mapping does not
+contain the profile placement, return a clear unsupported endpoint error; do
+not add a user-facing raw server URL flag or config key or restore a runtime
+manifest dependency.
 Tests may override the IAM base URL with `TI_TEST_IAM_BASE_URL` and the fs
 manifest URL with `TI_TEST_FS_MANIFEST_URL`, only when
 `TI_ALLOW_TEST_ENDPOINTS=1`; these are hidden test controls, not supported
@@ -951,11 +950,11 @@ Supported MVP placement values:
 | `aws-eu-central-1` | AWS | Frankfurt |
 | `aws-ap-northeast-1` | AWS | Tokyo |
 | `aws-ap-southeast-1` | AWS | Singapore |
-| `ali-ap-southeast-1` | Alibaba Cloud | Singapore |
+| `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
 
 The prefix before the first `-` is the cloud provider selector. `aws` maps to
-internal provider `aws`; `ali` maps to internal provider `alibaba_cloud`. Keep
-this mapping centralized in `internal/config/region`.
+internal provider `aws`; `alicloud` maps to internal provider
+`alibaba_cloud`. Keep this mapping centralized in `internal/config/region`.
 
 Do not store secrets in logs, telemetry, generated docs examples, or test
 fixtures.

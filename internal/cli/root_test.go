@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/authz"
 	"github.com/tidbcloud/ti-cli/internal/config/store"
@@ -63,6 +64,31 @@ func TestHelpCommands(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCommandDescriptionsHaveNoKnownTypos(t *testing.T) {
+	root := NewRootCommand(testVersion())
+	knownTypos := []string{
+		"cloudfile",
+		"directorieswithin",
+		"protocal",
+		"systemvault",
+		"vaule",
+	}
+	visitCommands(root, func(command *cobra.Command) {
+		texts := []string{command.Short, command.Long}
+		command.LocalFlags().VisitAll(func(flag *pflag.Flag) {
+			texts = append(texts, flag.Usage)
+		})
+		for _, value := range texts {
+			lower := strings.ToLower(value)
+			for _, typo := range knownTypos {
+				if strings.Contains(lower, typo) {
+					t.Errorf("%s contains typo %q in %q", command.CommandPath(), typo, value)
+				}
+			}
+		}
+	})
 }
 
 func TestRootRequiresCommand(t *testing.T) {
@@ -1108,7 +1134,7 @@ func TestRegionOverrideAllowsEnvironmentCredentialsWithoutEnvRegion(t *testing.T
 	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "test-public")
 	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "test-private")
 
-	stdout, _, err := executeForTest("--region", "ali-ap-southeast-1", "db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run")
+	stdout, _, err := executeForTest("--region", "alicloud-ap-southeast-1", "db", "create-db-cluster", "--db-cluster-name", "demo-cluster", "--db-cluster-type", "starter", "--dry-run")
 	if err != nil {
 		t.Fatalf("expected dry-run to succeed, got %v", err)
 	}
