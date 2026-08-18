@@ -10,7 +10,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strings"
@@ -26,7 +25,6 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountcontrol"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountdriver"
-	"github.com/tidbcloud/ti-cli/internal/fs/mountprocess"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 	"golang.org/x/net/webdav"
 )
@@ -43,7 +41,6 @@ type MountFileSystemOptions struct {
 	MountPath         string
 	RemotePath        string
 	Driver            string
-	Foreground        bool
 	ReadOnly          bool
 	ReadyTimeout      time.Duration
 	CacheDir          string
@@ -137,18 +134,6 @@ type MountRuntimeCheck struct {
 	Status  string `json:"status"`
 	Message string `json:"message,omitempty"`
 }
-
-type backgroundMountRequest struct {
-	Executable string
-	Args       []string
-	Env        []string
-	LogFile    string
-	StateFile  string
-	MountPath  string
-	Timeout    time.Duration
-}
-
-type backgroundMountStarter func(context.Context, backgroundMountRequest) (int, error)
 
 func (s Service) MountFileSystem(ctx context.Context, opts MountFileSystemOptions) (MountResult, error) {
 	return s.drive9MountFileSystem(ctx, opts)
@@ -555,92 +540,6 @@ func (s Service) mountWebDAVForeground(ctx context.Context, inputs mountInputs, 
 	}
 	checks = append(checks, MountRuntimeCheck{Name: "mount_state", Status: "passed", Message: stateFile})
 	return mountResult("unmounted", inputs, remote, checks, os.Getpid(), stateFile, ""), nil
-}
-
-func (s Service) mountBackground(ctx context.Context, inputs mountInputs, remote apifs.StatusResponse, checks []MountRuntimeCheck) (MountResult, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return MountResult{}, apperr.Wrap("fs.executable_path", "runtime", 1, "determine ti executable path for background mount", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(inputs.logFile), 0o700); err != nil {
-		return MountResult{}, apperr.Wrap("fs.mount_log_dir", "runtime", 1, fmt.Sprintf("create mount log directory %q", filepath.Dir(inputs.logFile)), err)
-	}
-	args := []string{
-		"--profile", inputs.profile.Name,
-		"fs", "mount-file-system",
-		"--file-system-id", inputs.fileSystemName,
-		"--mount-path", inputs.mountPath,
-		"--remote-path", inputs.remotePath,
-		"--driver", inputs.driver.Name(),
-		"--cache-dir", inputs.cacheDir,
-		"--read-cache-size-mb", fmt.Sprintf("%d", inputs.readCacheBytes/(1<<20)),
-		"--read-cache-max-file-mb", fmt.Sprintf("%d", inputs.readCacheFileBytes/(1<<20)),
-		"--read-cache-ttl", inputs.readCacheTTL.String(),
-		"--write-back-cache=" + fmt.Sprintf("%t", inputs.writeBackCache),
-		"--mount-profile", inputs.mountProfile,
-		"--foreground",
-	}
-	if inputs.localRoot != "" {
-		args = append(args, "--local-root", inputs.localRoot)
-	}
-	if inputs.unpackArchivePath != "" {
-		args = append(args, "--unpack-archive-path", inputs.unpackArchivePath)
-	}
-	if inputs.noAutoUnpack {
-		args = append(args, "--no-auto-unpack")
-	}
-	for _, packPath := range inputs.packPaths {
-		args = append(args, "--pack-path", packPath)
-	}
-	if inputs.readOnly {
-		args = append(args, "--read-only")
-	}
-	pid, err := startBackgroundMount(ctx, backgroundMountRequest{
-		Executable: executable,
-		Args:       args,
-		LogFile:    inputs.logFile,
-		StateFile:  inputs.stateFile,
-		MountPath:  inputs.mountPath,
-		Timeout:    inputs.timeout,
-	})
-	if err != nil {
-		return MountResult{}, err
-	}
-	checks = append(checks, MountRuntimeCheck{Name: "background_process", Status: "passed", Message: fmt.Sprintf("pid %d", pid)})
-	checks = append(checks, MountRuntimeCheck{Name: "mount_state", Status: "passed", Message: inputs.stateFile})
-	return mountResult("mounted", inputs, remote, checks, pid, inputs.stateFile, inputs.logFile), nil
-}
-
-func startBackgroundMount(ctx context.Context, request backgroundMountRequest) (int, error) {
-	logFile, err := os.OpenFile(request.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
-	if err != nil {
-		return 0, apperr.Wrap("fs.mount_log", "runtime", 1, fmt.Sprintf("open mount log %q", request.LogFile), err)
-	}
-	defer logFile.Close()
-	cmd := exec.CommandContext(ctx, request.Executable, request.Args...)
-	if len(request.Env) > 0 {
-		cmd.Env = append(os.Environ(), request.Env...)
-	}
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	if err := cmd.Start(); err != nil {
-		return 0, apperr.Wrap("fs.start_mount_process", "runtime", 1, "start background ti fs mount process", err)
-	}
-	deadline := time.Now().Add(request.Timeout)
-	for {
-		if _, err := os.Stat(request.StateFile); err == nil {
-			_ = cmd.Process.Release()
-			return cmd.Process.Pid, nil
-		}
-		if !mountprocess.Alive(cmd.Process.Pid) {
-			return 0, apperr.New("fs.mount_process_exited", "runtime", 1, fmt.Sprintf("background mount process exited before %q became ready; inspect %s", request.MountPath, request.LogFile))
-		}
-		if time.Now().After(deadline) {
-			_ = mountprocess.Terminate(cmd.Process.Pid)
-			return 0, apperr.New("fs.mount_ready_timeout", "runtime", 1, fmt.Sprintf("ti fs mount at %q did not become ready within %s; inspect %s", request.MountPath, request.Timeout, request.LogFile))
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
 }
 
 func mountResult(status string, inputs mountInputs, remote apifs.StatusResponse, checks []MountRuntimeCheck, pid int, stateFile, logFile string) MountResult {

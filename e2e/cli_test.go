@@ -57,10 +57,21 @@ func TestHelpAndVersion(t *testing.T) {
 	subcommand.wantExitCode(0)
 	subcommand.wantStdoutContains("Mount a file system to a local path.")
 	subcommand.wantStdoutContains("--mount-path")
-	subcommand.wantStdoutContains("--foreground")
+	subcommand.wantStdoutNotContains("--foreground")
 	subcommand.wantStdoutContains("--mount-profile")
 	subcommand.wantStdoutContains("--local-root")
 	subcommand.wantStdoutContains("--pack-path")
+	vaultMount := runTI(t, bin, "fs-vault", "mount-vault", "help")
+	vaultMount.wantExitCode(0)
+	vaultMount.wantStdoutNotContains("--foreground")
+	for _, args := range [][]string{
+		{"fs", "mount-file-system", "--mount-path", "/tmp/ti-mount", "--foreground"},
+		{"fs-vault", "mount-vault", "--mount-path", "/tmp/ti-vault", "--foreground"},
+	} {
+		removedForeground := runTI(t, bin, args...)
+		removedForeground.wantExitCode(2)
+		removedForeground.wantStderrContains("unknown flag: --foreground")
+	}
 
 	copyFile := runTI(t, bin, "fs", "copy-file", "help")
 	copyFile.wantExitCode(0)
@@ -781,7 +792,7 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	journal.wantExitCode(0)
 	git := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs-git", "hydrate-git-workspace", "--file-system-id", "tenant-aws-us-west-2", "--target-path", filepath.Join(home, "workspace"))
 	git.wantExitCode(0)
-	mount := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "mount-file-system", "--file-system-id", "tenant-aws-us-west-2", "--mount-path", filepath.Join(home, "mount"), "--foreground")
+	mount := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "mount-file-system", "--file-system-id", "tenant-aws-us-west-2", "--mount-path", filepath.Join(home, "mount"))
 	mount.wantExitCode(0)
 
 	calls := readFakeDrive9Calls(t, recordPath)

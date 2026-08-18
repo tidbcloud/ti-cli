@@ -2211,7 +2211,6 @@ func newFSMountFileSystemCommand(info version.Info) *cobra.Command {
 	cmd.Flags().String("mount-path", "", "Local mount path.")
 	cmd.Flags().String("remote-path", "/", "The TiDB Cloud file system root path to mount.")
 	cmd.Flags().String("driver", "auto", "Mount driver: auto, fuse, or webdav.")
-	cmd.Flags().Bool("foreground", false, "Run the mount runtime in the foreground until interrupted.")
 	cmd.Flags().Bool("read-only", false, "Read-only mount mode.")
 	cmd.Flags().Duration("ready-timeout", 30*time.Second, "Time to wait for a background mount to become ready.")
 	cmd.Flags().String("cache-dir", "", "Local FUSE cache directory. Default: ~/.ti/cache/mounts/<mount-hash>.")
@@ -2654,10 +2653,6 @@ func fsMountOptions(ctx commandContext, profile *config.Profile) (tifs.MountFile
 	if err != nil {
 		return tifs.MountFileSystemOptions{}, err
 	}
-	foreground, err := ctx.BoolFlag("foreground")
-	if err != nil {
-		return tifs.MountFileSystemOptions{}, err
-	}
 	readOnly, err := ctx.BoolFlag("read-only")
 	if err != nil {
 		return tifs.MountFileSystemOptions{}, err
@@ -2712,7 +2707,6 @@ func fsMountOptions(ctx commandContext, profile *config.Profile) (tifs.MountFile
 		MountPath:         mountPath,
 		RemotePath:        remotePath,
 		Driver:            driver,
-		Foreground:        foreground,
 		ReadOnly:          readOnly,
 		ReadyTimeout:      readyTimeout,
 		CacheDir:          cacheDir,
@@ -3351,7 +3345,6 @@ func newVaultMountCommand(info version.Info) *cobra.Command {
 		},
 	}, info)
 	cmd.Flags().String("mount-path", "", "The local mount path.")
-	cmd.Flags().Bool("foreground", false, "Run mount runtime in the foreground until interrupted.")
 	cmd.Flags().Duration("ready-timeout", 30*time.Second, "The time to wait for a background mount to become ready.")
 	cmd.Flags().String("vault-token", "", "Delegated file system vault token; prefer TI_VAULT_TOKEN environment variable.")
 	markUsageRequired(cmd, "mount-path")
@@ -3466,10 +3459,6 @@ func vaultMountOptions(ctx commandContext, profile *config.Profile) (tifs.VaultM
 	if err != nil {
 		return tifs.VaultMountOptions{}, err
 	}
-	foreground, err := ctx.BoolFlag("foreground")
-	if err != nil {
-		return tifs.VaultMountOptions{}, err
-	}
 	readyTimeout, err := ctx.DurationFlag("ready-timeout")
 	if err != nil {
 		return tifs.VaultMountOptions{}, err
@@ -3482,7 +3471,6 @@ func vaultMountOptions(ctx commandContext, profile *config.Profile) (tifs.VaultM
 		Profile:      profile,
 		MountPath:    mountPath,
 		VaultToken:   token,
-		Foreground:   foreground,
 		ReadyTimeout: readyTimeout,
 	}, nil
 }

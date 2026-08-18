@@ -407,6 +407,11 @@ Follow these rules unless `docs/priciples.md` is updated:
   resource and local credentials when waiting fails.
 - `ti fs delete-file-system` is asynchronous. After Drive9 accepts deletion,
   output status is `deleting`, not `deleted`.
+- `ti fs mount-file-system` and `ti fs-vault mount-vault` are background-only
+  public commands. They wait for readiness, return a structured result, and
+  persist a local mount locator for the matching unmount command. Do not expose
+  a public `--foreground` flag; Drive9 may still use a foreground worker as an
+  internal implementation detail.
 - One remote Filesystem can have multiple tokens, but one profile stores at
   most one selected local token per Filesystem. Remote token inventory and
   lifecycle state are authoritative; local credentials are not a token wallet.
