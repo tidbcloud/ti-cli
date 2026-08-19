@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"text/tabwriter"
+	"unicode"
 
 	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
@@ -15,6 +16,11 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
+)
+
+const (
+	LayerCapabilityFork   = drive9CapabilityLayerFork
+	LayerCapabilityDelete = drive9CapabilityLayerDelete
 )
 
 type CreateLayerOptions struct {
@@ -34,6 +40,26 @@ type DescribeLayerOptions struct {
 
 type ListLayersOptions struct {
 	Profile *config.Profile
+}
+
+type ForkLayerOptions struct {
+	Profile        *config.Profile
+	ParentLayerRef string
+	LayerID        string
+	LayerName      string
+	CheckpointID   string
+	ActorID        string
+}
+
+type ListLayerChainOptions struct {
+	Profile  *config.Profile
+	LayerRef string
+}
+
+type DeleteLayerOptions struct {
+	Profile  *config.Profile
+	LayerRef string
+	Cascade  bool
 }
 
 type LayerEntriesOptions struct {
@@ -119,6 +145,17 @@ type LayerListResult struct {
 	Layers []apifs.FSLayer `json:"layers"`
 }
 
+type LayerChainResult struct {
+	Chain []apifs.FSLayerChainFrame `json:"chain"`
+}
+
+type DeleteLayerResult struct {
+	Operation string `json:"operation"`
+	LayerRef  string `json:"layer_ref"`
+	Status    string `json:"status"`
+	Cascade   bool   `json:"cascade"`
+}
+
 type LayerEntriesResult struct {
 	LayerID string               `json:"layer_id"`
 	Entries []apifs.FSLayerEntry `json:"entries"`
@@ -153,6 +190,32 @@ func (s Service) CreateLayer(ctx context.Context, opts CreateLayerOptions) (Laye
 
 func (s Service) ListLayers(ctx context.Context, opts ListLayersOptions) (LayerListResult, error) {
 	return s.drive9ListLayers(ctx, opts)
+}
+
+func (s Service) ForkLayer(ctx context.Context, opts ForkLayerOptions) (LayerResult, error) {
+	if err := validateLayerReference(opts.ParentLayerRef, "--parent-layer-ref"); err != nil {
+		return LayerResult{}, err
+	}
+	if strings.TrimSpace(opts.CheckpointID) != "" {
+		if err := validateLayerReference(opts.CheckpointID, "--checkpoint-id"); err != nil {
+			return LayerResult{}, err
+		}
+	}
+	return s.drive9ForkLayer(ctx, opts)
+}
+
+func (s Service) ListLayerChain(ctx context.Context, opts ListLayerChainOptions) (LayerChainResult, error) {
+	if err := validateLayerReference(opts.LayerRef, "--layer-ref"); err != nil {
+		return LayerChainResult{}, err
+	}
+	return s.drive9ListLayerChain(ctx, opts)
+}
+
+func (s Service) DeleteLayer(ctx context.Context, opts DeleteLayerOptions) (DeleteLayerResult, error) {
+	if err := validateLayerReference(opts.LayerRef, "--layer-ref"); err != nil {
+		return DeleteLayerResult{}, err
+	}
+	return s.drive9DeleteLayer(ctx, opts)
 }
 
 func (s Service) DescribeLayer(ctx context.Context, opts DescribeLayerOptions) (LayerResult, error) {
@@ -283,7 +346,7 @@ func (s Service) CommitLayer(ctx context.Context, opts LayerActionOptions) (Laye
 	return s.drive9CommitLayer(ctx, opts)
 }
 
-func (s Service) DryRunLayerMutation(ctx context.Context, commandPath, operation, method, requestPath string, body any, profile *config.Profile, permission authz.Permission) (dryrun.Result, error) {
+func (s Service) DryRunLayerMutation(ctx context.Context, commandPath, operation, method, requestPath string, body any, profile *config.Profile, permission authz.Permission, capabilities ...string) (dryrun.Result, error) {
 	if profile == nil {
 		return dryrun.Result{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
@@ -301,6 +364,12 @@ func (s Service) DryRunLayerMutation(ctx context.Context, commandPath, operation
 	} else {
 		return dryrun.Result{}, apperr.New("auth.missing_fs_api_key", "authentication", 3, fmt.Sprintf("authentication required: missing fs_api_key for profile %q. Create or configure a ti fs resource first.", profileName(profile)))
 	}
+	if len(capabilities) > 0 {
+		if err := s.requireDrive9Capabilities(ctx, profile, capabilities...); err != nil {
+			return dryrun.Result{}, err
+		}
+		checks = append(checks, dryrun.Check{Name: "companion_capability", Status: "passed", Message: strings.Join(capabilities, ", ")})
+	}
 	return dryrun.New(
 		commandPath,
 		operation,
@@ -311,6 +380,26 @@ func (s Service) DryRunLayerMutation(ctx context.Context, commandPath, operation
 		},
 		checks...,
 	), nil
+}
+
+func ValidateLayerReference(value, flagName string) error {
+	return validateLayerReference(value, flagName)
+}
+
+func validateLayerReference(value, flagName string) error {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return apperr.New("fs.missing_layer_reference", "usage", 2, flagName+" is required")
+	}
+	if strings.ContainsAny(value, "/\\") {
+		return apperr.New("fs.invalid_layer_reference", "usage", 2, fmt.Sprintf("%s must not contain path separators", flagName))
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return apperr.New("fs.invalid_layer_reference", "usage", 2, fmt.Sprintf("%s must not contain control characters", flagName))
+		}
+	}
+	return nil
 }
 
 func layerEntryRequest(opts CreateLayerEntryOptions) (apifs.FSLayerEntryRequest, error) {
@@ -448,6 +537,22 @@ func (r LayerResult) Human() string {
 	if r.ActorID != "" {
 		lines = append(lines, "Actor: "+r.ActorID)
 	}
+	if r.ParentLayerID != "" {
+		lines = append(lines,
+			"Parent layer ID: "+r.ParentLayerID,
+			fmt.Sprintf("Origin seq: %d", r.OriginSeq),
+			fmt.Sprintf("Depth: %d", r.Depth),
+		)
+	}
+	if r.OriginCheckpointID != "" {
+		lines = append(lines, "Origin checkpoint ID: "+r.OriginCheckpointID)
+	}
+	if r.RootLayerID != "" {
+		lines = append(lines, "Root layer ID: "+r.RootLayerID)
+	}
+	if r.Origin != "" {
+		lines = append(lines, "Origin: "+r.Origin)
+	}
 	if r.DurableSeq != 0 {
 		lines = append(lines, fmt.Sprintf("Durable seq: %d", r.DurableSeq))
 	}
@@ -455,6 +560,21 @@ func (r LayerResult) Human() string {
 		lines = append(lines, "Tags: "+tags)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (r LayerChainResult) Human() string {
+	var out strings.Builder
+	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(writer, "LAYER_ID\tNAME\tSTATE\tDEPTH\tPARENT_LAYER_ID\tORIGIN_SEQ\tLIMIT_SEQ\tORIGIN_CHECKPOINT_ID\tBASE_ROOT")
+	for _, frame := range r.Chain {
+		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%s\t%d\t%d\t%s\t%s\n", frame.LayerID, frame.Name, frame.State, frame.Depth, frame.ParentLayerID, frame.OriginSeq, frame.LimitSeq, frame.OriginCheckpointID, frame.BaseRootPath)
+	}
+	_ = writer.Flush()
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func (r DeleteLayerResult) Human() string {
+	return fmt.Sprintf("%s layer=%s status=%s cascade=%t", r.Operation, r.LayerRef, r.Status, r.Cascade)
 }
 
 func (r LayerListResult) Human() string {

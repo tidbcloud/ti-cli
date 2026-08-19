@@ -84,6 +84,7 @@ func TestLiveFSRemoteInventoryLifecycle(t *testing.T) {
 
 	bin := tiBinary(t)
 	profileName := liveProfileName(t)
+	releaseAutoCreatedLiveFSResource(t, bin, profileName)
 	displayName := fmt.Sprintf("ti-e2e-fs-%d-%d", os.Getpid(), time.Now().UnixNano())
 	labelKey := "ti-e2e-run"
 	labelValue := fmt.Sprintf("run-%d-%d", os.Getpid(), time.Now().UnixNano())
@@ -243,8 +244,9 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "read-file", "help"}, {"fs", "chmod-file", "help"},
 		{"fs", "create-symlink", "help"}, {"fs", "create-hardlink", "help"},
 		{"fs", "create-layer", "help"}, {"fs", "list-layers", "help"},
+		{"fs", "fork-layer", "help"}, {"fs", "list-layer-chain", "help"},
 		{"fs", "describe-layer", "help"}, {"fs", "diff-layer", "help"},
-		{"fs", "create-layer-checkpoint", "help"}, {"fs", "rollback-layer", "help"},
+		{"fs", "create-layer-checkpoint", "help"}, {"fs", "delete-layer", "help"}, {"fs", "rollback-layer", "help"},
 		{"fs", "commit-layer", "help"}, {"fs", "pack-file-system", "help"},
 		{"fs", "unpack-file-system", "help"}, {"fs", "drain-file-system", "help"},
 		{"fs", "cp", "help"}, {"fs", "cat", "help"}, {"fs", "ls", "help"},
@@ -276,6 +278,12 @@ func TestLiveFSCommandSurface(t *testing.T) {
 	refreshDryRun := runTIWithInput(t, bin, "", []string{"TI_FS_TOKEN=" + drive9TestTokenWithVersion(selected.FSTenantID, 999), "TI_REGION_CODE=" + selected.FSPlacementRegionCode},
 		"--profile", profileName, "fs", "refresh-file-system-token", "--file-system-id", selected.FSTenantID, "--dry-run")
 	refreshDryRun.wantExitCode(0)
+	forkDryRun := runTI(t, bin, "--profile", profileName, "fs", "fork-layer", "--parent-layer-ref", "layer-1", "--layer-name", "child", "--dry-run", "--query", "checks[].name")
+	forkDryRun.wantExitCode(0)
+	forkDryRun.wantStdoutContains("companion_capability")
+	deleteLayerDryRun := runTI(t, bin, "--profile", profileName, "fs", "delete-layer", "--layer-ref", "layer-1", "--cascade", "--dry-run", "--query", "checks[].name")
+	deleteLayerDryRun.wantExitCode(0)
+	deleteLayerDryRun.wantStdoutContains("companion_capability")
 	unmountDryRun := runTI(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", "/tmp/ti-e2e-mount", "--ignore-absent", "--dry-run", "--query", "checks[].name")
 	unmountDryRun.wantExitCode(0)
 	for _, check := range []string{"input_validation", "mount_locator", "remote_mutation"} {
@@ -302,7 +310,7 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "check-file-system"}, {"fs", "list-file-systems"}, {"fs", "describe-file-system"},
 		{"fs", "read-file"}, {"fs", "list-files"}, {"fs", "describe-file"},
 		{"fs", "search-file-content"}, {"fs", "find-files"}, {"fs", "list-layers"},
-		{"fs", "describe-layer"}, {"fs", "diff-layer"},
+		{"fs", "describe-layer"}, {"fs", "diff-layer"}, {"fs", "list-layer-chain", "--layer-ref", "layer-1"},
 	})
 }
 
@@ -944,6 +952,38 @@ func TestLiveFSDataPlaneLifecycle(t *testing.T) {
 	createCheckpoint := runTI(t, bin, "--profile", profileName, "fs", "create-layer-checkpoint", "--layer-id", layerID, "--checkpoint-id", checkpointID, "--label", "live-e2e")
 	createCheckpoint.wantExitCode(0)
 	createCheckpoint.wantStdoutContains(checkpointID)
+
+	childID := layerID + "-child"
+	childDeleted := false
+	defer func() {
+		if childDeleted {
+			return
+		}
+		cleanup := runTI(t, bin, "--profile", profileName, "fs", "delete-layer", "--layer-ref", childID, "--cascade")
+		if cleanup.exitCode != 0 && cleanup.exitCode != 5 {
+			t.Logf("cleanup delete failed for child layer %s: exit=%d stdout=%s stderr=%s", childID, cleanup.exitCode, cleanup.stdout, cleanup.stderr)
+		}
+	}()
+	forkChild := runTI(t, bin, "--profile", profileName, "fs", "fork-layer", "--parent-layer-ref", layerID, "--layer-id", childID, "--layer-name", "live-e2e-child-"+suffix, "--checkpoint-id", checkpointID, "--actor-id", "ti-live-e2e-child")
+	forkChild.wantExitCode(0)
+	forkChild.wantStdoutContains(childID)
+	forkChild.wantStdoutContains(layerID)
+
+	chain := runTI(t, bin, "--profile", profileName, "fs", "list-layer-chain", "--layer-ref", childID)
+	chain.wantExitCode(0)
+	chain.wantStdoutContains(`"layer_id": "` + layerID + `"`)
+	chain.wantStdoutContains(`"layer_id": "` + childID + `"`)
+	chainText := runTI(t, bin, "--profile", profileName, "fs", "list-layer-chain", "--layer-ref", childID, "--output", "text")
+	chainText.wantExitCode(0)
+	chainText.wantStdoutContains("PARENT_LAYER_ID")
+
+	deleteChild := runTI(t, bin, "--profile", profileName, "fs", "delete-layer", "--layer-ref", childID)
+	deleteChild.wantExitCode(0)
+	deleteChild.wantStdoutContains(`"status": "abandoned"`)
+	childDeleted = true
+	describeDeletedChild := runTI(t, bin, "--profile", profileName, "fs", "describe-layer", "--layer-id", childID)
+	describeDeletedChild.wantExitCode(0)
+	describeDeletedChild.wantStdoutContains(`"state": "abandoned"`)
 
 	waitLiveFSResult(t, bin, []string{"--profile", profileName, "fs", "find-files", "--path", rootPath, "--file-name-pattern", "copy-layer.txt", "--layer-id", layerID, "--limit", "5"}, layerCopyPath, 2*time.Minute, "find file inside layer")
 
@@ -2140,7 +2180,7 @@ func ensureLiveFSResource(t *testing.T, bin, profileName string) *config.Profile
 		t.Fatalf("migrate live fs resource: %v", err)
 	}
 	requestedID := strings.TrimSpace(os.Getenv("TI_LIVE_FS_ID"))
-	list := runTI(t, bin, "--profile", profileName, "fs", "list-file-systems")
+	list := runTIWithInput(t, bin, "", []string{"TI_FS_FILE_SYSTEM_ID=", "TI_FS_TOKEN=", "TDC_FS_TOKEN="}, "--profile", profileName, "fs", "list-file-systems")
 	list.wantExitCode(0)
 	var inventory struct {
 		RegionCode  string `json:"region_code"`
