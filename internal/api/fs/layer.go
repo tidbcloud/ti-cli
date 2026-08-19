@@ -43,17 +43,37 @@ type FSLayerCreateRequest struct {
 }
 
 type FSLayer struct {
-	LayerID        string            `json:"layer_id"`
-	BaseRootPath   string            `json:"base_root_path"`
-	Name           string            `json:"name"`
-	Tags           map[string]string `json:"tags,omitempty"`
-	State          string            `json:"state"`
-	DurabilityMode string            `json:"durability_mode"`
-	ActorID        string            `json:"actor_id"`
-	DurableSeq     int64             `json:"durable_seq"`
-	CreatedAt      time.Time         `json:"created_at"`
-	UpdatedAt      time.Time         `json:"updated_at"`
-	SealedAt       *time.Time        `json:"sealed_at,omitempty"`
+	LayerID            string            `json:"layer_id"`
+	BaseRootPath       string            `json:"base_root_path"`
+	Name               string            `json:"name"`
+	Tags               map[string]string `json:"tags,omitempty"`
+	State              string            `json:"state"`
+	DurabilityMode     string            `json:"durability_mode"`
+	ActorID            string            `json:"actor_id"`
+	DurableSeq         int64             `json:"durable_seq"`
+	ParentLayerID      string            `json:"parent_layer_id,omitempty"`
+	OriginSeq          int64             `json:"origin_seq,omitempty"`
+	OriginCheckpointID string            `json:"origin_checkpoint_id,omitempty"`
+	RootLayerID        string            `json:"root_layer_id,omitempty"`
+	Depth              int               `json:"depth,omitempty"`
+	Origin             string            `json:"origin,omitempty"`
+	CreatedAt          time.Time         `json:"created_at"`
+	UpdatedAt          time.Time         `json:"updated_at"`
+	SealedAt           *time.Time        `json:"sealed_at,omitempty"`
+}
+
+type FSLayerChainFrame struct {
+	LayerID            string    `json:"layer_id"`
+	Name               string    `json:"name"`
+	State              string    `json:"state"`
+	ParentLayerID      string    `json:"parent_layer_id,omitempty"`
+	OriginSeq          int64     `json:"origin_seq,omitempty"`
+	OriginCheckpointID string    `json:"origin_checkpoint_id,omitempty"`
+	Depth              int       `json:"depth,omitempty"`
+	RootLayerID        string    `json:"root_layer_id,omitempty"`
+	BaseRootPath       string    `json:"base_root_path,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	LimitSeq           int64     `json:"limit_seq"`
 }
 
 type FSLayerEntry struct {

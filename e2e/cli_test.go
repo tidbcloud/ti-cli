@@ -794,6 +794,15 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	git.wantExitCode(0)
 	mount := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "mount-file-system", "--file-system-id", "tenant-aws-us-west-2", "--mount-path", filepath.Join(home, "mount"))
 	mount.wantExitCode(0)
+	profileFork := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "fork-layer", "--file-system-id", "tenant-aws-us-west-2", "--parent-layer-ref", "parent-id", "--layer-id", "profile-child")
+	profileFork.wantExitCode(0)
+	profileFork.wantStdoutContains(`"layer_id": "child-id"`)
+	profileChain := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "list-layer-chain", "--file-system-id", "tenant-aws-us-west-2", "--layer-ref", "profile-child")
+	profileChain.wantExitCode(0)
+	profileChain.wantStdoutContains(`"chain"`)
+	profileDeleteLayer := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-layer", "--file-system-id", "tenant-aws-us-west-2", "--layer-ref", "profile-child")
+	profileDeleteLayer.wantExitCode(0)
+	profileDeleteLayer.wantStdoutContains(`"status": "abandoned"`)
 
 	calls := readFakeDrive9Calls(t, recordPath)
 	for _, call := range calls {
@@ -803,6 +812,9 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	}
 	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, drive9TestToken("tenant-aws-us-west-2"), home, "stage", "tenant-aws-us-west-2", westControl.URL(), "aws-us-west-2")
 	assertFakeDrive9Call(t, calls, []string{"vault", "ls"}, drive9TestToken("tenant-aws-us-east-1"), home, "stage", "tenant-aws-us-east-1", eastControl.URL(), "aws-us-east-1")
+	assertFakeDrive9Call(t, calls, []string{"fs", "layer", "fork"}, drive9TestToken("tenant-aws-us-west-2"), home, "stage", "tenant-aws-us-west-2", westControl.URL(), "aws-us-west-2")
+	assertFakeDrive9Call(t, calls, []string{"fs", "layer", "chain"}, drive9TestToken("tenant-aws-us-west-2"), home, "stage", "tenant-aws-us-west-2", westControl.URL(), "aws-us-west-2")
+	assertFakeDrive9Call(t, calls, []string{"fs", "layer", "delete"}, drive9TestToken("tenant-aws-us-west-2"), home, "stage", "tenant-aws-us-west-2", westControl.URL(), "aws-us-west-2")
 	if !eastControl.hasRequest(http.MethodPost, "/v1/admin/tenants") ||
 		!eastControl.hasRequest(http.MethodGet, "/v1/admin/tenants", "display_name=agent", "label=environment%3D%3Dproduction") ||
 		!westControl.hasRequest(http.MethodGet, "/v1/admin/tenants/tenant-aws-us-west-2") {
@@ -953,6 +965,93 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, drive9TestToken("tenant-sandbox"), home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
 	assertFakeDrive9Call(t, calls, []string{"mount", "drain"}, "", home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
 	assertFakeDrive9Call(t, calls, []string{"umount"}, "", home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
+}
+
+func TestFSLayerForkWorkflowCommands(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake companion build path is covered by unit tests on Windows")
+	}
+	bin := tiBinary(t)
+	home := t.TempDir()
+	companion := filepath.Join(t.TempDir(), "ti-drive9")
+	build := exec.Command("go", "build", "-o", companion, "./testdata/fake-drive9.go")
+	build.Dir = "."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
+	}
+	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
+	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":"https://fs-east.test","cloud_provider":"aws","tidb_region":"us-east-1"}]}`)
+	}))
+	defer manifestServer.Close()
+	env := []string{
+		"HOME=" + home,
+		"TI_DRIVE9_BIN=" + companion,
+		"FAKE_DRIVE9_RECORD=" + recordPath,
+		"TI_ALLOW_TEST_ENDPOINTS=1",
+		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+		"TI_FS_TOKEN=" + drive9TestToken("tenant-layer"),
+		"TI_REGION_CODE=aws-us-east-1",
+	}
+
+	fork := runTIWithInput(t, bin, "", env, "fs", "fork-layer", "--parent-layer-ref", "research-base", "--layer-id", "child-id", "--layer-name", "child", "--checkpoint-id", "seed", "--actor-id", "agent")
+	fork.wantExitCode(0)
+	fork.wantStdoutContains(`"parent_layer_id": "parent-id"`)
+	fork.wantStdoutNotContains("drive9_")
+
+	chain := runTIWithInput(t, bin, "", env, "fs", "list-layer-chain", "--layer-ref", "child-id", "--output", "text")
+	chain.wantExitCode(0)
+	chain.wantStdoutContains("LAYER_ID")
+	chain.wantStdoutContains("root-id")
+	chain.wantStdoutContains("child-id")
+
+	queried := runTIWithInput(t, bin, "", env, "fs", "list-layer-chain", "--layer-ref", "child-id", "--query", "chain[].layer_id")
+	queried.wantExitCode(0)
+	queried.wantStdoutContains("root-id")
+
+	dryRunDelete := runTIWithInput(t, bin, "", env, "fs", "delete-layer", "--layer-ref", "child-id", "--cascade", "--dry-run")
+	dryRunDelete.wantExitCode(0)
+	dryRunDelete.wantStdoutContains(`"operation": "delete_layer"`)
+	dryRunDelete.wantStdoutContains(`"companion_capability"`)
+	dryRunDelete.wantStdoutNotContains(drive9TestToken("tenant-layer"))
+
+	deleted := runTIWithInput(t, bin, "", env, "fs", "delete-layer", "--layer-ref", "child-id", "--cascade", "--output", "text")
+	deleted.wantExitCode(0)
+	deleted.wantStdoutContains("status=abandoned")
+
+	recursive := runTIWithInput(t, bin, "", env, "fs", "copy-file", "--from-local", ".", "--to-remote", "/workspace", "--recursive", "--layer-id", "child-id")
+	recursive.wantExitCode(2)
+	recursive.wantStderrContains("--recursive cannot be combined with --layer-id")
+
+	checkpointWithoutLayer := runTIWithInput(t, bin, "", env, "fs", "mount-file-system", "--mount-path", filepath.Join(home, "missing-layer"), "--driver", "fuse", "--checkpoint-id", "seed")
+	checkpointWithoutLayer.wantExitCode(2)
+	checkpointWithoutLayer.wantStderrContains("--checkpoint-id requires --layer-ref")
+
+	webdavLayer := runTIWithInput(t, bin, "", env, "fs", "mount-file-system", "--mount-path", filepath.Join(home, "webdav"), "--driver", "webdav", "--layer-ref", "child-id")
+	webdavLayer.wantExitCode(2)
+	webdavLayer.wantStderrContains("layer and checkpoint mounts require FUSE")
+
+	mountPath := filepath.Join(home, "checkpoint")
+	mounted := runTIWithInput(t, bin, "", env, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", "/workspace", "--driver", "fuse", "--layer-ref", "child-id", "--checkpoint-id", "seed")
+	mounted.wantExitCode(0)
+	mounted.wantStdoutContains(`"read_only": true`)
+	mounted.wantStdoutContains(`"write_back_cache": false`)
+	mounted.wantStdoutContains(`"checkpoint_id": "seed"`)
+
+	explicitWritable := runTIWithInput(t, bin, "", env, "fs", "mount-file-system", "--mount-path", filepath.Join(home, "writable-checkpoint"), "--driver", "fuse", "--layer-ref", "child-id", "--checkpoint-id", "seed", "--read-only=false")
+	explicitWritable.wantExitCode(2)
+	explicitWritable.wantStderrContains("checkpoint mounts are read-only")
+	explicitWriteBack := runTIWithInput(t, bin, "", env, "fs", "mount-file-system", "--mount-path", filepath.Join(home, "write-back-checkpoint"), "--driver", "fuse", "--layer-ref", "child-id", "--checkpoint-id", "seed", "--write-back-cache=true")
+	explicitWriteBack.wantExitCode(2)
+	explicitWriteBack.wantStderrContains("checkpoint mounts are read-only")
+	unmounted := runTIWithInput(t, bin, "", env, "fs", "unmount-file-system", "--mount-path", mountPath)
+	unmounted.wantExitCode(0)
+
+	calls := readFakeDrive9Calls(t, recordPath)
+	assertFakeDrive9Args(t, calls, []string{"fs", "layer", "fork", "--json", "--id", "child-id", "--name", "child", "--checkpoint", "seed", "--actor", "agent", "research-base"})
+	assertFakeDrive9Args(t, calls, []string{"fs", "layer", "chain", "--json", "child-id"})
+	assertFakeDrive9Args(t, calls, []string{"fs", "layer", "delete", "--cascade", "child-id"})
+	assertFakeDrive9Args(t, calls, []string{"mount", "--mode", "fuse", "--read-only", "--layer", "child-id", "--checkpoint", "seed", "--cache-size", "128", "--read-cache-max-file-mb", "4", "--read-cache-ttl", "30s", ":/workspace", mountPath})
 }
 
 func TestFSImportFileSystemToken(t *testing.T) {
@@ -1411,6 +1510,26 @@ func assertFakeDrive9Call(t *testing.T, calls []fakeDrive9Call, prefix []string,
 		return
 	}
 	t.Fatalf("missing fake Drive9 call with prefix %v in %#v", prefix, calls)
+}
+
+func assertFakeDrive9Args(t *testing.T, calls []fakeDrive9Call, want []string) {
+	t.Helper()
+	for _, call := range calls {
+		if len(call.Args) != len(want) {
+			continue
+		}
+		match := true
+		for i := range want {
+			if call.Args[i] != want[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return
+		}
+	}
+	t.Fatalf("missing exact fake Drive9 args %v in %#v", want, calls)
 }
 
 func assertFakeDrive9TransientCall(t *testing.T, calls []fakeDrive9Call, prefix []string, apiKey, persistentHome, server, regionCode string) {

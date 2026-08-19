@@ -101,6 +101,27 @@ download() {
   fi
 }
 
+validate_companion() {
+  companion_path="$1"
+  if ! layer_help="$("$companion_path" fs layer help 2>&1)"; then
+    error "downloaded ti-drive9 companion cannot report its filesystem layer commands"
+  fi
+  for command in fork chain delete; do
+    if ! printf '%s\n' "$layer_help" | grep -Eq "(^|[[:space:]<|])${command}([[:space:]>|]|$)"; then
+      error "downloaded ti-drive9 companion is incompatible: missing drive9 fs layer ${command}"
+    fi
+  done
+
+  if ! mount_help="$("$companion_path" mount --help 2>&1)"; then
+    error "downloaded ti-drive9 companion cannot report its mount options"
+  fi
+  for flag in layer checkpoint; do
+    if ! printf '%s\n' "$mount_help" | grep -Eq "(^|[[:space:]])--?${flag}([[:space:]]|$)"; then
+      error "downloaded ti-drive9 companion is incompatible: missing drive9 mount --${flag}"
+    fi
+  done
+}
+
 case "$(uname -s)" in
   Darwin) OS="darwin" ;;
   Linux) OS="linux" ;;
@@ -359,6 +380,7 @@ if [ -z "$FOUND" ]; then
 fi
 chmod 0755 "$FOUND"
 chmod 0755 "${TMP_DIR}/${COMPANION_ARTIFACT}"
+validate_companion "${TMP_DIR}/${COMPANION_ARTIFACT}"
 run_home_migration "$FOUND"
 install_file "$FOUND" "$TARGET"
 install_file "${TMP_DIR}/${COMPANION_ARTIFACT}" "$COMPANION_TARGET"

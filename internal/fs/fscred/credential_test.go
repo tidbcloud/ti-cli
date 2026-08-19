@@ -338,6 +338,25 @@ func TestMigrateNameRegistryMultipleResourcesAliasesAndIdempotency(t *testing.T)
 	}
 }
 
+func TestListCredentialsIgnoresEmptyPreflightDirectory(t *testing.T) {
+	home := t.TempDir()
+	profile := credentialTestProfile()
+	if _, err := StoreCredential(home, profile, "tenant-ready", "aws-us-east-1", wrappedToken(t, "tenant-ready"), false); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareCredentialTarget(home, profile.Name, "tenant-preflight"); err != nil {
+		t.Fatal(err)
+	}
+
+	credentials, err := ListCredentials(home, profile.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(credentials) != 1 || credentials[0].FileSystemID != "tenant-ready" {
+		t.Fatalf("credentials = %#v, want only tenant-ready", credentials)
+	}
+}
+
 func TestMigrateNameRegistryDoesNotRestoreDeletedCredential(t *testing.T) {
 	home := t.TempDir()
 	profile := credentialTestProfile()

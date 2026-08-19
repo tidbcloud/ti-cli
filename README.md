@@ -175,6 +175,25 @@ Automatic mounting uses FUSE on Linux and WebDAV on macOS and Windows. macOS use
 
 Mount commands start the companion runtime in the background, wait until the mount is ready, and then return a structured result. Use `ti fs unmount-file-system` or `ti fs-vault unmount-vault` to end a mount. The public CLI does not expose a foreground mount mode.
 
+Filesystem layers can fork copy-on-write child timelines without copying a workspace. Layer and checkpoint mounts require FUSE; checkpoint mounts are always read-only. Drive9 does not support combining recursive copy with a layer, so seed a directory tree through a writable layer mount, drain it, and then create the checkpoint:
+
+```shell
+export TI_FS_FILE_SYSTEM_ID="<file-system-id>"
+ti fs create-directory --path /research/q3-market
+ti fs create-layer --base-root-path /research/q3-market --layer-name research-base
+SEED_MOUNT="$(mktemp -d)"
+ti fs mount-file-system --mount-path "$SEED_MOUNT" --remote-path /research/q3-market --driver fuse --layer-ref research-base
+tar -C . -cf - . | tar -C "$SEED_MOUNT" -xf -
+ti fs drain-file-system --mount-path "$SEED_MOUNT"
+ti fs unmount-file-system --mount-path "$SEED_MOUNT"
+rmdir "$SEED_MOUNT"
+ti fs create-layer-checkpoint --layer-id research-base --checkpoint-id seed
+ti fs fork-layer --parent-layer-ref research-base --layer-name experiment-a --checkpoint-id seed
+ti fs list-layer-chain --layer-ref experiment-a --output text
+```
+
+Use `ti fs delete-layer --layer-ref experiment-a` to abandon a rejected leaf. Deleting a layer with live descendants fails unless `--cascade` is supplied explicitly. Layer names are not durable unique identifiers because abandoned layers remain visible; automation should capture returned layer IDs and use run-unique checkpoint IDs.
+
 `ti fs list-file-systems` reads the region-scoped remote inventory through TiDB Cloud credentials. A profile can access multiple file systems, including resources created on another machine. Data-plane commands never infer a resource from the number of local credentials, so provide `--file-system-id` or set `TI_FS_FILE_SYSTEM_ID`:
 
 ```shell
@@ -308,9 +327,12 @@ ti fs search-file-content
 ti fs find-files
 ti fs create-layer
 ti fs list-layers
+ti fs fork-layer
+ti fs list-layer-chain
 ti fs describe-layer
 ti fs diff-layer
 ti fs create-layer-checkpoint
+ti fs delete-layer
 ti fs rollback-layer
 ti fs commit-layer
 ti fs pack-file-system

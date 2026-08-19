@@ -23,6 +23,18 @@ type Locator struct {
 	FileSystemID     string `json:"file_system_id,omitempty"`
 	TokenID          string `json:"token_id,omitempty"`
 	TokenFingerprint string `json:"token_fingerprint,omitempty"`
+	RemotePath       string `json:"remote_path,omitempty"`
+	LayerRef         string `json:"layer_ref,omitempty"`
+	CheckpointID     string `json:"checkpoint_id,omitempty"`
+	ReadOnly         bool   `json:"read_only,omitempty"`
+}
+
+func (l Locator) WithLayerView(remotePath, layerRef, checkpointID string, readOnly bool) Locator {
+	l.RemotePath = strings.TrimSpace(remotePath)
+	l.LayerRef = strings.TrimSpace(layerRef)
+	l.CheckpointID = strings.TrimSpace(checkpointID)
+	l.ReadOnly = readOnly
+	return l
 }
 
 func New(profile, fileSystemName, regionCode, companionHome, mountPath, kind string) (Locator, error) {
