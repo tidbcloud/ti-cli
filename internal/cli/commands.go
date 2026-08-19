@@ -942,7 +942,7 @@ func newFSGenerateFileSystemTokenCommand(info version.Info) *cobra.Command {
 			return service.DryRunGenerate(ctx.CommandPath(), opts)
 		},
 	}, info)
-	cmd.Flags().String("file-system-id", "", "The file system ID that owns the generated token.")
+	cmd.Flags().String("file-system-id", "", "The file system ID that owns the generated token. Owner token generation requires TiDB Cloud API credentials.")
 	cmd.Flags().String("token-name", "", "An operational name for the token (maximum 64 bytes).")
 	cmd.Flags().Duration("ttl", 0, "Token lifetime as a positive duration of whole seconds, up to 365 days.")
 	cmd.Flags().Bool("no-expiration", false, "Generate an owner token without an expiry.")
@@ -1024,12 +1024,11 @@ func newFSListFileSystemTokensCommand(info version.Info) *cobra.Command {
 			return service.List(ctx.cmd.Context(), tokenmgmt.ListOptions{Profile: profile, FileSystemID: fileSystemID, Token: token, TokenExplicit: ctx.FlagChanged("fs-token"), Offset: int(offset), Limit: int(limit), IncludeExpired: includeExpired, RegionOverride: regionOverride})
 		},
 	}, info)
-	cmd.Flags().String("file-system-id", "", "The file system ID whose tokens are listed.")
+	cmd.Flags().String("file-system-id", "", "The file system ID whose tokens are listed. Required with TiDB Cloud API credentials; optional with an owner FS token.")
 	cmd.Flags().String("fs-token", "", "Optional owner FS token. Default: TI_FS_TOKEN; otherwise TiDB Cloud API keys are used.")
 	cmd.Flags().Bool("include-expired", false, "Include expired token metadata.")
 	cmd.Flags().Int32("offset", 0, "The zero-based token offset.")
 	cmd.Flags().Int32("limit", tokenmgmt.DefaultListLimit, "The maximum number of tokens to return (maximum 200).")
-	markUsageRequired(cmd, "file-system-id")
 	return cmd
 }
 
@@ -1088,10 +1087,10 @@ func newFSTokenMutationCommand(use, short, operation, method, path string, permi
 			return service.DryRunMutation(ctx.CommandPath(), operation, method, path, opts, permission, mountGuard)
 		},
 	}, info)
-	cmd.Flags().String("file-system-id", "", "The file system ID that owns the token.")
+	cmd.Flags().String("file-system-id", "", "The file system ID that owns the token. Required with TiDB Cloud API credentials; optional with an owner FS token.")
 	cmd.Flags().String("token-id", "", "The immutable token ID.")
 	cmd.Flags().String("fs-token", "", "Optional owner FS token. Default: TI_FS_TOKEN; otherwise TiDB Cloud API keys are used.")
-	markUsageRequired(cmd, "file-system-id", "token-id")
+	markUsageRequired(cmd, "token-id")
 	return cmd
 }
 
@@ -1365,7 +1364,7 @@ func newFSDescribeFileSystemCommand(info version.Info) *cobra.Command {
 			return service.DescribeFileSystem(ctx.cmd.Context(), profile, fileSystemID)
 		},
 	}, info)
-	cmd.Flags().String("file-system-id", "", "The file system ID.")
+	cmd.Flags().String("file-system-id", "", "The file system ID. Describing a file system requires TiDB Cloud API credentials.")
 	markUsageRequired(cmd, "file-system-id")
 	return cmd
 }
@@ -1405,7 +1404,7 @@ func newFSDeleteFileSystemCommand(info version.Info) *cobra.Command {
 			})
 		},
 	}, info)
-	cmd.Flags().String("file-system-id", "", "The file system ID.")
+	cmd.Flags().String("file-system-id", "", "The file system ID. FS tokens cannot select or authorize file system deletion.")
 	markUsageRequired(cmd, "file-system-id")
 	return cmd
 }

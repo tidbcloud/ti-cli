@@ -382,6 +382,16 @@ func TestMigrateNameRegistryPreflightsDestinationConflictsBeforeAnyWrite(t *test
 	}
 }
 
+func TestValidateFileSystemIDUsesContextNeutralMissingError(t *testing.T) {
+	_, err := ValidateFileSystemID("")
+	if apperr.CodeFor(err) != "fs.missing_file_system_id" || err.Error() != "file system ID is required" {
+		t.Fatalf("missing ID error = %v", err)
+	}
+	if strings.Contains(strings.ToLower(err.Error()), "token") {
+		t.Fatalf("low-level ID validation described an authentication policy: %v", err)
+	}
+}
+
 func wrappedToken(t *testing.T, tenantID string) string {
 	return wrappedTokenWithVersion(t, tenantID, 1)
 }

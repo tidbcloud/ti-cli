@@ -577,7 +577,7 @@ func FileSystemIDFromToken(raw string) (string, error) {
 func ValidateFileSystemID(value string) (string, error) {
 	id := strings.TrimSpace(value)
 	if id == "" {
-		return "", apperr.New("fs.missing_file_system_id", "usage", 2, "--file-system-id is required unless an FS token is supplied")
+		return "", apperr.New("fs.missing_file_system_id", "usage", 2, "file system ID is required")
 	}
 	if len(id) > 128 || strings.ContainsAny(id, "/\\") {
 		return "", apperr.New("fs.invalid_file_system_id", "usage", 2, "file system ID must be 1-128 characters and must not contain path separators")

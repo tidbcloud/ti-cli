@@ -216,6 +216,8 @@ ti fs generate-file-system-scoped-token \
 
 `TI_FS_TOKEN` may contain either token kind. Scoped tokens work only for allowed paths and operations and can self-refresh; they cannot generate child tokens or manage token inventory. Explicit `--fs-token` takes precedence over the environment. Token list, enable, disable, and delete use an explicit/environment owner token when present, otherwise they use configured TiDB Cloud API keys. With owner Bearer authentication, enable and disable apply only to scoped targets; TiDB Cloud credentials can manage either token kind. Because the token JWT does not expose its kind or scopes, the FS backend is the final permission authority.
 
+An owner FS token authorizes Filesystem use and token management, but it is not a TiDB Cloud administrative credential. Creating, listing, describing, and deleting Filesystem resources require TiDB Cloud API keys. In particular, `ti fs delete-file-system` always requires an explicit `--file-system-id`; `TI_FS_TOKEN` cannot select or authorize deletion of the Filesystem itself. For token list, enable, disable, and delete commands, `--file-system-id` is required only when the command uses TiDB Cloud API keys. When an owner token is supplied through `--fs-token` or `TI_FS_TOKEN`, `ti` derives the Filesystem ID from that token.
+
 Generation does not modify local credentials by default. Add `--store-locally` to select the new token locally; if a selected token already exists, add `--replace` explicitly. Replacing local selection does not revoke the previous remote token. Use immutable `token_id` values from the list response to disable, enable, or permanently revoke a token:
 
 ```shell
