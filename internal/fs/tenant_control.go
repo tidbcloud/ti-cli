@@ -277,6 +277,13 @@ func (s Service) adminDeleteInputs(opts DeleteFileSystemOptions) (string, *apifs
 }
 
 func (s Service) adminItemInputs(profile *config.Profile, fileSystemID string, permission authz.Permission, action string) (string, *apifs.Client, apifs.TiDBCloudCredentials, error) {
+	if strings.TrimSpace(fileSystemID) == "" {
+		message := "--file-system-id is required for describe-file-system; describing a file system requires TiDB Cloud API credentials"
+		if permission == authz.FSVolumeDelete {
+			message = "--file-system-id is required for delete-file-system; FS tokens cannot select or authorize file system deletion"
+		}
+		return "", nil, apifs.TiDBCloudCredentials{}, apperr.New("fs.missing_file_system_id", "usage", 2, message)
+	}
 	id, err := fscred.ValidateFileSystemID(fileSystemID)
 	if err != nil {
 		return "", nil, apifs.TiDBCloudCredentials{}, err

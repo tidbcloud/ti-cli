@@ -99,6 +99,81 @@ func TestGenerateAndListMapBackendFieldsAndStoreMetadata(t *testing.T) {
 	}
 }
 
+func TestOwnerTokenManagesTokenInventoryWithoutExplicitFileSystemID(t *testing.T) {
+	home := t.TempDir()
+	ownerToken := wrappedToken(t, "fs-1", 1)
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Header.Get("Authorization") != "Bearer "+ownerToken {
+			t.Errorf("Authorization = %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("X-TiDBCloud-Public-Key") != "" || r.Header.Get("X-TiDBCloud-Private-Key") != "" {
+			t.Errorf("bearer request included TiDB Cloud credentials: %#v", r.Header)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/tokens":
+			if r.URL.Query().Get("tenant_id") != "fs-1" {
+				t.Errorf("list query = %q", r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"tokens":[{"token_id":"scoped-1","tenant_id":"fs-1","scope_kind":"fs_scoped","status":"active","expired":false,"issued_at":"2026-08-12T00:00:00Z","created_at":"2026-08-12T00:00:00Z","updated_at":"2026-08-12T00:00:00Z"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/scoped-1/deactivate":
+			_, _ = w.Write([]byte(`{"token_id":"scoped-1","tenant_id":"fs-1","status":"disabled"}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/scoped-1/activate":
+			_, _ = w.Write([]byte(`{"token_id":"scoped-1","tenant_id":"fs-1","status":"active"}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/tokens/scoped-1":
+			_, _ = w.Write([]byte(`{"token_id":"scoped-1","tenant_id":"fs-1","status":"revoked"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	service, profile := tokenTestService(home, server.URL)
+
+	listed, err := service.List(context.Background(), ListOptions{Profile: profile, Token: ownerToken, TokenExplicit: true, Limit: DefaultListLimit})
+	if err != nil || listed.FileSystemID != "fs-1" || len(listed.Tokens) != 1 {
+		t.Fatalf("List() result=%#v err=%v", listed, err)
+	}
+	disabled, err := service.Disable(context.Background(), MutationOptions{Profile: profile, Token: ownerToken, TokenExplicit: true, TokenID: "scoped-1"})
+	if err != nil || disabled.FileSystemID != "fs-1" || disabled.Status != "disabled" {
+		t.Fatalf("Disable() result=%#v err=%v", disabled, err)
+	}
+	enabled, err := service.Enable(context.Background(), MutationOptions{Profile: profile, Token: ownerToken, TokenExplicit: true, TokenID: "scoped-1"})
+	if err != nil || enabled.FileSystemID != "fs-1" || enabled.Status != "active" {
+		t.Fatalf("Enable() result=%#v err=%v", enabled, err)
+	}
+	deleted, err := service.Delete(context.Background(), MutationOptions{Profile: profile, Token: ownerToken, TokenExplicit: true, TokenID: "scoped-1"})
+	if err != nil || deleted.FileSystemID != "fs-1" || deleted.Status != "revoked" {
+		t.Fatalf("Delete() result=%#v err=%v", deleted, err)
+	}
+	if requests != 4 {
+		t.Fatalf("requests = %d, want 4", requests)
+	}
+}
+
+func TestTiDBCloudTokenManagementRequiresExplicitFileSystemID(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests++
+	}))
+	defer server.Close()
+	service, profile := tokenTestService(t.TempDir(), server.URL)
+	t.Setenv("TI_FS_TOKEN", "")
+
+	_, err := service.List(context.Background(), ListOptions{Profile: profile, Limit: DefaultListLimit})
+	if apperr.CodeFor(err) != "fs.missing_file_system_id" || !strings.Contains(err.Error(), "when token management uses TiDB Cloud API credentials") {
+		t.Fatalf("List() error = %v", err)
+	}
+	_, err = service.Disable(context.Background(), MutationOptions{Profile: profile, TokenID: "scoped-1"})
+	if apperr.CodeFor(err) != "fs.missing_file_system_id" {
+		t.Fatalf("Disable() error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("missing IDs sent %d remote requests", requests)
+	}
+}
+
 func TestGenerateScopedUsesOwnerBearerAndStoresScopes(t *testing.T) {
 	home := t.TempDir()
 	ownerToken := wrappedToken(t, "fs-1", 1)

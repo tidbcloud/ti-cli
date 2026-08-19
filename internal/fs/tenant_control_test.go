@@ -224,6 +224,37 @@ func TestTenantControlDescribeAndDeleteUseIDs(t *testing.T) {
 	}
 }
 
+func TestTenantControlDescribeAndDeleteRequireExplicitIDAndTiDBCloudCredentials(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests++
+	}))
+	defer server.Close()
+	service := directTenantService(t.TempDir(), server.URL)
+	profile := testProfile()
+	t.Setenv("TI_FS_TOKEN", fsTestToken(t, "tenant-from-token"))
+
+	if _, err := service.DescribeFileSystem(context.Background(), profile, ""); apperr.CodeFor(err) != "fs.missing_file_system_id" || !strings.Contains(err.Error(), "describing a file system requires TiDB Cloud API credentials") {
+		t.Fatalf("missing describe ID error = %v", err)
+	}
+	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile}); apperr.CodeFor(err) != "fs.missing_file_system_id" || !strings.Contains(err.Error(), "FS tokens cannot select or authorize file system deletion") {
+		t.Fatalf("missing delete ID error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("missing IDs sent %d remote requests", requests)
+	}
+
+	withoutCredentials := *profile
+	withoutCredentials.TiDBCloudPublicKey = ""
+	withoutCredentials.TiDBCloudPrivateKey = ""
+	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: &withoutCredentials, FileSystemID: "tenant-1"}); apperr.CodeFor(err) != "auth.missing_credentials" {
+		t.Fatalf("missing TiDB Cloud credentials error = %v", err)
+	}
+	if requests != 0 {
+		t.Fatalf("missing credentials sent %d remote requests", requests)
+	}
+}
+
 func TestTenantControlValidationRejectsInvalidMetadataBeforeNetwork(t *testing.T) {
 	validDisplay, labels, err := ParseTenantMetadata("agent-workspace", true, []string{"environment=production", "example.com/empty="})
 	if err != nil || validDisplay == nil || labels["example.com/empty"] != "" {
@@ -350,6 +381,9 @@ func assertAdminCredentialHeaders(t *testing.T, request *http.Request) {
 	t.Helper()
 	if request.Header.Get("X-TiDBCloud-Public-Key") != "public" || request.Header.Get("X-TiDBCloud-Private-Key") != "private" {
 		t.Fatalf("credential headers = %q/%q", request.Header.Get("X-TiDBCloud-Public-Key"), request.Header.Get("X-TiDBCloud-Private-Key"))
+	}
+	if request.Header.Get("Authorization") != "" {
+		t.Fatalf("control-plane request unexpectedly used bearer authorization: %q", request.Header.Get("Authorization"))
 	}
 }
 

@@ -798,7 +798,15 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 		t.Fatalf("direct control-plane requests were incomplete: east=%#v west=%#v", eastControl.requests, westControl.requests)
 	}
 
-	deleteScratch := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-file-system", "--file-system-id", "tenant-aws-us-west-2")
+	requestsBeforeTokenOnlyDelete := westControl.requestCount()
+	tokenOnlyDelete := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_TOKEN="+drive9TestToken("tenant-aws-us-west-2")), "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-file-system")
+	tokenOnlyDelete.wantExitCode(2)
+	tokenOnlyDelete.wantStderrContains("FS tokens cannot select or authorize file system deletion")
+	if got := westControl.requestCount(); got != requestsBeforeTokenOnlyDelete {
+		t.Fatalf("token-only delete sent a remote request: before=%d after=%d", requestsBeforeTokenOnlyDelete, got)
+	}
+
+	deleteScratch := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_TOKEN="+drive9TestToken("tenant-aws-us-west-2")), "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-file-system", "--file-system-id", "tenant-aws-us-west-2")
 	deleteScratch.wantExitCode(0)
 	deleteScratch.wantStdoutContains(`"status": "deleting"`)
 	afterDelete := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-file-systems")
@@ -1052,6 +1060,16 @@ func TestFSFileSystemTokenLifecycle(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"token_id":"token-e2e","tenant_id":"tenant-tokens","status":"disabled"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/token-e2e/activate":
 			_, _ = fmt.Fprint(w, `{"token_id":"token-e2e","tenant_id":"tenant-tokens","status":"active"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/token-scoped/deactivate":
+			if r.Header.Get("Authorization") != "Bearer "+generatedToken || r.Header.Get("X-TiDBCloud-Public-Key") != "" {
+				t.Errorf("scoped deactivate authentication headers = %#v", r.Header)
+			}
+			_, _ = fmt.Fprint(w, `{"token_id":"token-scoped","tenant_id":"tenant-tokens","status":"disabled"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/token-scoped/activate":
+			if r.Header.Get("Authorization") != "Bearer "+generatedToken || r.Header.Get("X-TiDBCloud-Public-Key") != "" {
+				t.Errorf("scoped activate authentication headers = %#v", r.Header)
+			}
+			_, _ = fmt.Fprint(w, `{"token_id":"token-scoped","tenant_id":"tenant-tokens","status":"active"}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/tokens/refresh":
 			if r.Header.Get("Authorization") != "Bearer "+generatedToken || r.Header.Get("X-TiDBCloud-Public-Key") != "" {
 				t.Errorf("refresh authentication headers = %#v", r.Header)
@@ -1110,8 +1128,20 @@ func TestFSFileSystemTokenLifecycle(t *testing.T) {
 	scopedText.wantStdoutNotContains(`"scope_kind"`)
 
 	bearerListEnv := append(append([]string{}, env...), "TI_FS_TOKEN="+generatedToken)
-	bearerListed := runTIWithInput(t, bin, "", bearerListEnv, "--profile", "stage", "fs", "list-file-system-tokens", "--file-system-id", "tenant-tokens")
+	bearerListed := runTIWithInput(t, bin, "", bearerListEnv, "--profile", "stage", "fs", "list-file-system-tokens")
 	bearerListed.wantExitCode(0)
+	configFreeBearerEnv := []string{
+		"HOME=" + t.TempDir(), "TI_ALLOW_TEST_ENDPOINTS=1", "TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+		"TI_REGION_CODE=aws-us-east-1", "TI_FS_TOKEN=" + generatedToken,
+	}
+	configFreeBearerList := runTIWithInput(t, bin, "", configFreeBearerEnv, "fs", "list-file-system-tokens")
+	configFreeBearerList.wantExitCode(0)
+	bearerDisabled := runTIWithInput(t, bin, "", bearerListEnv, "--profile", "stage", "fs", "disable-file-system-token", "--token-id", "token-scoped")
+	bearerDisabled.wantExitCode(0)
+	bearerDisabled.wantStdoutContains(`"status": "disabled"`)
+	bearerEnabled := runTIWithInput(t, bin, "", bearerListEnv, "--profile", "stage", "fs", "enable-file-system-token", "--token-id", "token-scoped")
+	bearerEnabled.wantExitCode(0)
+	bearerEnabled.wantStdoutContains(`"status": "active"`)
 
 	listed := runTIWithInput(t, bin, "", env, "--profile", "stage", "fs", "list-file-system-tokens", "--file-system-id", "tenant-tokens", "--output", "text")
 	listed.wantExitCode(0)
@@ -1210,7 +1240,7 @@ func (f *fakeFSTenantControlPlane) serveHTTP(w http.ResponseWriter, r *http.Requ
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.requests = append(f.requests, fakeFSTenantRequest{Method: r.Method, Path: r.URL.Path, Query: r.URL.RawQuery})
-	if r.Header.Get("X-TiDBCloud-Public-Key") != "e2e-public" || r.Header.Get("X-TiDBCloud-Private-Key") != "e2e-private" {
+	if r.Header.Get("X-TiDBCloud-Public-Key") != "e2e-public" || r.Header.Get("X-TiDBCloud-Private-Key") != "e2e-private" || r.Header.Get("Authorization") != "" {
 		http.Error(w, `{"error":"missing TiDB Cloud credentials"}`, http.StatusUnauthorized)
 		return
 	}
@@ -1278,6 +1308,12 @@ func (f *fakeFSTenantControlPlane) serveHTTP(w http.ResponseWriter, r *http.Requ
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (f *fakeFSTenantControlPlane) requestCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.requests)
 }
 
 func (f *fakeFSTenantControlPlane) hasRequest(method, path string, queryParts ...string) bool {

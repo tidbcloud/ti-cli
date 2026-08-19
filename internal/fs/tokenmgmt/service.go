@@ -350,45 +350,29 @@ func (s Service) generate(ctx context.Context, opts GenerateOptions, fileSystemI
 }
 
 func (s Service) List(ctx context.Context, opts ListOptions) (ListResult, error) {
-	fileSystemID, err := fscred.ValidateFileSystemID(opts.FileSystemID)
-	if err != nil {
-		return ListResult{}, err
-	}
 	if opts.Offset < 0 {
 		return ListResult{}, apperr.New("fs.invalid_token_offset", "usage", 2, "--offset must be non-negative")
 	}
 	if opts.Limit <= 0 || opts.Limit > MaxListLimit {
 		return ListResult{}, apperr.New("fs.invalid_token_limit", "usage", 2, fmt.Sprintf("--limit must be between 1 and %d", MaxListLimit))
 	}
-	apiOpts := apifs.ListTokensOptions{FileSystemID: fileSystemID, IncludeExpired: opts.IncludeExpired, Offset: opts.Offset, Limit: opts.Limit}
+	management, err := s.resolveManagementAuth(opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, authz.FSTokenList, "list file system tokens")
+	if err != nil {
+		return ListResult{}, err
+	}
+	apiOpts := apifs.ListTokensOptions{FileSystemID: management.fileSystemID, IncludeExpired: opts.IncludeExpired, Offset: opts.Offset, Limit: opts.Limit}
 	var response apifs.ListTokensResponse
-	useBearer, err := tokenInputPresent(opts.Token, opts.TokenExplicit)
-	if err != nil {
-		return ListResult{}, err
-	}
-	if useBearer {
-		resolved, resolveErr := s.resolveBearer(opts.Profile, fileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, true)
-		if resolveErr != nil {
-			return ListResult{}, resolveErr
-		}
-		client, _, clientErr := s.bearerClient(opts.Profile, resolved, authz.FSTokenList, "list file system tokens")
-		if clientErr != nil {
-			return ListResult{}, clientErr
-		}
-		response, err = client.ListTokensWithBearer(ctx, apiOpts)
+	if management.bearer {
+		response, err = management.client.ListTokensWithBearer(ctx, apiOpts)
 	} else {
-		client, creds, _, clientErr := s.controlClient(opts.Profile, fileSystemID, opts.RegionOverride, authz.FSTokenList, "list file system tokens")
-		if clientErr != nil {
-			return ListResult{}, clientErr
-		}
-		response, err = client.ListTokens(ctx, creds, apiOpts)
+		response, err = management.client.ListTokens(ctx, management.credentials, apiOpts)
 	}
 	if err != nil {
 		return ListResult{}, err
 	}
-	result := ListResult{FileSystemID: fileSystemID, Tokens: make([]TokenMetadata, 0, len(response.Tokens)), NextOffset: response.NextOffset}
+	result := ListResult{FileSystemID: management.fileSystemID, Tokens: make([]TokenMetadata, 0, len(response.Tokens)), NextOffset: response.NextOffset}
 	for _, item := range response.Tokens {
-		if item.FileSystemID != "" && item.FileSystemID != fileSystemID {
+		if item.FileSystemID != "" && item.FileSystemID != management.fileSystemID {
 			return ListResult{}, apperr.New("fs.token_response_mismatch", "api", 1, "token list response contained a different file system ID")
 		}
 		result.Tokens = append(result.Tokens, TokenMetadata{
@@ -409,40 +393,28 @@ func (s Service) Disable(ctx context.Context, opts MutationOptions) (MutationRes
 }
 
 func (s Service) setEnabled(ctx context.Context, opts MutationOptions, enabled bool) (MutationResult, error) {
-	fileSystemID, tokenID, err := validateMutation(opts)
+	tokenID, err := validateTokenID(opts.TokenID)
 	if err != nil {
 		return MutationResult{}, err
-	}
-	if !enabled {
-		if err := s.guardTokenIDMount(fileSystemID, tokenID); err != nil {
-			return MutationResult{}, err
-		}
 	}
 	permission, action := authz.FSTokenDisable, "disable a file system token"
 	if enabled {
 		permission, action = authz.FSTokenEnable, "enable a file system token"
 	}
-	var response apifs.TokenMutationResponse
-	useBearer, err := tokenInputPresent(opts.Token, opts.TokenExplicit)
+	management, err := s.resolveManagementAuth(opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, permission, action)
 	if err != nil {
 		return MutationResult{}, err
 	}
-	if useBearer {
-		resolved, resolveErr := s.resolveBearer(opts.Profile, fileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, true)
-		if resolveErr != nil {
-			return MutationResult{}, resolveErr
+	if !enabled {
+		if err := s.guardTokenIDMount(management.fileSystemID, tokenID); err != nil {
+			return MutationResult{}, err
 		}
-		client, _, clientErr := s.bearerClient(opts.Profile, resolved, permission, action)
-		if clientErr != nil {
-			return MutationResult{}, clientErr
-		}
-		response, err = client.SetTokenEnabledWithBearer(ctx, fileSystemID, tokenID, enabled)
+	}
+	var response apifs.TokenMutationResponse
+	if management.bearer {
+		response, err = management.client.SetTokenEnabledWithBearer(ctx, management.fileSystemID, tokenID, enabled)
 	} else {
-		client, creds, _, clientErr := s.controlClient(opts.Profile, fileSystemID, opts.RegionOverride, permission, action)
-		if clientErr != nil {
-			return MutationResult{}, clientErr
-		}
-		response, err = client.SetTokenEnabled(ctx, creds, fileSystemID, tokenID, enabled)
+		response, err = management.client.SetTokenEnabled(ctx, management.credentials, management.fileSystemID, tokenID, enabled)
 	}
 	if err != nil {
 		return MutationResult{}, err
@@ -451,44 +423,32 @@ func (s Service) setEnabled(ctx context.Context, opts MutationOptions, enabled b
 }
 
 func (s Service) Delete(ctx context.Context, opts MutationOptions) (MutationResult, error) {
-	fileSystemID, tokenID, err := validateMutation(opts)
+	tokenID, err := validateTokenID(opts.TokenID)
 	if err != nil {
 		return MutationResult{}, err
 	}
-	if err := s.guardTokenIDMount(fileSystemID, tokenID); err != nil {
+	management, err := s.resolveManagementAuth(opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, authz.FSTokenDelete, "delete a file system token")
+	if err != nil {
+		return MutationResult{}, err
+	}
+	if err := s.guardTokenIDMount(management.fileSystemID, tokenID); err != nil {
 		return MutationResult{}, err
 	}
 	var response apifs.TokenMutationResponse
-	useBearer, err := tokenInputPresent(opts.Token, opts.TokenExplicit)
-	if err != nil {
-		return MutationResult{}, err
-	}
-	if useBearer {
-		resolved, resolveErr := s.resolveBearer(opts.Profile, fileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, true)
-		if resolveErr != nil {
-			return MutationResult{}, resolveErr
-		}
-		client, _, clientErr := s.bearerClient(opts.Profile, resolved, authz.FSTokenDelete, "delete a file system token")
-		if clientErr != nil {
-			return MutationResult{}, clientErr
-		}
-		err = client.DeleteTokenWithBearer(ctx, tokenID)
-		response = apifs.TokenMutationResponse{FileSystemID: fileSystemID, TokenID: tokenID, Status: "revoked"}
+	if management.bearer {
+		err = management.client.DeleteTokenWithBearer(ctx, tokenID)
+		response = apifs.TokenMutationResponse{FileSystemID: management.fileSystemID, TokenID: tokenID, Status: "revoked"}
 	} else {
-		client, creds, _, clientErr := s.controlClient(opts.Profile, fileSystemID, opts.RegionOverride, authz.FSTokenDelete, "delete a file system token")
-		if clientErr != nil {
-			return MutationResult{}, clientErr
-		}
-		response, err = client.DeleteToken(ctx, creds, fileSystemID, tokenID)
+		response, err = management.client.DeleteToken(ctx, management.credentials, management.fileSystemID, tokenID)
 	}
 	if err != nil {
 		return MutationResult{}, err
 	}
 	var updated bool
 	var reason string
-	cleanupErr := fscred.WithCredentialLock(ctx, s.homeDir(opts.Profile), profileName(opts.Profile), fileSystemID, func() error {
+	cleanupErr := fscred.WithCredentialLock(ctx, s.homeDir(opts.Profile), profileName(opts.Profile), management.fileSystemID, func() error {
 		var err error
-		updated, reason, err = fscred.DeleteCredentialIfTokenID(s.homeDir(opts.Profile), profileName(opts.Profile), fileSystemID, tokenID)
+		updated, reason, err = fscred.DeleteCredentialIfTokenID(s.homeDir(opts.Profile), profileName(opts.Profile), management.fileSystemID, tokenID)
 		return err
 	})
 	if cleanupErr != nil {
@@ -586,6 +546,14 @@ type bearerInput struct {
 	scopeKind    string
 }
 
+type managementAuth struct {
+	fileSystemID string
+	client       *apifs.Client
+	credentials  apifs.TiDBCloudCredentials
+	endpoint     endpoints.Endpoint
+	bearer       bool
+}
+
 func (s Service) resolveRefresh(opts RefreshOptions) (bearerInput, error) {
 	return s.resolveBearer(opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, false)
 }
@@ -608,6 +576,13 @@ func (s Service) resolveBearer(profile *config.Profile, requestedFileSystemID, r
 		token = strings.TrimSpace(envToken)
 	}
 	fileSystemID := strings.TrimSpace(requestedFileSystemID)
+	if fileSystemID == "" {
+		envFileSystemID, _, _, err := envcompat.ResolveNames(nil, "TI_FS_FILE_SYSTEM_ID", envcompat.LegacyNameFor("TI_FS_FILE_SYSTEM_ID"))
+		if err != nil {
+			return bearerInput{}, err
+		}
+		fileSystemID = strings.TrimSpace(envFileSystemID)
+	}
 	var localCredential fscred.Credential
 	if token == "" {
 		if fileSystemID == "" {
@@ -631,7 +606,7 @@ func (s Service) resolveBearer(profile *config.Profile, requestedFileSystemID, r
 		return bearerInput{}, apperr.New("fs.token_file_system_mismatch", "authentication", 3, fmt.Sprintf("FS token belongs to file system %q, not %q", tokenFileSystemID, fileSystemID))
 	}
 	if ownerRequired && sourceLocal && localCredential.ScopeKind == "fs_scoped" {
-		return bearerInput{}, apperr.New("fs.owner_token_required", "authorization", 4, "the selected local token is scoped and cannot generate another scoped token; pass an owner token with --fs-token or TI_FS_TOKEN")
+		return bearerInput{}, apperr.New("fs.owner_token_required", "authorization", 4, "the selected local token is scoped and cannot manage file system tokens; pass an owner token with --fs-token or TI_FS_TOKEN")
 	}
 	regionCode := strings.TrimSpace(regionOverride)
 	if sourceLocal {
@@ -669,6 +644,40 @@ func (s Service) bearerClient(profile *config.Profile, resolved bearerInput, per
 		return nil, endpoints.Endpoint{}, err
 	}
 	return apifs.New(raw), endpoint, nil
+}
+
+func (s Service) resolveManagementAuth(profile *config.Profile, requestedFileSystemID, token string, tokenExplicit bool, regionOverride string, permission authz.Permission, action string) (managementAuth, error) {
+	useBearer, err := tokenInputPresent(token, tokenExplicit)
+	if err != nil {
+		return managementAuth{}, err
+	}
+	if useBearer {
+		resolved, err := s.resolveBearer(profile, requestedFileSystemID, token, tokenExplicit, regionOverride, true)
+		if err != nil {
+			return managementAuth{}, err
+		}
+		client, endpoint, err := s.bearerClient(profile, resolved, permission, action)
+		if err != nil {
+			return managementAuth{}, err
+		}
+		return managementAuth{fileSystemID: resolved.fileSystemID, client: client, endpoint: endpoint, bearer: true}, nil
+	}
+	fileSystemID, err := requireControlPlaneTokenManagementID(requestedFileSystemID)
+	if err != nil {
+		return managementAuth{}, err
+	}
+	client, credentials, endpoint, err := s.controlClient(profile, fileSystemID, regionOverride, permission, action)
+	if err != nil {
+		return managementAuth{}, err
+	}
+	return managementAuth{fileSystemID: fileSystemID, client: client, credentials: credentials, endpoint: endpoint}, nil
+}
+
+func requireControlPlaneTokenManagementID(value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", apperr.New("fs.missing_file_system_id", "usage", 2, "--file-system-id is required when token management uses TiDB Cloud API credentials; alternatively pass --fs-token or set TI_FS_TOKEN to use an owner FS token")
+	}
+	return fscred.ValidateFileSystemID(value)
 }
 
 func (s Service) DryRunGenerate(commandPath string, opts GenerateOptions) (dryrun.Result, error) {
@@ -714,33 +723,20 @@ func (s Service) DryRunGenerateScoped(commandPath string, opts GenerateScopedOpt
 }
 
 func (s Service) DryRunMutation(commandPath, operation, method, path string, opts MutationOptions, permission authz.Permission, mountGuard bool) (dryrun.Result, error) {
-	fileSystemID, tokenID, err := validateMutation(opts)
+	tokenID, err := validateTokenID(opts.TokenID)
+	if err != nil {
+		return dryrun.Result{}, err
+	}
+	management, err := s.resolveManagementAuth(opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, permission, operation)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
 	if mountGuard {
-		if err := s.guardTokenIDMount(fileSystemID, tokenID); err != nil {
+		if err := s.guardTokenIDMount(management.fileSystemID, tokenID); err != nil {
 			return dryrun.Result{}, err
 		}
 	}
-	var endpoint endpoints.Endpoint
-	useBearer, err := tokenInputPresent(opts.Token, opts.TokenExplicit)
-	if err != nil {
-		return dryrun.Result{}, err
-	}
-	if useBearer {
-		resolved, resolveErr := s.resolveBearer(opts.Profile, fileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, true)
-		if resolveErr != nil {
-			return dryrun.Result{}, resolveErr
-		}
-		endpoint, err = s.resolveEndpoint(opts.Profile, resolved.regionCode)
-	} else {
-		_, _, endpoint, err = s.controlClient(opts.Profile, fileSystemID, opts.RegionOverride, permission, operation)
-	}
-	if err != nil {
-		return dryrun.Result{}, err
-	}
-	return tokenDryRun(commandPath, operation, method, path, fileSystemID, opts.Profile, endpoint, permission), nil
+	return tokenDryRun(commandPath, operation, method, path, management.fileSystemID, opts.Profile, management.endpoint, permission), nil
 }
 
 func (s Service) DryRunRefresh(commandPath string, opts RefreshOptions) (dryrun.Result, error) {
@@ -859,6 +855,9 @@ func activeMountError(path string) error {
 }
 
 func validateGenerate(opts GenerateOptions) (string, string, *int64, error) {
+	if strings.TrimSpace(opts.FileSystemID) == "" {
+		return "", "", nil, apperr.New("fs.missing_file_system_id", "usage", 2, "--file-system-id is required to generate an owner FS token; FS tokens cannot generate owner tokens")
+	}
 	fileSystemID, err := fscred.ValidateFileSystemID(opts.FileSystemID)
 	if err != nil {
 		return "", "", nil, err
@@ -993,19 +992,15 @@ func parseScopeOps(raw string) ([]string, error) {
 	return ops, nil
 }
 
-func validateMutation(opts MutationOptions) (string, string, error) {
-	fileSystemID, err := fscred.ValidateFileSystemID(opts.FileSystemID)
-	if err != nil {
-		return "", "", err
-	}
-	tokenID := strings.TrimSpace(opts.TokenID)
+func validateTokenID(value string) (string, error) {
+	tokenID := strings.TrimSpace(value)
 	if tokenID == "" {
-		return "", "", apperr.New("fs.token_id_required", "usage", 2, "--token-id is required")
+		return "", apperr.New("fs.token_id_required", "usage", 2, "--token-id is required")
 	}
 	if strings.ContainsAny(tokenID, "/\\") {
-		return "", "", apperr.New("fs.invalid_token_id", "usage", 2, "--token-id must be one path-safe identifier")
+		return "", apperr.New("fs.invalid_token_id", "usage", 2, "--token-id must be one path-safe identifier")
 	}
-	return fileSystemID, tokenID, nil
+	return tokenID, nil
 }
 
 func optionalTTLSeconds(ttl *time.Duration) (*int64, error) {
