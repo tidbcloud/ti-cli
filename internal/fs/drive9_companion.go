@@ -1055,18 +1055,13 @@ func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (
 		return MountResult{}, apperr.New("vault.missing_token", "usage", 2, "ti fs-vault mount-vault requires --vault-token or TI_VAULT_TOKEN; use create-grant to mint a delegated vault token first")
 	}
 	args := []string{"mount", "vault"}
-	if opts.Foreground {
-		args = append(args, "--foreground")
-	}
 	args = append(args, opts.MountPath)
 	if _, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{Profile: opts.Profile, Args: args, IncludeFSAPIKey: true, VaultToken: opts.VaultToken}); err != nil {
 		return MountResult{}, err
 	}
-	if !opts.Foreground {
-		if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "vault"); err != nil {
-			_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
-			return MountResult{}, err
-		}
+	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "vault"); err != nil {
+		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
+		return MountResult{}, err
 	}
 	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: "vault", MountPath: opts.MountPath, RemotePath: "/n/vault", Driver: "fuse"}, nil
 }
@@ -1124,9 +1119,6 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	if opts.Driver != "" {
 		args = append(args, "--mode", opts.Driver)
 	}
-	if opts.Foreground {
-		args = append(args, "--foreground")
-	}
 	if opts.ReadOnly {
 		args = append(args, "--read-only")
 	}
@@ -1155,15 +1147,13 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		args = append(args, "--no-auto-unpack")
 	}
 	args = append(args, drive9Remote(remotePath), opts.MountPath)
-	result, err := s.drive9Run(ctx, opts.Profile, args, !opts.Foreground)
+	result, err := s.drive9Run(ctx, opts.Profile, args, true)
 	if err != nil {
 		return MountResult{}, err
 	}
-	if !opts.Foreground {
-		if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs"); err != nil {
-			_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
-			return MountResult{}, err
-		}
+	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs"); err != nil {
+		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
+		return MountResult{}, err
 	}
 	endpoint, _ := s.resolveFS(opts.Profile)
 	driver := drive9MountedDriver(result.Stderr, opts.Driver)

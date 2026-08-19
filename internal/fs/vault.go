@@ -97,7 +97,6 @@ type VaultMountOptions struct {
 	Profile      *config.Profile
 	MountPath    string
 	VaultToken   string
-	Foreground   bool
 	ReadyTimeout time.Duration
 }
 
@@ -183,41 +182,6 @@ func (s Service) DryRunMountVault(ctx context.Context, commandPath string, opts 
 		},
 		dryChecks...,
 	), nil
-}
-
-func (s Service) mountVaultBackground(ctx context.Context, inputs vaultMountInputs, checks []MountRuntimeCheck) (MountResult, error) {
-	executable, err := os.Executable()
-	if err != nil {
-		return MountResult{}, apperr.Wrap("vault.executable_path", "runtime", 1, "determine ti executable path for background vault mount", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(inputs.logFile), 0o700); err != nil {
-		return MountResult{}, apperr.Wrap("vault.mount_log_dir", "runtime", 1, fmt.Sprintf("create mount log directory %q", filepath.Dir(inputs.logFile)), err)
-	}
-	args := []string{
-		"--profile", inputs.profile.Name,
-		"fs-vault", "mount-vault",
-		"--mount-path", inputs.mountPath,
-		"--foreground",
-	}
-	env := []string(nil)
-	if strings.TrimSpace(inputs.vaultToken) != "" {
-		env = append(env, "TI_VAULT_TOKEN="+strings.TrimSpace(inputs.vaultToken))
-	}
-	pid, err := startBackgroundMount(ctx, backgroundMountRequest{
-		Executable: executable,
-		Args:       args,
-		Env:        env,
-		LogFile:    inputs.logFile,
-		StateFile:  inputs.stateFile,
-		MountPath:  inputs.mountPath,
-		Timeout:    inputs.timeout,
-	})
-	if err != nil {
-		return MountResult{}, err
-	}
-	checks = append(checks, MountRuntimeCheck{Name: "background_process", Status: "passed", Message: fmt.Sprintf("pid %d", pid)})
-	checks = append(checks, MountRuntimeCheck{Name: "mount_state", Status: "passed", Message: inputs.stateFile})
-	return vaultMountResult("mounted", inputs, checks, pid, inputs.stateFile, inputs.logFile), nil
 }
 
 func (s Service) vaultMountInputs(ctx context.Context, opts VaultMountOptions) (vaultMountInputs, []MountRuntimeCheck, error) {

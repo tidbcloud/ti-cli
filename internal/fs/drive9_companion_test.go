@@ -380,6 +380,12 @@ func TestDrive9MountLocatorRoutesDrainAndUnmountWithoutCredentials(t *testing.T)
 	if strings.Contains(string(data), profile.FSAPIKey) {
 		t.Fatalf("mount locator leaked FS token: %s", data)
 	}
+	mountCall := requireFakeDrive9Call(t, recordPath, "mount")
+	for _, arg := range mountCall.Args {
+		if arg == "--foreground" {
+			t.Fatalf("ti exposed foreground mode to Drive9: %#v", mountCall.Args)
+		}
+	}
 
 	localProfile := &config.Profile{Name: "default", HomeDir: home}
 	if _, err := service.DrainFileSystem(context.Background(), DrainFileSystemOptions{
@@ -405,6 +411,37 @@ func TestDrive9MountLocatorRoutesDrainAndUnmountWithoutCredentials(t *testing.T)
 		if call.Env["HOME"] != locator.CompanionHome {
 			t.Fatalf("%v used HOME %q, want %q", prefix, call.Env["HOME"], locator.CompanionHome)
 		}
+	}
+}
+
+func TestDrive9VaultMountUsesBackgroundMode(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(home, companion)
+	service.Stdout = &bytes.Buffer{}
+	service.Stderr = &bytes.Buffer{}
+	mountPath := filepath.Join(t.TempDir(), "vault")
+
+	if _, err := service.MountVault(context.Background(), VaultMountOptions{
+		Profile:    dataProfile(),
+		MountPath:  mountPath,
+		VaultToken: "vault-token",
+	}); err != nil {
+		t.Fatalf("MountVault failed: %v", err)
+	}
+	call := requireFakeDrive9Call(t, recordPath, "mount", "vault")
+	for _, arg := range call.Args {
+		if arg == "--foreground" {
+			t.Fatalf("ti exposed foreground vault mode to Drive9: %#v", call.Args)
+		}
+	}
+	locator, _, err := mountlocator.Read(home, mountPath)
+	if err != nil {
+		t.Fatalf("read vault mount locator: %v", err)
+	}
+	if locator.Kind != "vault" {
+		t.Fatalf("vault mount locator kind = %q, want vault", locator.Kind)
 	}
 }
 
