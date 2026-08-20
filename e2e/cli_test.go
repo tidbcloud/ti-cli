@@ -222,6 +222,34 @@ func TestErrorsAreRenderedAtCLIBoundary(t *testing.T) {
 	invalidQuery.wantStderrContains("ti [ERROR]: invalid --query expression")
 }
 
+func TestMissingTiDBCloudCredentialsLinkToAPIKeysPage(t *testing.T) {
+	bin := tiBinary(t)
+	home := t.TempDir()
+	writeE2EFile(t, filepath.Join(home, ".ti", "config"), "[default]\nregion_code = 'aws-us-east-1'\n", 0o600)
+	env := []string{
+		"HOME=" + home,
+		"TIDB_CLOUD_PUBLIC_KEY=",
+		"TIDB_CLOUD_PRIVATE_KEY=",
+		"TDC_PUBLIC_KEY=",
+		"TDC_PRIVATE_KEY=",
+	}
+
+	commands := [][]string{
+		{"fs", "create-file-system", "--display-name", "agent-workspace", "--wait"},
+		{"db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "agent-database", "--wait"},
+	}
+	for _, args := range commands {
+		result := runTIWithInput(t, bin, "", env, args...)
+		result.wantExitCode(3)
+		result.wantStderrContains("authentication required: missing tidb_cloud_public_key and tidb_cloud_private_key")
+		result.wantStderrContains("Run `ti configure` or set TIDB_CLOUD_PUBLIC_KEY and TIDB_CLOUD_PRIVATE_KEY")
+		result.wantStderrContains("https://tidbcloud.com/org-settings/api-keys")
+		if result.stdout != "" {
+			result.fail("stdout should be empty")
+		}
+	}
+}
+
 func TestHomeMigrationThroughRealBinary(t *testing.T) {
 	bin := tiBinary(t)
 

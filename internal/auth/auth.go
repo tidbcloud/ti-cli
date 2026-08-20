@@ -19,6 +19,8 @@ type Credentials struct {
 	PrivateKey  string
 }
 
+const tiDBCloudAPIKeysURL = "https://tidbcloud.com/org-settings/api-keys"
+
 func LoadProfile(ctx context.Context, opts config.LoadOptions) (*config.Profile, error) {
 	profile, err := config.Load(ctx, opts)
 	if err == nil {
@@ -98,9 +100,10 @@ func MissingCredentials(profileName string, keys ...string) error {
 		"authentication",
 		3,
 		fmt.Sprintf(
-			"authentication required: missing %s for profile %q. Run `ti configure` or set TIDB_CLOUD_PUBLIC_KEY and TIDB_CLOUD_PRIVATE_KEY.",
+			"authentication required: missing %s for profile %q. Run `ti configure` or set TIDB_CLOUD_PUBLIC_KEY and TIDB_CLOUD_PRIVATE_KEY. If you do not have a TiDB Cloud API key pair, generate one at %s.",
 			joinKeys(keys),
 			profileName,
+			tiDBCloudAPIKeysURL,
 		),
 	)
 }

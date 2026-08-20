@@ -18,7 +18,7 @@ func TestValidateProfileMissingCredentials(t *testing.T) {
 	if got := apperr.ExitCodeFor(err); got != 3 {
 		t.Fatalf("expected auth exit code 3, got %d", got)
 	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "authentication required") || !strings.Contains(got, "tidb_cloud_public_key and tidb_cloud_private_key") {
+	if got := apperr.MessageFor(err); !strings.Contains(got, "authentication required") || !strings.Contains(got, "tidb_cloud_public_key and tidb_cloud_private_key") || !strings.Contains(got, tiDBCloudAPIKeysURL) {
 		t.Fatalf("unexpected message %q", got)
 	}
 }
@@ -56,7 +56,7 @@ func TestLoadProfileMapsMissingFileCredentialsToAuthError(t *testing.T) {
 	if got := apperr.ExitCodeFor(err); got != 3 {
 		t.Fatalf("expected auth exit code 3, got %d", got)
 	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "authentication required") {
+	if got := apperr.MessageFor(err); !strings.Contains(got, "authentication required") || !strings.Contains(got, tiDBCloudAPIKeysURL) {
 		t.Fatalf("unexpected message %q", got)
 	}
 }
