@@ -263,10 +263,16 @@ func validContentType(raw string) bool {
 }
 
 func validUserAgent(value string) bool {
-	return strings.HasPrefix(value, "ti/") &&
-		len(value) > len("ti/") &&
-		len(value) <= 128 &&
-		!strings.ContainsAny(value, "\r\n\t ")
+	prefixLength := 0
+	switch {
+	case strings.HasPrefix(value, "ti/"):
+		prefixLength = len("ti/")
+	case strings.HasPrefix(value, "tdc/"):
+		prefixLength = len("tdc/")
+	default:
+		return false
+	}
+	return len(value) > prefixLength && len(value) <= 128 && !strings.ContainsAny(value, "\r\n\t ")
 }
 
 var errBodyTooLarge = errors.New("request body too large")

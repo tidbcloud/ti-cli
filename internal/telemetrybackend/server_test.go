@@ -37,6 +37,32 @@ func TestServerAcceptsValidBatchWith202BeforeFlush(t *testing.T) {
 	}
 }
 
+func TestServerAcceptsCurrentAndLegacyCLIUserAgents(t *testing.T) {
+	for _, userAgent := range []string{"ti/0.2.3", "tdc/0.1.7"} {
+		t.Run(userAgent, func(t *testing.T) {
+			cfg := testConfig()
+			batcher := NewBatcher(cfg, nil, discardLogger(), nil)
+			server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, discardLogger(), nil)
+			request := newBatchRequest(validRequestBody())
+			request.Header.Set("User-Agent", userAgent)
+			response := httptest.NewRecorder()
+			server.Handler().ServeHTTP(response, request)
+			if response.Code != http.StatusAccepted {
+				t.Fatalf("status = %d, want %d; body=%s", response.Code, http.StatusAccepted, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestValidUserAgentRejectsMalformedOrUntrustedValues(t *testing.T) {
+	tooLong := "ti/" + strings.Repeat("v", 126)
+	for _, userAgent := range []string{"", "ti/", "tdc/", "curl/8", "ti/0.2.3 debug", "tdc/0.1.7\n", tooLong} {
+		if validUserAgent(userAgent) {
+			t.Errorf("validUserAgent(%q) = true", userAgent)
+		}
+	}
+}
+
 func TestServerRejectsInvalidRequestsWithGenericErrors(t *testing.T) {
 	cfg := testConfig()
 	cfg.MaxBodyBytes = int64(len(validRequestBody()))

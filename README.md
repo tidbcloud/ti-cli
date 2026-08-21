@@ -141,6 +141,8 @@ Use `TI_LOGGING=off` to disable logging for one process. Accepted values are `on
 
 Release builds collect minimal command usage and reliability telemetry through the ti-owned ingestion service. Events contain canonical command and explicitly supplied flag names, stable exit and error codes, duration, region, ti version, OS, architecture, install source, and a random installation ID. They never contain flag values, credentials, tokens, SQL text, paths, file contents, command output, API payloads, profile names, or cloud resource IDs.
 
+During the v0.2 migration window, the ingestion backend accepts both current `ti/<version>` and legacy `tdc/<version>` User-Agent values. All other User-Agent prefixes are rejected before payload validation.
+
 Telemetry is disabled by default for development builds and recognized CI environments. To disable it persistently for release builds, create or edit `~/.ti/.preferences`:
 
 ```toml

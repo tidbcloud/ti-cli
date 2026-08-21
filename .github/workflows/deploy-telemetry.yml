@@ -65,6 +65,28 @@ jobs:
               --env-file deploy/telemetry/.env \
               -f deploy/telemetry/docker-compose.yml \
               restart caddy
+            public_host="$(sed -n 's/^TELEMETRY_PUBLIC_HOST=//p' deploy/telemetry/.env | tail -n 1)"
+            test -n "$public_host"
+            printf '%s' "$public_host" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'
+            for attempt in $(seq 1 30); do
+              if curl -fsS --connect-timeout 5 --max-time 15 "https://$public_host/readyz" >/dev/null; then
+                break
+              fi
+              test "$attempt" -lt 30
+              sleep 2
+            done
+            for user_agent in ti/deploy-smoke tdc/deploy-smoke; do
+              response="$(curl -sS --connect-timeout 5 --max-time 15 \
+                -H 'Content-Type: application/json' \
+                -H "User-Agent: $user_agent" \
+                --data '{}' \
+                -w '\n%{http_code}' \
+                "https://$public_host/v1/telemetry/batch")"
+              status="${response##*$'\n'}"
+              body="${response%$'\n'*}"
+              test "$status" = "400"
+              printf '%s' "$body" | grep -F '"message":"schema validation failed"' >/dev/null
+            done
             docker compose \
               --env-file deploy/telemetry/.env \
               -f deploy/telemetry/docker-compose.yml \
