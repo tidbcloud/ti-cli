@@ -26,12 +26,12 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
-          TELEMETRY_PUBLIC_HOST: ${{ inputs.public_host }}
+          DEPLOY_TELEMETRY_PUBLIC_HOST: ${{ inputs.public_host }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USERNAME }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: TELEMETRY_PUBLIC_HOST
+          envs: DEPLOY_TELEMETRY_PUBLIC_HOST
           command_timeout: 30m
           script: |
             set -euo pipefail
@@ -41,12 +41,12 @@ jobs:
             git pull --ff-only origin main
             test -f deploy/telemetry/.env
             test ! -L deploy/telemetry/.env
-            if [ -n "${TELEMETRY_PUBLIC_HOST:-}" ]; then
-              printf '%s' "$TELEMETRY_PUBLIC_HOST" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'
+            if [ -n "${DEPLOY_TELEMETRY_PUBLIC_HOST:-}" ]; then
+              printf '%s' "$DEPLOY_TELEMETRY_PUBLIC_HOST" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?$'
               if grep -q '^TELEMETRY_PUBLIC_HOST=' deploy/telemetry/.env; then
-                sed -i "s|^TELEMETRY_PUBLIC_HOST=.*$|TELEMETRY_PUBLIC_HOST=$TELEMETRY_PUBLIC_HOST|" deploy/telemetry/.env
+                sed -i "s|^TELEMETRY_PUBLIC_HOST=.*$|TELEMETRY_PUBLIC_HOST=$DEPLOY_TELEMETRY_PUBLIC_HOST|" deploy/telemetry/.env
               else
-                printf '\nTELEMETRY_PUBLIC_HOST=%s\n' "$TELEMETRY_PUBLIC_HOST" >> deploy/telemetry/.env
+                printf '\nTELEMETRY_PUBLIC_HOST=%s\n' "$DEPLOY_TELEMETRY_PUBLIC_HOST" >> deploy/telemetry/.env
               fi
             fi
             docker compose \
