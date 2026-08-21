@@ -94,6 +94,8 @@ Content-Type: application/json
 User-Agent: ti/<version>
 ```
 
+During the v0.2 migration window, the backend also accepts the legacy `User-Agent: tdc/<version>` value. No other User-Agent prefix is accepted. Deployment smoke tests must verify both accepted prefixes against the public endpoint; a schema-invalid probe must reach payload validation instead of failing header validation.
+
 Request limits:
 
 - Body size: default 64 KiB.
