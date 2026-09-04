@@ -883,13 +883,17 @@ func TestFSOperationalCommandsExposeResourceSelector(t *testing.T) {
 func TestFSRemoteCommandsExposeTokenFlag(t *testing.T) {
 	root := NewRootCommand(testVersion())
 	excluded := map[string]bool{
-		"ti fs create-file-system":   true,
-		"ti fs list-file-systems":    true,
-		"ti fs describe-file-system": true,
-		"ti fs delete-file-system":   true,
-		"ti fs drain-file-system":    true,
-		"ti fs unmount-file-system":  true,
-		"ti fs-vault unmount-vault":  true,
+		"ti fs create-file-system":                           true,
+		"ti fs list-file-systems":                            true,
+		"ti fs describe-file-system":                         true,
+		"ti fs delete-file-system":                           true,
+		"ti fs describe-file-system-extract-configuration":   true,
+		"ti fs update-file-system-extract-configuration":     true,
+		"ti fs describe-file-system-embedding-configuration": true,
+		"ti fs update-file-system-embedding-configuration":   true,
+		"ti fs drain-file-system":                            true,
+		"ti fs unmount-file-system":                          true,
+		"ti fs-vault unmount-vault":                          true,
 	}
 	visitCommands(root, func(cmd *cobra.Command) {
 		if cmd.Name() == "help" || cmd.HasSubCommands() || excluded[cmd.CommandPath()] {

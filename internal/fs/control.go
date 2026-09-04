@@ -381,7 +381,23 @@ func (r DescribeFileSystemResult) Human() string {
 		fmt.Sprintf("Local token: %t", r.HasLocalToken),
 	}
 	if r.Quota != nil {
-		lines = append(lines, fmt.Sprintf("Quota: %v", r.Quota))
+		spendingLimit := "none"
+		if r.Quota.Config.TiDBCloudSpendingLimit != nil {
+			spendingLimit = fmt.Sprintf("%d", *r.Quota.Config.TiDBCloudSpendingLimit)
+		}
+		lines = append(lines,
+			fmt.Sprintf("Quota max storage bytes: %d", r.Quota.Config.MaxStorageSize),
+			fmt.Sprintf("Quota max file size bytes: %d", r.Quota.Config.MaxFileSize),
+			fmt.Sprintf("Quota max file count: %d", r.Quota.Config.MaxFileCount),
+			fmt.Sprintf("Quota max media LLM files: %d", r.Quota.Config.MaxMediaLLMFiles),
+			fmt.Sprintf("Quota max video LLM files: %d", r.Quota.Config.MaxVideoLLMFiles),
+			"Quota TiDB Cloud spending limit: "+spendingLimit,
+			fmt.Sprintf("Usage storage bytes: %d", r.Quota.Usage.StorageBytes),
+			fmt.Sprintf("Usage reserved bytes: %d", r.Quota.Usage.ReservedBytes),
+			fmt.Sprintf("Usage file count: %d", r.Quota.Usage.FileCount),
+			fmt.Sprintf("Usage media file count: %d", r.Quota.Usage.MediaFileCount),
+			fmt.Sprintf("Usage video file count: %d", r.Quota.Usage.VideoFileCount),
+		)
 	}
 	return strings.Join(lines, "\n")
 }

@@ -209,6 +209,12 @@ func TestTenantControlDescribeAndDeleteUseIDs(t *testing.T) {
 	if described.DisplayName != "workspace-one" || described.Labels["team"] != "ai" || !described.HasLocalToken || !strings.Contains(described.Human(), "Labels: team=ai") {
 		t.Fatalf("describe = %#v", described)
 	}
+	if described.Quota == nil || described.Quota.Config.MaxMediaLLMFiles != 100 || described.Quota.Config.MaxVideoLLMFiles != 30 || described.Quota.Usage.MediaFileCount != 12 || described.Quota.Usage.VideoFileCount != 3 {
+		t.Fatalf("describe quota = %#v", described.Quota)
+	}
+	if text := described.Human(); !strings.Contains(text, "Quota max media LLM files: 100") || !strings.Contains(text, "Usage video file count: 3") {
+		t.Fatalf("describe text = %q", text)
+	}
 	deleted, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1"})
 	if err != nil {
 		t.Fatal(err)
@@ -389,8 +395,8 @@ func assertAdminCredentialHeaders(t *testing.T, request *http.Request) {
 
 func tenantQuotaFixture() map[string]any {
 	return map[string]any{
-		"config": map[string]any{"max_storage_size": 1024, "max_file_size": 128, "max_file_count": 1000, "tidbcloud_spending_limit": nil},
-		"usage":  map[string]any{"storage_bytes": 12, "reserved_bytes": 3, "file_count": 2},
+		"config": map[string]any{"max_storage_size": 1024, "max_file_size": 128, "max_file_count": 1000, "max_media_llm_files": 100, "max_video_llm_files": 30, "tidbcloud_spending_limit": nil},
+		"usage":  map[string]any{"storage_bytes": 12, "reserved_bytes": 3, "file_count": 2, "media_file_count": 12, "video_file_count": 3},
 	}
 }
 

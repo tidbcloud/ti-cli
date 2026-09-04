@@ -156,8 +156,28 @@ func TestLiveFSRemoteInventoryLifecycle(t *testing.T) {
 	describe.wantStdoutContains(`"display_name": "` + displayName + `"`)
 	describe.wantStdoutContains(`"` + labelKey + `": "` + labelValue + `"`)
 	describe.wantStdoutContains(`"quota":`)
+	describe.wantStdoutContains(`"max_media_llm_files":`)
+	describe.wantStdoutContains(`"max_video_llm_files":`)
+	describe.wantStdoutContains(`"media_file_count":`)
+	describe.wantStdoutContains(`"video_file_count":`)
 	describe.wantStdoutContains(`"has_local_token": true`)
 	describe.wantStdoutNotContains(created.FSToken)
+	for _, mediaType := range []string{"image", "audio", "video"} {
+		extract := runTI(t, bin, "--profile", profileName, "fs", "describe-file-system-extract-configuration", "--file-system-id", created.FileSystemID, "--media-type", mediaType)
+		extract.wantExitCode(0)
+		extract.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
+		extract.wantStdoutContains(`"media_type": "` + mediaType + `"`)
+		extract.wantStdoutContains(`"source":`)
+	}
+	embedding := runTI(t, bin, "--profile", profileName, "fs", "describe-file-system-embedding-configuration", "--file-system-id", created.FileSystemID)
+	embedding.wantExitCode(0)
+	embedding.wantStdoutContains(`"file_system_id": "` + created.FileSystemID + `"`)
+	embedding.wantStdoutContains(`"source":`)
+	disableExtract := runTI(t, bin, "--profile", profileName, "fs", "update-file-system-extract-configuration", "--file-system-id", created.FileSystemID, "--media-type", "image", "--enabled", "false")
+	disableExtract.wantExitCode(0)
+	disabledExtract := runTI(t, bin, "--profile", profileName, "fs", "describe-file-system-extract-configuration", "--file-system-id", created.FileSystemID, "--media-type", "image")
+	disabledExtract.wantExitCode(0)
+	disabledExtract.wantStdoutContains(`"enabled": false`)
 }
 
 func TestLiveCLICommandSurface(t *testing.T) {
@@ -240,6 +260,8 @@ func TestLiveFSCommandSurface(t *testing.T) {
 		{"fs", "help"},
 		{"fs", "create-file-system", "help"}, {"fs", "import-file-system-token", "help"}, {"fs", "list-file-systems", "help"},
 		{"fs", "describe-file-system", "help"}, {"fs", "copy-file", "help"},
+		{"fs", "describe-file-system-extract-configuration", "help"}, {"fs", "update-file-system-extract-configuration", "help"},
+		{"fs", "describe-file-system-embedding-configuration", "help"}, {"fs", "update-file-system-embedding-configuration", "help"},
 		{"fs", "read-file", "help"}, {"fs", "chmod-file", "help"},
 		{"fs", "create-symlink", "help"}, {"fs", "create-hardlink", "help"},
 		{"fs", "create-layer", "help"}, {"fs", "list-layers", "help"},
@@ -260,6 +282,8 @@ func TestLiveFSCommandSurface(t *testing.T) {
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
 		{"fs", "create-file-system", "--display-name", "ti-e2e-dry-run", "--label", "environment=test", "--wait"},
 		{"fs", "delete-file-system", "--file-system-id", selected.FSTenantID},
+		{"fs", "update-file-system-extract-configuration", "--file-system-id", selected.FSTenantID, "--media-type", "image", "--enabled", "false"},
+		{"fs", "update-file-system-embedding-configuration", "--file-system-id", selected.FSTenantID, "--enabled", "false"},
 		{"fs", "create-layer", "--layer-id", "layer-1", "--base-root-path", "/workspace", "--layer-name", "dev"},
 		{"fs", "create-layer-checkpoint", "--layer-id", "layer-1", "--checkpoint-id", "cp-1"},
 		{"fs", "rollback-layer", "--layer-id", "layer-1"}, {"fs", "commit-layer", "--layer-id", "layer-1"},
@@ -300,6 +324,8 @@ func TestLiveFSCommandSurface(t *testing.T) {
 	}
 	testLiveReadOnlyDryRunRejections(t, bin, profileName, [][]string{
 		{"fs", "check-file-system"}, {"fs", "list-file-systems"}, {"fs", "describe-file-system"},
+		{"fs", "describe-file-system-extract-configuration", "--file-system-id", selected.FSTenantID, "--media-type", "image"},
+		{"fs", "describe-file-system-embedding-configuration", "--file-system-id", selected.FSTenantID},
 		{"fs", "read-file"}, {"fs", "list-files"}, {"fs", "describe-file"},
 		{"fs", "search-file-content"}, {"fs", "find-files"}, {"fs", "list-layers"},
 		{"fs", "describe-layer"}, {"fs", "diff-layer"},

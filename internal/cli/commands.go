@@ -20,6 +20,7 @@ import (
 	dbstarter "github.com/tidbcloud/ti-cli/internal/db/product/starter"
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	tifs "github.com/tidbcloud/ti-cli/internal/fs"
+	"github.com/tidbcloud/ti-cli/internal/fs/aiconfig"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 	"github.com/tidbcloud/ti-cli/internal/fs/tokenmgmt"
 	outputpkg "github.com/tidbcloud/ti-cli/internal/output"
@@ -859,6 +860,10 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSDeleteFileSystemCommand(info),
 		newFSListFileSystemsCommand(info),
 		newFSDescribeFileSystemCommand(info),
+		newFSDescribeFileSystemExtractConfigurationCommand(info),
+		newFSUpdateFileSystemExtractConfigurationCommand(info),
+		newFSDescribeFileSystemEmbeddingConfigurationCommand(info),
+		newFSUpdateFileSystemEmbeddingConfigurationCommand(info),
 		newFSImportFileSystemTokenCommand(info),
 		newFSGenerateFileSystemTokenCommand(info),
 		newFSGenerateFileSystemScopedTokenCommand(info),
@@ -894,7 +899,11 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSUnmountFileSystemCommand(info),
 	}
 	tokenCommands := []string{"generate-file-system-token", "generate-file-system-scoped-token", "list-file-system-tokens", "enable-file-system-token", "disable-file-system-token", "delete-file-system-token", "refresh-file-system-token"}
-	selectorExclusions := append([]string{"create-file-system", "list-file-systems", "describe-file-system", "delete-file-system", "import-file-system-token", "drain-file-system", "unmount-file-system"}, tokenCommands...)
+	selectorExclusions := append([]string{
+		"create-file-system", "list-file-systems", "describe-file-system", "delete-file-system", "import-file-system-token", "drain-file-system", "unmount-file-system",
+		"describe-file-system-extract-configuration", "update-file-system-extract-configuration",
+		"describe-file-system-embedding-configuration", "update-file-system-embedding-configuration",
+	}, tokenCommands...)
 	addFSSelectorFlags(commands, selectorExclusions...)
 	addFSAuthFlags(commands,
 		"create-file-system",
@@ -911,6 +920,10 @@ func newFSCommand(info version.Info) *cobra.Command {
 		"disable-file-system-token",
 		"delete-file-system-token",
 		"refresh-file-system-token",
+		"describe-file-system-extract-configuration",
+		"update-file-system-extract-configuration",
+		"describe-file-system-embedding-configuration",
+		"update-file-system-embedding-configuration",
 	)
 	cmd.AddCommand(commands...)
 	return cmd
@@ -1366,6 +1379,134 @@ func newFSDescribeFileSystemCommand(info version.Info) *cobra.Command {
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID. Describing a file system requires TiDB Cloud API credentials.")
 	markUsageRequired(cmd, "file-system-id")
+	return cmd
+}
+
+func newFSDescribeFileSystemExtractConfigurationCommand(info version.Info) *cobra.Command {
+	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
+		Use:        "describe-file-system-extract-configuration",
+		Short:      "Describe media extraction configuration for a file system.",
+		Mutation:   readOnlyCommand,
+		Permission: authz.FSExtractConfigRead,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := fsAIConfigurationServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			opts, err := fsDescribeExtractConfigurationOptions(ctx, profile)
+			if err != nil {
+				return nil, err
+			}
+			return service.DescribeExtract(ctx.cmd.Context(), opts)
+		},
+	}, info)
+	cmd.Flags().String("file-system-id", "", "The file system ID. This command requires TiDB Cloud API credentials.")
+	cmd.Flags().String("media-type", "", "Media type: image, audio, or video.")
+	markUsageRequired(cmd, "file-system-id", "media-type")
+	return cmd
+}
+
+func newFSUpdateFileSystemExtractConfigurationCommand(info version.Info) *cobra.Command {
+	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
+		Use:        "update-file-system-extract-configuration",
+		Short:      "Update media extraction configuration for a file system.",
+		Long:       "Update media extraction configuration for a file system. Enabling or replacing a provider performs a real provider validation request that can incur a charge. If an update outcome is ambiguous, describe the configuration before retrying.",
+		Mutation:   mutatingCommand,
+		Permission: authz.FSExtractConfigUpdate,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := fsAIConfigurationServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			opts, err := fsUpdateExtractConfigurationOptions(ctx, profile)
+			if err != nil {
+				return nil, err
+			}
+			return service.UpdateExtract(ctx.cmd.Context(), opts)
+		},
+		DryRun: func(ctx commandContext) (dryrun.Result, error) {
+			service, profile, err := fsAIConfigurationServiceAndProfile(ctx)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			opts, err := fsUpdateExtractConfigurationOptions(ctx, profile)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			return service.DryRunUpdateExtract(ctx.CommandPath(), opts)
+		},
+	}, info)
+	cmd.Flags().String("file-system-id", "", "The file system ID. This command requires TiDB Cloud API credentials.")
+	cmd.Flags().String("media-type", "", "Media type: image, audio, or video.")
+	cmd.Flags().Bool("enabled", false, "Enable or disable extraction. An explicit true or false value is required when this option is used.")
+	requireExplicitBoolValue(cmd, "enabled")
+	cmd.Flags().String("provider-api-base", "", "HTTPS base URL for the extraction provider API.")
+	cmd.Flags().String("provider-model", "", "Model name accepted by the extraction provider.")
+	cmd.Flags().String("provider-protocol", "", "Provider protocol: openai, or qwen-asr for audio.")
+	cmd.Flags().String("prompt", "", "Extraction prompt. Pass an empty value to restore the backend default prompt.")
+	markUsageRequired(cmd, "file-system-id", "media-type")
+	return cmd
+}
+
+func newFSDescribeFileSystemEmbeddingConfigurationCommand(info version.Info) *cobra.Command {
+	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
+		Use:        "describe-file-system-embedding-configuration",
+		Short:      "Describe embedding configuration for a file system.",
+		Mutation:   readOnlyCommand,
+		Permission: authz.FSEmbeddingConfigRead,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := fsAIConfigurationServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			opts, err := fsDescribeEmbeddingConfigurationOptions(ctx, profile)
+			if err != nil {
+				return nil, err
+			}
+			return service.DescribeEmbedding(ctx.cmd.Context(), opts)
+		},
+	}, info)
+	cmd.Flags().String("file-system-id", "", "The file system ID. This command requires TiDB Cloud API credentials.")
+	markUsageRequired(cmd, "file-system-id")
+	return cmd
+}
+
+func newFSUpdateFileSystemEmbeddingConfigurationCommand(info version.Info) *cobra.Command {
+	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
+		Use:        "update-file-system-embedding-configuration",
+		Short:      "Replace embedding configuration for a file system.",
+		Long:       "Replace embedding configuration for a file system. Enabling a provider performs a real provider validation request that can incur a charge. If an update outcome is ambiguous, describe the configuration before retrying.",
+		Mutation:   mutatingCommand,
+		Permission: authz.FSEmbeddingConfigUpdate,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := fsAIConfigurationServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			opts, err := fsUpdateEmbeddingConfigurationOptions(ctx, profile)
+			if err != nil {
+				return nil, err
+			}
+			return service.UpdateEmbedding(ctx.cmd.Context(), opts)
+		},
+		DryRun: func(ctx commandContext) (dryrun.Result, error) {
+			service, profile, err := fsAIConfigurationServiceAndProfile(ctx)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			opts, err := fsUpdateEmbeddingConfigurationOptions(ctx, profile)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			return service.DryRunUpdateEmbedding(ctx.CommandPath(), opts)
+		},
+	}, info)
+	cmd.Flags().String("file-system-id", "", "The file system ID. This command requires TiDB Cloud API credentials.")
+	cmd.Flags().Bool("enabled", false, "Enable or disable app-managed embedding. An explicit true or false value is required.")
+	requireExplicitBoolValue(cmd, "enabled")
+	cmd.Flags().String("provider-api-base", "", "HTTPS base URL for an OpenAI-compatible embedding API.")
+	cmd.Flags().String("provider-model", "", "Embedding model name. The provider must return 1024 dimensions.")
+	markUsageRequired(cmd, "file-system-id", "enabled")
 	return cmd
 }
 
@@ -2793,6 +2934,130 @@ func fsService(ctx commandContext, profile *config.Profile) (tifs.Service, *conf
 		HomeDir:     profile.HomeDir,
 	}
 	return service, profile, nil
+}
+
+func fsAIConfigurationServiceAndProfile(ctx commandContext) (aiconfig.Service, *config.Profile, error) {
+	profile, err := ctx.LoadProfile()
+	if err != nil {
+		return aiconfig.Service{}, nil, err
+	}
+	debug, err := ctx.BoolFlag("debug")
+	if err != nil {
+		return aiconfig.Service{}, nil, err
+	}
+	return aiconfig.Service{Timeout: 30 * time.Second, Debug: debug, DebugWriter: ctx.cmd.ErrOrStderr()}, profile, nil
+}
+
+func fsDescribeExtractConfigurationOptions(ctx commandContext, profile *config.Profile) (aiconfig.DescribeExtractOptions, error) {
+	fileSystemID, err := ctx.StringFlag("file-system-id")
+	if err != nil {
+		return aiconfig.DescribeExtractOptions{}, err
+	}
+	mediaType, err := ctx.StringFlag("media-type")
+	if err != nil {
+		return aiconfig.DescribeExtractOptions{}, err
+	}
+	return aiconfig.DescribeExtractOptions{Profile: profile, FileSystemID: fileSystemID, MediaType: mediaType}, nil
+}
+
+func fsUpdateExtractConfigurationOptions(ctx commandContext, profile *config.Profile) (aiconfig.UpdateExtractOptions, error) {
+	describe, err := fsDescribeExtractConfigurationOptions(ctx, profile)
+	if err != nil {
+		return aiconfig.UpdateExtractOptions{}, err
+	}
+	enabled, err := optionalBoolFlag(ctx, "enabled")
+	if err != nil {
+		return aiconfig.UpdateExtractOptions{}, err
+	}
+	apiBase, err := optionalStringFlag(ctx, "provider-api-base")
+	if err != nil {
+		return aiconfig.UpdateExtractOptions{}, err
+	}
+	model, err := optionalStringFlag(ctx, "provider-model")
+	if err != nil {
+		return aiconfig.UpdateExtractOptions{}, err
+	}
+	protocol, err := optionalStringFlag(ctx, "provider-protocol")
+	if err != nil {
+		return aiconfig.UpdateExtractOptions{}, err
+	}
+	prompt, err := optionalStringFlag(ctx, "prompt")
+	if err != nil {
+		return aiconfig.UpdateExtractOptions{}, err
+	}
+	providerSet := apiBase != nil || model != nil || (enabled != nil && *enabled) || (protocol != nil && strings.EqualFold(strings.TrimSpace(describe.MediaType), aiconfig.MediaTypeAudio))
+	providerAPIKey, providerAPIKeySupplied := "", false
+	if providerSet {
+		providerAPIKey, providerAPIKeySupplied = os.LookupEnv("TI_FS_AI_PROVIDER_API_KEY")
+	}
+	return aiconfig.UpdateExtractOptions{
+		Profile: profile, FileSystemID: describe.FileSystemID, MediaType: describe.MediaType, Enabled: enabled,
+		ProviderAPIBase: apiBase, ProviderModel: model, ProviderProtocol: protocol, Prompt: prompt,
+		ProviderAPIKey: providerAPIKey, ProviderAPIKeySupplied: providerAPIKeySupplied,
+	}, nil
+}
+
+func fsDescribeEmbeddingConfigurationOptions(ctx commandContext, profile *config.Profile) (aiconfig.DescribeEmbeddingOptions, error) {
+	fileSystemID, err := ctx.StringFlag("file-system-id")
+	if err != nil {
+		return aiconfig.DescribeEmbeddingOptions{}, err
+	}
+	return aiconfig.DescribeEmbeddingOptions{Profile: profile, FileSystemID: fileSystemID}, nil
+}
+
+func fsUpdateEmbeddingConfigurationOptions(ctx commandContext, profile *config.Profile) (aiconfig.UpdateEmbeddingOptions, error) {
+	describe, err := fsDescribeEmbeddingConfigurationOptions(ctx, profile)
+	if err != nil {
+		return aiconfig.UpdateEmbeddingOptions{}, err
+	}
+	enabled, err := ctx.BoolFlag("enabled")
+	if err != nil {
+		return aiconfig.UpdateEmbeddingOptions{}, err
+	}
+	apiBase, err := optionalStringFlag(ctx, "provider-api-base")
+	if err != nil {
+		return aiconfig.UpdateEmbeddingOptions{}, err
+	}
+	model, err := optionalStringFlag(ctx, "provider-model")
+	if err != nil {
+		return aiconfig.UpdateEmbeddingOptions{}, err
+	}
+	providerAPIKey, providerAPIKeySupplied := "", false
+	if enabled {
+		providerAPIKey, providerAPIKeySupplied = os.LookupEnv("TI_FS_AI_PROVIDER_API_KEY")
+	}
+	return aiconfig.UpdateEmbeddingOptions{
+		Profile: profile, FileSystemID: describe.FileSystemID, Enabled: enabled,
+		ProviderAPIBase: apiBase, ProviderModel: model, ProviderAPIKey: providerAPIKey, ProviderAPIKeySupplied: providerAPIKeySupplied,
+	}, nil
+}
+
+func optionalStringFlag(ctx commandContext, name string) (*string, error) {
+	if !ctx.FlagChanged(name) {
+		return nil, nil
+	}
+	value, err := ctx.StringFlag(name)
+	if err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func optionalBoolFlag(ctx commandContext, name string) (*bool, error) {
+	if !ctx.FlagChanged(name) {
+		return nil, nil
+	}
+	value, err := ctx.BoolFlag(name)
+	if err != nil {
+		return nil, err
+	}
+	return &value, nil
+}
+
+func requireExplicitBoolValue(cmd *cobra.Command, name string) {
+	if flag := cmd.Flags().Lookup(name); flag != nil {
+		flag.NoOptDefVal = ""
+	}
 }
 
 func fsServiceAndProfile(ctx commandContext) (tifs.Service, *config.Profile, error) {

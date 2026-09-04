@@ -98,6 +98,16 @@ func TestHelpAndVersion(t *testing.T) {
 	listFileSystems.wantExitCode(0)
 	listFileSystems.wantStdoutContains("[--display-name <string>]")
 	listFileSystems.wantStdoutContains("[--label <string>]")
+	updateEmbedding := runTI(t, bin, "fs", "update-file-system-embedding-configuration", "help")
+	updateEmbedding.wantExitCode(0)
+	updateEmbedding.wantStdoutContains("--enabled <boolean> (required)")
+	updateEmbedding.wantStdoutContains("--file-system-id <string> (required)")
+	updateEmbedding.wantStdoutNotContains("--fs-token")
+	updateExtract := runTI(t, bin, "fs", "update-file-system-extract-configuration", "help")
+	updateExtract.wantExitCode(0)
+	updateExtract.wantStdoutContains("[--enabled <boolean>]")
+	updateExtract.wantStdoutContains("--media-type <string> (required)")
+	updateExtract.wantStdoutNotContains("--provider-api-key")
 
 	createDBCluster := runTI(t, bin, "db", "create-db-cluster", "help")
 	createDBCluster.wantExitCode(0)
@@ -786,6 +796,10 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	describe.wantStdoutContains(`"display_name": "tenant-aws-us-west-2"`)
 	describe.wantStdoutContains(`"labels": {}`)
 	describe.wantStdoutContains(`"quota": {`)
+	describe.wantStdoutContains(`"max_media_llm_files": 100`)
+	describe.wantStdoutContains(`"max_video_llm_files": 30`)
+	describe.wantStdoutContains(`"media_file_count": 0`)
+	describe.wantStdoutContains(`"video_file_count": 0`)
 	describe.wantStdoutContains(`"region_code": "aws-us-west-2"`)
 	describe.wantStdoutNotContains("drive9_")
 	textDescribe := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "describe-file-system", "--file-system-id", "tenant-aws-us-west-2", "--output", "text")
@@ -793,7 +807,70 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	textDescribe.wantStdoutContains("File system ID: tenant-aws-us-west-2")
 	textDescribe.wantStdoutContains("Display name: tenant-aws-us-west-2")
 	textDescribe.wantStdoutContains("Labels: none")
+	textDescribe.wantStdoutContains("Quota max media LLM files: 100")
+	textDescribe.wantStdoutContains("Usage video file count: 0")
 	textDescribe.wantStdoutNotContains(`"file_system_id"`)
+
+	describeExtract := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "describe-file-system-extract-configuration", "--file-system-id", "tenant-aws-us-west-2", "--media-type", "image")
+	describeExtract.wantExitCode(0)
+	describeExtract.wantStdoutContains(`"file_system_id": "tenant-aws-us-west-2"`)
+	describeExtract.wantStdoutContains(`"media_type": "image"`)
+	describeExtract.wantStdoutContains(`"source": "none"`)
+	describeExtractText := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "describe-file-system-extract-configuration", "--file-system-id", "tenant-aws-us-west-2", "--media-type", "audio", "--output", "text")
+	describeExtractText.wantExitCode(0)
+	describeExtractText.wantStdoutContains("Provider API key: none")
+	describeExtractQuery := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "describe-file-system-extract-configuration", "--file-system-id", "tenant-aws-us-west-2", "--media-type", "video", "--query", "source", "--output", "text")
+	describeExtractQuery.wantExitCode(0)
+	if strings.TrimSpace(describeExtractQuery.stdout) != "none" {
+		describeExtractQuery.fail("extract query output mismatch")
+	}
+	describeEmbedding := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "describe-file-system-embedding-configuration", "--file-system-id", "tenant-aws-us-west-2")
+	describeEmbedding.wantExitCode(0)
+	describeEmbedding.wantStdoutContains(`"source": "none"`)
+
+	requestsBeforeAIDryRun := westControl.requestCount()
+	aiEnv := append(baseEnv, "TI_FS_AI_PROVIDER_API_KEY=provider-e2e-secret")
+	dryRunExtract := runTIWithInput(t, bin, "", aiEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "update-file-system-extract-configuration",
+		"--file-system-id", "tenant-aws-us-west-2", "--media-type", "audio", "--enabled", "true",
+		"--provider-api-base", "https://provider.example/v1", "--provider-model", "audio-model", "--provider-protocol", "qwen-asr", "--dry-run")
+	dryRunExtract.wantExitCode(0)
+	dryRunExtract.wantStdoutContains(`"api_key": "[REDACTED]"`)
+	dryRunExtract.wantStdoutContains(`"provider_api_key_supplied": true`)
+	dryRunExtract.wantStdoutNotContains("provider-e2e-secret")
+	if got := westControl.requestCount(); got != requestsBeforeAIDryRun {
+		t.Fatalf("AI dry-run sent remote requests: before=%d after=%d", requestsBeforeAIDryRun, got)
+	}
+	updateExtract := runTIWithInput(t, bin, "", aiEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "update-file-system-extract-configuration",
+		"--file-system-id", "tenant-aws-us-west-2", "--media-type", "image", "--enabled", "true",
+		"--provider-api-base", "https://provider.example/v1", "--provider-model", "vision-model", "--debug")
+	updateExtract.wantExitCode(0)
+	updateExtract.wantStdoutContains(`"api_key": "pro********"`)
+	updateExtract.wantStdoutNotContains("provider-e2e-secret")
+	updateExtract.wantStderrNotContains("provider-e2e-secret")
+	if err := filepath.Walk(filepath.Join(home, ".ti"), func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil || info.IsDir() {
+			return walkErr
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		if strings.Contains(string(data), "provider-e2e-secret") {
+			return fmt.Errorf("provider key persisted in %s", path)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	updateEmbedding := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "--region", "aws-us-west-2", "fs", "update-file-system-embedding-configuration",
+		"--file-system-id", "tenant-aws-us-west-2", "--enabled", "false", "--query", "enabled")
+	updateEmbedding.wantExitCode(0)
+	updateEmbedding.wantStdoutContains("false")
+	invalidMedia := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "describe-file-system-extract-configuration", "--file-system-id", "tenant-aws-us-east-1", "--media-type", "text")
+	invalidMedia.wantExitCode(2)
+	invalidMedia.wantStderrContains("image, audio, or video")
+	missingEnabledValue := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "update-file-system-embedding-configuration", "--file-system-id", "tenant-aws-us-east-1", "--enabled")
+	missingEnabledValue.wantExitCode(2)
 	callsBeforeMissingSelectorCommands := len(readFakeDrive9Calls(t, recordPath))
 	for _, args := range [][]string{
 		{"fs", "list-files", "--path", "/"},
@@ -1327,6 +1404,57 @@ func (f *fakeFSTenantControlPlane) serveHTTP(w http.ResponseWriter, r *http.Requ
 		}
 		sort.Slice(items, func(i, j int) bool { return items[i].TenantID < items[j].TenantID })
 		_ = json.NewEncoder(w).Encode(map[string]any{"tenants": items, "page": 1, "page_size": 100, "next_page": 0})
+	case strings.Contains(r.URL.Path, "/extract-config/"):
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/admin/tenants/"), "/")
+		if len(parts) != 3 || parts[1] != "extract-config" {
+			http.NotFound(w, r)
+			return
+		}
+		if _, ok := f.tenants[parts[0]]; !ok {
+			http.Error(w, `{"error":"tenant not found"}`, http.StatusNotFound)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "source": "none"})
+		case http.MethodPut:
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			if key, ok := body["api_key"].(string); ok {
+				if key != "provider-e2e-secret" {
+					http.Error(w, `{"error":"unexpected provider key"}`, http.StatusBadRequest)
+					return
+				}
+				body["api_key"] = "pro********"
+			}
+			body["source"] = "custom"
+			_ = json.NewEncoder(w).Encode(body)
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		}
+	case strings.HasSuffix(r.URL.Path, "/embedding-config"):
+		id := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/v1/admin/tenants/"), "/embedding-config")
+		if _, ok := f.tenants[id]; !ok {
+			http.Error(w, `{"error":"tenant not found"}`, http.StatusNotFound)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "source": "none"})
+		case http.MethodPut:
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			body["source"] = "custom"
+			_ = json.NewEncoder(w).Encode(body)
+		default:
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+		}
 	case strings.HasPrefix(r.URL.Path, "/v1/admin/tenants/"):
 		id := strings.TrimPrefix(r.URL.Path, "/v1/admin/tenants/")
 		tenant, ok := f.tenants[id]
@@ -1378,8 +1506,8 @@ func (f *fakeFSTenantControlPlane) hasRequest(method, path string, queryParts ..
 
 func fakeFSTenantQuota() map[string]any {
 	return map[string]any{
-		"config": map[string]any{"max_storage_size": 1024, "max_file_size": 128, "max_file_count": 1000, "tidbcloud_spending_limit": nil},
-		"usage":  map[string]any{"storage_bytes": 0, "reserved_bytes": 0, "file_count": 0},
+		"config": map[string]any{"max_storage_size": 1024, "max_file_size": 128, "max_file_count": 1000, "max_media_llm_files": 100, "max_video_llm_files": 30, "tidbcloud_spending_limit": nil},
+		"usage":  map[string]any{"storage_bytes": 0, "reserved_bytes": 0, "file_count": 0, "media_file_count": 0, "video_file_count": 0},
 	}
 }
 
