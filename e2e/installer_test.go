@@ -146,7 +146,8 @@ func TestUnixInstallerMigratesLegacyStateAndPreservesPathShadow(t *testing.T) {
 
 	companionArtifact := fmt.Sprintf("drive9-%s-%s", runtime.GOOS, runtime.GOARCH)
 	companion := filepath.Join(assetDir, companionArtifact)
-	writeE2EFile(t, companion, "#!/bin/sh\nexit 0\n", 0o755)
+	companionCalls := filepath.Join(root, "companion-calls")
+	writeE2EFile(t, companion, compatibleDrive9ShellFixture(companionCalls), 0o755)
 	companionData, err := os.ReadFile(companion)
 	if err != nil {
 		t.Fatal(err)
@@ -198,6 +199,15 @@ fi
 	if strings.Contains(string(output), "ti fs companion installed to") {
 		t.Fatalf("installer exposed the companion installation path:\n%s", output)
 	}
+	companionCallData, err := os.ReadFile(companionCalls)
+	if err != nil {
+		t.Fatalf("read companion validation calls: %v", err)
+	}
+	for _, want := range []string{"fs layer help", "mount --help"} {
+		if !strings.Contains(string(companionCallData), want) {
+			t.Fatalf("installer did not validate companion command surface %q; calls:\n%s", want, companionCallData)
+		}
+	}
 	for _, regionCode := range []string{"aws-us-east-1", "aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1"} {
 		if !strings.Contains(string(output), regionCode) {
 			t.Fatalf("installer did not list ti fs region %q:\n%s", regionCode, output)
@@ -222,6 +232,21 @@ fi
 	if err != nil || !strings.Contains(string(legacyCredentials), "tdc_public_key") {
 		t.Fatalf("installer modified legacy credentials: %q, %v", legacyCredentials, err)
 	}
+}
+
+func compatibleDrive9ShellFixture(callLog string) string {
+	return fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+if [ "$1 $2 $3" = "fs layer help" ]; then
+  printf 'usage: drive9 fs layer <create|list|fork|chain|delete>\n'
+  exit 0
+fi
+if [ "$1 $2" = "mount --help" ]; then
+  printf '  -layer string\n  -checkpoint string\n'
+  exit 0
+fi
+printf 'compatible companion\n'
+`, callLog)
 }
 
 func copyTestFile(t *testing.T, source, destination string, mode os.FileMode) {
@@ -273,6 +298,35 @@ func TestInstallersUseProductOwnedFSRegionsAndHideCompanionPath(t *testing.T) {
 			if !strings.Contains(content, regionCode) {
 				t.Fatalf("%s does not list ti fs region %q", path, regionCode)
 			}
+		}
+	}
+}
+
+func TestInstallersValidateCompanionCommandSurfaceBeforeInstallation(t *testing.T) {
+	shellBytes, err := os.ReadFile(filepath.Join("..", "scripts", "install.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	shell := string(shellBytes)
+	shellValidation := strings.LastIndex(shell, `validate_companion "${TMP_DIR}/${COMPANION_ARTIFACT}"`)
+	shellInstall := strings.LastIndex(shell, `install_file "${TMP_DIR}/${COMPANION_ARTIFACT}" "$COMPANION_TARGET"`)
+	if shellValidation < 0 || shellInstall < 0 || shellValidation >= shellInstall {
+		t.Fatal("install.sh must validate the staged companion before installing it")
+	}
+
+	powerShellBytes, err := os.ReadFile(filepath.Join("..", "scripts", "install.ps1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	powerShell := string(powerShellBytes)
+	powerShellValidation := strings.LastIndex(powerShell, "Assert-CompanionCommandSurface $CompanionPath")
+	powerShellInstall := strings.LastIndex(powerShell, "Move-Item -Force -Path $CompanionPath -Destination $CompanionTarget")
+	if powerShellValidation < 0 || powerShellInstall < 0 || powerShellValidation >= powerShellInstall {
+		t.Fatal("install.ps1 must validate the staged companion before installing it")
+	}
+	for _, required := range []string{"fork", "chain", "delete", "layer", "checkpoint"} {
+		if !strings.Contains(shell, required) || !strings.Contains(powerShell, required) {
+			t.Fatalf("installers do not validate required companion surface %q", required)
 		}
 	}
 }

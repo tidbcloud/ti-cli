@@ -51,6 +51,30 @@ func main() {
 		_ = file.Close()
 	}
 	args := os.Args[1:]
+	if hasPrefix(args, "fs", "layer", "help") {
+		fmt.Println("usage: drive9 fs layer <create|list|status|diff|checkpoint|rollback|commit|fork|chain|delete>")
+		return
+	}
+	if hasPrefix(args, "mount", "--help") {
+		fmt.Println("-layer string")
+		fmt.Println("-checkpoint string")
+		return
+	}
+	if hasPrefix(args, "fs", "layer", "fork") {
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"layer_id": "child-id", "name": "child", "state": "active", "base_root_path": "/workspace",
+			"parent_layer_id": "parent-id", "origin_seq": 7, "origin_checkpoint_id": flagValue(args, "--checkpoint"), "root_layer_id": "root-id", "depth": 1,
+		})
+		return
+	}
+	if hasPrefix(args, "fs", "layer", "chain") {
+		fmt.Println(`{"chain":[{"layer_id":"root-id","name":"root","state":"active","depth":0,"limit_seq":7,"base_root_path":"/workspace"},{"layer_id":"child-id","name":"child","state":"active","parent_layer_id":"root-id","origin_seq":7,"origin_checkpoint_id":"seed","depth":1,"limit_seq":7,"base_root_path":"/workspace"}]}`)
+		return
+	}
+	if hasPrefix(args, "fs", "layer", "delete") {
+		fmt.Println("ok")
+		return
+	}
 	if hasPrefix(args, "create") {
 		region := flagValue(args, "--region-code")
 		id := "tenant-" + strings.ReplaceAll(region, "_", "-")
@@ -115,7 +139,19 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(`{"path":"/","size":0,"isdir":true}`)
+		return
 	}
+	if hasPrefix(args, "mount") {
+		fmt.Fprintln(os.Stderr, "drive9: mount mode: "+mountMode(args))
+		return
+	}
+}
+
+func mountMode(args []string) string {
+	if value := flagValue(args, "--mode"); value != "" {
+		return value
+	}
+	return "webdav"
 }
 
 func hasPrefix(args []string, want ...string) bool {

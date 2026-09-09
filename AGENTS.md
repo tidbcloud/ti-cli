@@ -77,6 +77,8 @@ Implemented:
   `docs/spec/done/0018-fs-token-auth-and-config-free-access.md`
 - Server-backed Filesystem token lifecycle management from
   `docs/spec/done/0030-file-system-token-lifecycle-management.md`
+- Filesystem layer fork, ancestry, deletion, and historical mount workflows
+  from `docs/spec/done/0032-filesystem-layer-fork-workflows.md`
 - install and update distribution from
   `docs/spec/done/0012-install-and-update-distribution.md`
 - English PingCAP Preview documentation from
@@ -123,9 +125,12 @@ Implemented:
 - `ti fs find-files`
 - `ti fs create-layer`
 - `ti fs list-layers`
+- `ti fs fork-layer`
+- `ti fs list-layer-chain`
 - `ti fs describe-layer`
 - `ti fs diff-layer`
 - `ti fs create-layer-checkpoint`
+- `ti fs delete-layer`
 - `ti fs rollback-layer`
 - `ti fs commit-layer`
 - `ti fs mount-file-system`
@@ -584,10 +589,13 @@ Implemented command behavior:
 - `ti fs create-layer --layer-id layer-1 --base-root-path /workspace --layer-name task --durability-mode restore-safe --tag task=auth`
 - `ti fs list-layers`
 - `ti fs list-layers --output text`
+- `ti fs fork-layer --parent-layer-ref layer-1 --layer-name child --checkpoint-id cp-1`
+- `ti fs list-layer-chain --layer-ref child --output text`
 - `ti fs describe-layer --layer-id layer-1`
 - `ti fs diff-layer --layer-id layer-1`
 - `ti fs copy-file --from-local ./README.md --to-remote /workspace/layered.md --layer-id layer-1`
 - `ti fs create-layer-checkpoint --layer-id layer-1 --checkpoint-id cp-1 --label before-commit`
+- `ti fs delete-layer --layer-ref child`
 - `ti fs rollback-layer --layer-id layer-1`
 - `ti fs commit-layer --layer-id layer-1`
 - `ti fs pack-file-system --local-root ~/.ti/local/fs/demo --remote-root /workspace --mount-profile portable`
@@ -600,6 +608,8 @@ Implemented command behavior:
 - `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile portable --pack-path /`
 - `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --read-cache-size-mb 256 --read-cache-max-file-mb 16`
 - `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --cache-dir ~/.ti/cache/workspace --write-back-cache=false`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --remote-path /workspace --driver fuse --layer-ref layer-1`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace-v1 --remote-path /workspace --driver fuse --layer-ref layer-1 --checkpoint-id cp-1`
 - `ti fs drain-file-system --mount-path ./workspace`
 - `ti fs drain-file-system --mount-path ./workspace --timeout 30s`
 - `ti fs unmount-file-system --mount-path ./workspace`
@@ -671,9 +681,12 @@ Registered command surface:
 - `ti fs find-files`
 - `ti fs create-layer`
 - `ti fs list-layers`
+- `ti fs fork-layer`
+- `ti fs list-layer-chain`
 - `ti fs describe-layer`
 - `ti fs diff-layer`
 - `ti fs create-layer-checkpoint`
+- `ti fs delete-layer`
 - `ti fs rollback-layer`
 - `ti fs commit-layer`
 - `ti fs pack-file-system`

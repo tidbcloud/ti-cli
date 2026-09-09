@@ -14,3 +14,6 @@
 [submodule "ref/fs"]
 	path = ref/fs
 	url = git@github.com:tidbcloud/fs.git
+[submodule "integration/tidbcloud-fs-e2b-example"]
+	path = integration/tidbcloud-fs-e2b-example
+	url = git@github.com:likidu/tidbcloud-fs-e2b-example.git

@@ -324,6 +324,12 @@ func ListCredentials(homeDir, profileName string) ([]Credential, error) {
 		}
 		credential, err := GetCredential(homeDir, profileName, id)
 		if err != nil {
+			if apperr.CodeFor(err) == "fs.credential_not_found" {
+				contents, readErr := os.ReadDir(filepath.Join(dir, entry.Name()))
+				if readErr == nil && len(contents) == 0 {
+					continue
+				}
+			}
 			return nil, err
 		}
 		credentials = append(credentials, credential)

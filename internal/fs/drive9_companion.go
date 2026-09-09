@@ -50,6 +50,14 @@ type drive9CommandResult struct {
 	Stdout    string `json:"stdout,omitempty"`
 }
 
+const (
+	drive9CapabilityLayerFork       = "layer-fork"
+	drive9CapabilityLayerChain      = "layer-chain"
+	drive9CapabilityLayerDelete     = "layer-delete"
+	drive9CapabilityLayerMount      = "layer-mount"
+	drive9CapabilityCheckpointMount = "checkpoint-mount"
+)
+
 func (s Service) drive9Runner() fswrap.Runner {
 	return fswrap.Runner{
 		HomeDir:       s.HomeDir,
@@ -70,6 +78,77 @@ func (s Service) drive9Run(ctx context.Context, profile *config.Profile, args []
 		CaptureStdout:   capture,
 		IncludeFSAPIKey: true,
 	})
+}
+
+func (s Service) requireDrive9Capabilities(ctx context.Context, profile *config.Profile, capabilities ...string) error {
+	needLayerHelp := false
+	needMountHelp := false
+	for _, capability := range capabilities {
+		switch capability {
+		case drive9CapabilityLayerFork, drive9CapabilityLayerChain, drive9CapabilityLayerDelete:
+			needLayerHelp = true
+		case drive9CapabilityLayerMount, drive9CapabilityCheckpointMount:
+			needMountHelp = true
+		default:
+			return apperr.New("fs.companion_capability_unknown", "runtime", 1, fmt.Sprintf("unknown ti fs companion capability %q", capability))
+		}
+	}
+
+	layerHelp := ""
+	if needLayerHelp {
+		result, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{Profile: profile, Args: []string{"fs", "layer", "help"}, CaptureStdout: true})
+		if err != nil {
+			return incompatibleDrive9Error(err)
+		}
+		layerHelp = string(result.Stdout) + "\n" + string(result.Stderr)
+	}
+	mountHelp := ""
+	if needMountHelp {
+		result, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{Profile: profile, Args: []string{"mount", "--help"}, CaptureStdout: true})
+		if err != nil {
+			return incompatibleDrive9Error(err)
+		}
+		mountHelp = string(result.Stdout) + "\n" + string(result.Stderr)
+	}
+
+	for _, capability := range capabilities {
+		available := false
+		switch capability {
+		case drive9CapabilityLayerFork:
+			available = layerHelpHasCommand(layerHelp, "fork")
+		case drive9CapabilityLayerChain:
+			available = layerHelpHasCommand(layerHelp, "chain")
+		case drive9CapabilityLayerDelete:
+			available = layerHelpHasCommand(layerHelp, "delete")
+		case drive9CapabilityLayerMount:
+			available = strings.Contains(mountHelp, "-layer string") || strings.Contains(mountHelp, "--layer string")
+		case drive9CapabilityCheckpointMount:
+			available = strings.Contains(mountHelp, "-checkpoint string") || strings.Contains(mountHelp, "--checkpoint string")
+		}
+		if !available {
+			return incompatibleDrive9Error(nil)
+		}
+	}
+	return nil
+}
+
+func layerHelpHasCommand(help, command string) bool {
+	for _, line := range strings.FieldsFunc(help, func(r rune) bool {
+		return r == '<' || r == '>' || r == '|' || r == ' ' || r == '\t' || r == '\r' || r == '\n'
+	}) {
+		if line == command {
+			return true
+		}
+	}
+	return false
+}
+
+func incompatibleDrive9Error(cause error) error {
+	message := "the installed ti-drive9 companion does not support filesystem layer fork workflows; update or reinstall ti after a compatible companion release is available"
+	if cause != nil {
+		return apperr.Wrap("fs.companion_incompatible", "runtime", 1, message, cause)
+	}
+	return apperr.New("fs.companion_incompatible", "runtime", 1, message)
 }
 
 func (s Service) drive9RunTransientRetry(ctx context.Context, profile *config.Profile, args []string, capture bool) (fswrap.Result, error) {
@@ -597,6 +676,57 @@ func (s Service) drive9ListLayers(ctx context.Context, opts ListLayersOptions) (
 	return out, nil
 }
 
+func (s Service) drive9ForkLayer(ctx context.Context, opts ForkLayerOptions) (LayerResult, error) {
+	if err := s.requireDrive9Capabilities(ctx, opts.Profile, drive9CapabilityLayerFork); err != nil {
+		return LayerResult{}, err
+	}
+	args := []string{"fs", "layer", "fork", "--json"}
+	appendFlagValue(&args, "--id", opts.LayerID)
+	appendFlagValue(&args, "--name", opts.LayerName)
+	appendFlagValue(&args, "--checkpoint", opts.CheckpointID)
+	appendFlagValue(&args, "--actor", opts.ActorID)
+	args = append(args, strings.TrimSpace(opts.ParentLayerRef))
+	result, err := s.drive9Run(ctx, opts.Profile, args, true)
+	if err != nil {
+		return LayerResult{}, err
+	}
+	var layer apifs.FSLayer
+	if err := json.Unmarshal(result.Stdout, &layer); err != nil {
+		return LayerResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs layer fork response", err)
+	}
+	return LayerResult{FSLayer: layer}, nil
+}
+
+func (s Service) drive9ListLayerChain(ctx context.Context, opts ListLayerChainOptions) (LayerChainResult, error) {
+	if err := s.requireDrive9Capabilities(ctx, opts.Profile, drive9CapabilityLayerChain); err != nil {
+		return LayerChainResult{}, err
+	}
+	result, err := s.drive9RunTransientRetry(ctx, opts.Profile, []string{"fs", "layer", "chain", "--json", strings.TrimSpace(opts.LayerRef)}, true)
+	if err != nil {
+		return LayerChainResult{}, err
+	}
+	var out LayerChainResult
+	if err := json.Unmarshal(result.Stdout, &out); err != nil {
+		return LayerChainResult{}, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs layer chain response", err)
+	}
+	return out, nil
+}
+
+func (s Service) drive9DeleteLayer(ctx context.Context, opts DeleteLayerOptions) (DeleteLayerResult, error) {
+	if err := s.requireDrive9Capabilities(ctx, opts.Profile, drive9CapabilityLayerDelete); err != nil {
+		return DeleteLayerResult{}, err
+	}
+	args := []string{"fs", "layer", "delete"}
+	if opts.Cascade {
+		args = append(args, "--cascade")
+	}
+	args = append(args, strings.TrimSpace(opts.LayerRef))
+	if _, err := s.drive9Run(ctx, opts.Profile, args, true); err != nil {
+		return DeleteLayerResult{}, err
+	}
+	return DeleteLayerResult{Operation: "delete_layer", LayerRef: strings.TrimSpace(opts.LayerRef), Status: "abandoned", Cascade: opts.Cascade}, nil
+}
+
 func (s Service) drive9DescribeLayer(ctx context.Context, opts DescribeLayerOptions) (LayerResult, error) {
 	result, err := s.drive9RunTransientRetry(ctx, opts.Profile, []string{"fs", "layer", "status", "--json", strings.TrimSpace(opts.LayerID)}, true)
 	if err != nil {
@@ -1122,6 +1252,17 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	if opts.ReadOnly {
 		args = append(args, "--read-only")
 	}
+	if opts.LayerRef != "" {
+		capabilities := []string{drive9CapabilityLayerMount}
+		if opts.CheckpointID != "" {
+			capabilities = append(capabilities, drive9CapabilityCheckpointMount)
+		}
+		if err := s.requireDrive9Capabilities(ctx, opts.Profile, capabilities...); err != nil {
+			return MountResult{}, err
+		}
+		appendFlagValue(&args, "--layer", opts.LayerRef)
+		appendFlagValue(&args, "--checkpoint", opts.CheckpointID)
+	}
 	fuseRequested := strings.TrimSpace(opts.Driver) == "fuse"
 	if fuseRequested {
 		appendFlagValue(&args, "--cache-dir", opts.CacheDir)
@@ -1151,7 +1292,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	if err != nil {
 		return MountResult{}, err
 	}
-	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs"); err != nil {
+	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", opts); err != nil {
 		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
 		return MountResult{}, err
 	}
@@ -1160,7 +1301,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	if driver == "" {
 		driver = "auto"
 	}
-	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: opts.LocalRoot, PackPaths: opts.PackPaths, WriteBackCache: opts.WriteBackCache}, nil
+	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: opts.LocalRoot, PackPaths: opts.PackPaths, WriteBackCache: opts.WriteBackCache, LayerRef: opts.LayerRef, CheckpointID: opts.CheckpointID, ReadOnly: opts.ReadOnly}, nil
 }
 
 func (s Service) drive9DrainFileSystem(ctx context.Context, opts DrainFileSystemOptions) (DrainResult, error) {
@@ -1221,7 +1362,7 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 	return UnmountResult{Status: "unmounted", MountPath: opts.MountPath}, nil
 }
 
-func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kind string) error {
+func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kind string, mountOpts ...MountFileSystemOptions) error {
 	if profile == nil {
 		return apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
@@ -1238,6 +1379,10 @@ func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kin
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "construct ti fs mount locator", err)
 	}
 	locator = locator.WithTokenCorrelation(profile.FSTenantID, profile.FSTokenID, fsTokenFingerprint(profile.FSAPIKey))
+	if len(mountOpts) > 0 {
+		opts := mountOpts[0]
+		locator = locator.WithLayerView(opts.RemotePath, opts.LayerRef, opts.CheckpointID, opts.ReadOnly)
+	}
 	if _, err := mountlocator.Write(homeDir, locator); err != nil {
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "write ti fs mount locator", err)
 	}
@@ -1283,6 +1428,9 @@ func (s Service) drive9MountLocatorProfile(base *config.Profile, mountPath strin
 }
 
 func drive9CopyArgs(opts CopyFileOptions) ([]string, string, string, error) {
+	if opts.Recursive && strings.TrimSpace(opts.LayerID) != "" {
+		return nil, "", "", apperr.New("fs.recursive_layer_copy_unsupported", "usage", 2, "--recursive cannot be combined with --layer-id; mount the layer with --driver fuse and copy the directory through the mounted path")
+	}
 	args := []string{"fs", "cp"}
 	if opts.Resume {
 		args = append(args, "--resume")

@@ -42,17 +42,21 @@ type MountFileSystemOptions struct {
 	RemotePath        string
 	Driver            string
 	ReadOnly          bool
+	ReadOnlySet       bool
 	ReadyTimeout      time.Duration
 	CacheDir          string
 	ReadCacheMB       int64
 	ReadCacheFileMB   int64
 	ReadCacheTTL      time.Duration
 	WriteBackCache    bool
+	WriteBackCacheSet bool
 	MountProfile      string
 	LocalRoot         string
 	PackPaths         []string
 	UnpackArchivePath string
 	NoAutoUnpack      bool
+	LayerRef          string
+	CheckpointID      string
 }
 
 type UnmountFileSystemOptions struct {
@@ -90,6 +94,9 @@ type MountResult struct {
 	MountProfile   string               `json:"mount_profile,omitempty"`
 	LocalRoot      string               `json:"local_root,omitempty"`
 	PackPaths      []string             `json:"pack_paths,omitempty"`
+	LayerRef       string               `json:"layer_ref,omitempty"`
+	CheckpointID   string               `json:"checkpoint_id,omitempty"`
+	ReadOnly       bool                 `json:"read_only,omitempty"`
 }
 
 type MountRemoteSnapshot struct {
@@ -136,10 +143,29 @@ type MountRuntimeCheck struct {
 }
 
 func (s Service) MountFileSystem(ctx context.Context, opts MountFileSystemOptions) (MountResult, error) {
+	var err error
+	opts, err = normalizeLayerMountOptions(opts)
+	if err != nil {
+		return MountResult{}, err
+	}
 	return s.drive9MountFileSystem(ctx, opts)
 }
 
 func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, opts MountFileSystemOptions) (dryrun.Result, error) {
+	var err error
+	opts, err = normalizeLayerMountOptions(opts)
+	if err != nil {
+		return dryrun.Result{}, err
+	}
+	if opts.LayerRef != "" {
+		capabilities := []string{drive9CapabilityLayerMount}
+		if opts.CheckpointID != "" {
+			capabilities = append(capabilities, drive9CapabilityCheckpointMount)
+		}
+		if err := s.requireDrive9Capabilities(ctx, opts.Profile, capabilities...); err != nil {
+			return dryrun.Result{}, err
+		}
+	}
 	inputs, err := s.mountInputs(opts)
 	if err != nil {
 		return dryrun.Result{}, err
@@ -155,6 +181,12 @@ func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, 
 	} else {
 		checks = append(checks, dryrun.Check{Name: "mount_driver", Status: "passed", Message: inputs.driver.Name()})
 	}
+	if opts.LayerRef != "" {
+		checks = append(checks, dryrun.Check{Name: "layer_view", Status: "passed", Message: opts.LayerRef})
+	}
+	if opts.CheckpointID != "" {
+		checks = append(checks, dryrun.Check{Name: "checkpoint_view", Status: "passed", Message: opts.CheckpointID + " (read-only)"})
+	}
 	description := "normal execution starts a local ti fs FUSE runtime and mounts it at the requested path"
 	if inputs.driver.Name() == "webdav" {
 		description = "normal execution starts a local WebDAV bridge and mounts it at the requested path"
@@ -166,9 +198,68 @@ func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, 
 			Description: description,
 			Method:      "GET",
 			Path:        "/v1/status",
+			Body: map[string]any{
+				"driver":        opts.Driver,
+				"layer_ref":     opts.LayerRef,
+				"checkpoint_id": opts.CheckpointID,
+				"read_only":     opts.ReadOnly,
+			},
 		},
 		checks...,
 	), nil
+}
+
+func normalizeLayerMountOptions(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
+	opts.LayerRef = strings.TrimSpace(opts.LayerRef)
+	opts.CheckpointID = strings.TrimSpace(opts.CheckpointID)
+	if opts.CheckpointID != "" && opts.LayerRef == "" {
+		return MountFileSystemOptions{}, apperr.New("fs.checkpoint_requires_layer", "usage", 2, "--checkpoint-id requires --layer-ref")
+	}
+	if opts.LayerRef == "" {
+		return opts, nil
+	}
+	if err := validateLayerReference(opts.LayerRef, "--layer-ref"); err != nil {
+		return MountFileSystemOptions{}, err
+	}
+	if opts.CheckpointID != "" {
+		if err := validateLayerReference(opts.CheckpointID, "--checkpoint-id"); err != nil {
+			return MountFileSystemOptions{}, err
+		}
+		if opts.ReadOnlySet && !opts.ReadOnly {
+			return MountFileSystemOptions{}, apperr.New("fs.checkpoint_mount_read_only", "usage", 2, "checkpoint mounts are read-only; remove --read-only=false")
+		}
+		if opts.WriteBackCacheSet && opts.WriteBackCache {
+			return MountFileSystemOptions{}, apperr.New("fs.checkpoint_mount_read_only", "usage", 2, "checkpoint mounts are read-only; remove --write-back-cache=true")
+		}
+		opts.ReadOnly = true
+		opts.WriteBackCache = false
+	}
+	driverName := strings.TrimSpace(opts.Driver)
+	if driverName == "" {
+		driverName = "auto"
+	}
+	if driverName == "webdav" {
+		return MountFileSystemOptions{}, apperr.New("fs.layer_mount_requires_fuse", "usage", 2, "layer and checkpoint mounts require FUSE; install or enable FUSE and use --driver fuse")
+	}
+	if driverName == "auto" {
+		driver, err := mountdriver.Resolve("auto")
+		if err != nil {
+			return MountFileSystemOptions{}, apperr.New("fs.invalid_mount_driver", "usage", 2, err.Error())
+		}
+		if driver.Name() != "fuse" {
+			return MountFileSystemOptions{}, apperr.New("fs.layer_mount_requires_fuse", "usage", 2, "automatic mount selection would use WebDAV, but layer and checkpoint mounts require FUSE; install or enable FUSE and use --driver fuse")
+		}
+		if err := driver.CheckPrerequisites(); err != nil {
+			return MountFileSystemOptions{}, apperr.New("fs.layer_mount_requires_fuse", "usage", 2, "layer and checkpoint mounts require FUSE: "+err.Error())
+		}
+		opts.Driver = "fuse"
+		return opts, nil
+	}
+	if driverName != "fuse" {
+		return MountFileSystemOptions{}, apperr.New("fs.invalid_mount_driver", "usage", 2, fmt.Sprintf("unsupported ti fs mount driver %q; supported values: auto, fuse, webdav", driverName))
+	}
+	opts.Driver = "fuse"
+	return opts, nil
 }
 
 func (s Service) UnmountFileSystem(ctx context.Context, opts UnmountFileSystemOptions) (UnmountResult, error) {
@@ -691,6 +782,15 @@ func (r MountResult) Human() string {
 		"Mount path: " + r.MountPath,
 		"Remote path: " + r.RemotePath,
 		"Driver: " + r.Driver,
+	}
+	if r.LayerRef != "" {
+		lines = append(lines, "Layer: "+r.LayerRef)
+	}
+	if r.CheckpointID != "" {
+		lines = append(lines, "Checkpoint: "+r.CheckpointID)
+	}
+	if r.ReadOnly {
+		lines = append(lines, "Read only: true")
 	}
 	if r.PID > 0 {
 		lines = append(lines, fmt.Sprintf("PID: %d", r.PID))

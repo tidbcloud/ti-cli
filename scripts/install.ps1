@@ -22,6 +22,28 @@ function Warn($Message) {
     Write-Warning $Message
 }
 
+function Assert-CompanionCommandSurface($CompanionPath) {
+    $layerHelp = (& $CompanionPath fs layer help 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        Fail "downloaded ti-drive9 companion cannot report its filesystem layer commands"
+    }
+    foreach ($command in @("fork", "chain", "delete")) {
+        if ($layerHelp -notmatch "(?m)(^|[\s<|])$command([\s>|]|$)") {
+            Fail "downloaded ti-drive9 companion is incompatible: missing drive9 fs layer $command"
+        }
+    }
+
+    $mountHelp = (& $CompanionPath mount --help 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        Fail "downloaded ti-drive9 companion cannot report its mount options"
+    }
+    foreach ($flag in @("layer", "checkpoint")) {
+        if ($mountHelp -notmatch "(?m)(^|\s)--?$flag(\s|$)") {
+            Fail "downloaded ti-drive9 companion is incompatible: missing drive9 mount --$flag"
+        }
+    }
+}
+
 function Resolve-InstallDir {
     if (-not [string]::IsNullOrWhiteSpace($env:TI_INSTALL_DIR) -and
         -not [string]::IsNullOrWhiteSpace($env:TDC_INSTALL_DIR) -and
@@ -219,6 +241,8 @@ try {
     if ($CompanionExpected -ne $CompanionActual) {
         Fail "checksum mismatch for $CompanionArtifact"
     }
+
+    Assert-CompanionCommandSurface $CompanionPath
 
     Expand-Archive -Path $ArchivePath -DestinationPath $TempDir.FullName -Force
     $Extracted = Get-ChildItem -Path $TempDir.FullName -Recurse -Filter "ti.exe" | Select-Object -First 1

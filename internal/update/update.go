@@ -742,7 +742,77 @@ func (c client) downloadDrive9Companion(ctx context.Context, baseURL string) (do
 		cleanup()
 		return downloadedBinary{}, func() {}, apperr.Wrap("update.extract_artifact", "runtime", 1, "make ti-drive9 executable", err)
 	}
+	if err := validateDrive9Companion(ctx, tempPath); err != nil {
+		cleanup()
+		return downloadedBinary{}, func() {}, err
+	}
 	return downloadedBinary{Path: tempPath, SHA256: expectedSHA}, cleanup, nil
+}
+
+func validateDrive9Companion(ctx context.Context, path string) error {
+	layerHelp, err := drive9HelpOutput(ctx, path, "fs", "layer", "help")
+	if err != nil {
+		return incompatibleDrive9CompanionError("read filesystem layer command surface", layerHelp, err)
+	}
+	for _, command := range []string{"fork", "chain", "delete"} {
+		if !drive9HelpHasToken(layerHelp, command) {
+			return incompatibleDrive9CompanionError("missing `drive9 fs layer "+command+"`", layerHelp, nil)
+		}
+	}
+
+	mountHelp, err := drive9HelpOutput(ctx, path, "mount", "--help")
+	if err != nil {
+		return incompatibleDrive9CompanionError("read filesystem mount command surface", mountHelp, err)
+	}
+	for _, flag := range []string{"layer", "checkpoint"} {
+		if !drive9HelpHasFlag(mountHelp, flag) {
+			return incompatibleDrive9CompanionError("missing `drive9 mount --"+flag+"`", mountHelp, nil)
+		}
+	}
+	return nil
+}
+
+func drive9HelpOutput(ctx context.Context, path string, args ...string) (string, error) {
+	validateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(validateCtx, path, args...)
+	output, err := cmd.CombinedOutput()
+	return strings.TrimSpace(string(output)), err
+}
+
+func drive9HelpHasToken(help, token string) bool {
+	return slicesContains(strings.FieldsFunc(help, func(r rune) bool {
+		return r == '<' || r == '>' || r == '|' || r == ' ' || r == '\t' || r == '\r' || r == '\n'
+	}), token)
+}
+
+func drive9HelpHasFlag(help, flag string) bool {
+	for _, field := range strings.Fields(help) {
+		if strings.TrimLeft(field, "-") == flag {
+			return true
+		}
+	}
+	return false
+}
+
+func slicesContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func incompatibleDrive9CompanionError(detail, output string, cause error) error {
+	message := "downloaded ti-drive9 companion is incompatible with this ti release: " + detail + "; retry after the matching companion release is published"
+	if output != "" {
+		message += ": " + output
+	}
+	if cause != nil {
+		return apperr.Wrap("update.companion_incompatible", "runtime", 1, message, cause)
+	}
+	return apperr.New("update.companion_incompatible", "runtime", 1, message)
 }
 
 func drive9ArtifactName(goos, goarch string) (string, error) {

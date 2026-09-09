@@ -310,6 +310,186 @@ func TestDrive9CopyDoesNotRetryNonReplayableStreamsOrAppend(t *testing.T) {
 	}
 }
 
+func TestDrive9LayerForkChainAndDeleteTranslateToCompanion(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	profile := dataProfile()
+
+	forked, err := service.ForkLayer(context.Background(), ForkLayerOptions{
+		Profile: profile, ParentLayerRef: "research-base", LayerID: "child-id", LayerName: "style-analyst", CheckpointID: "seed", ActorID: "hermes",
+	})
+	if err != nil {
+		t.Fatalf("ForkLayer failed: %v", err)
+	}
+	if forked.LayerID != "child-id" || forked.ParentLayerID != "parent-id" || forked.OriginCheckpointID != "seed" || forked.Depth != 1 {
+		t.Fatalf("unexpected fork response: %#v", forked)
+	}
+	forkCall := requireFakeDrive9Call(t, recordPath, "fs", "layer", "fork")
+	wantFork := []string{"fs", "layer", "fork", "--json", "--id", "child-id", "--name", "style-analyst", "--checkpoint", "seed", "--actor", "hermes", "research-base"}
+	if fmt.Sprint(forkCall.Args) != fmt.Sprint(wantFork) {
+		t.Fatalf("fork args = %#v, want %#v", forkCall.Args, wantFork)
+	}
+
+	chain, err := service.ListLayerChain(context.Background(), ListLayerChainOptions{Profile: profile, LayerRef: "style-analyst"})
+	if err != nil {
+		t.Fatalf("ListLayerChain failed: %v", err)
+	}
+	if len(chain.Chain) != 2 || chain.Chain[0].LayerID != "root-id" || chain.Chain[1].LimitSeq != 12 {
+		t.Fatalf("unexpected chain response: %#v", chain)
+	}
+	chainCall := requireFakeDrive9Call(t, recordPath, "fs", "layer", "chain")
+	wantChain := []string{"fs", "layer", "chain", "--json", "style-analyst"}
+	if fmt.Sprint(chainCall.Args) != fmt.Sprint(wantChain) {
+		t.Fatalf("chain args = %#v, want %#v", chainCall.Args, wantChain)
+	}
+
+	deleted, err := service.DeleteLayer(context.Background(), DeleteLayerOptions{Profile: profile, LayerRef: "style-brief", Cascade: true})
+	if err != nil {
+		t.Fatalf("DeleteLayer failed: %v", err)
+	}
+	if deleted.Status != "abandoned" || !deleted.Cascade || deleted.LayerRef != "style-brief" {
+		t.Fatalf("unexpected delete response: %#v", deleted)
+	}
+	deleteCall := requireFakeDrive9Call(t, recordPath, "fs", "layer", "delete")
+	wantDelete := []string{"fs", "layer", "delete", "--cascade", "style-brief"}
+	if fmt.Sprint(deleteCall.Args) != fmt.Sprint(wantDelete) {
+		t.Fatalf("delete args = %#v, want %#v", deleteCall.Args, wantDelete)
+	}
+}
+
+func TestDrive9LayerTipForkAndLeafDeleteOmitOptionalFlags(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	profile := dataProfile()
+
+	forked, err := service.ForkLayer(context.Background(), ForkLayerOptions{Profile: profile, ParentLayerRef: "parent-id"})
+	if err != nil {
+		t.Fatalf("ForkLayer failed: %v", err)
+	}
+	if forked.LayerID == "" {
+		t.Fatalf("fork response did not include a generated child ID: %#v", forked)
+	}
+	forkCall := requireFakeDrive9Call(t, recordPath, "fs", "layer", "fork")
+	wantFork := []string{"fs", "layer", "fork", "--json", "parent-id"}
+	if fmt.Sprint(forkCall.Args) != fmt.Sprint(wantFork) {
+		t.Fatalf("tip fork args = %#v, want %#v", forkCall.Args, wantFork)
+	}
+
+	deleted, err := service.DeleteLayer(context.Background(), DeleteLayerOptions{Profile: profile, LayerRef: "leaf-id"})
+	if err != nil {
+		t.Fatalf("DeleteLayer failed: %v", err)
+	}
+	if deleted.Cascade {
+		t.Fatalf("leaf delete unexpectedly enabled cascade: %#v", deleted)
+	}
+	deleteCall := requireFakeDrive9Call(t, recordPath, "fs", "layer", "delete")
+	wantDelete := []string{"fs", "layer", "delete", "leaf-id"}
+	if fmt.Sprint(deleteCall.Args) != fmt.Sprint(wantDelete) {
+		t.Fatalf("leaf delete args = %#v, want %#v", deleteCall.Args, wantDelete)
+	}
+}
+
+func TestDrive9LayerWorkflowRejectsIncompatibleCompanion(t *testing.T) {
+	companion, _ := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_OLD_LAYER", "1")
+	_, err := testCompanionService(t.TempDir(), companion).ForkLayer(context.Background(), ForkLayerOptions{Profile: dataProfile(), ParentLayerRef: "parent"})
+	if apperr.CodeFor(err) != "fs.companion_incompatible" {
+		t.Fatalf("error = %v, want fs.companion_incompatible", err)
+	}
+}
+
+func TestDrive9DeleteLayerPreservesDescendantConflict(t *testing.T) {
+	companion, _ := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_DELETE_DESCENDANT", "1")
+	_, err := testCompanionService(t.TempDir(), companion).DeleteLayer(context.Background(), DeleteLayerOptions{Profile: dataProfile(), LayerRef: "parent"})
+	if err == nil || !strings.Contains(apperr.MessageFor(err), "live descendants") {
+		t.Fatalf("delete descendant conflict was not preserved: %v", err)
+	}
+}
+
+func TestDrive9LayerCheckpointMountIsReadOnlyAndRecorded(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	mountPath := filepath.Join(t.TempDir(), "checkpoint")
+	result, err := testCompanionService(home, companion).MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, RemotePath: "/research/q3-market", Driver: "fuse", LayerRef: "style-analyst", CheckpointID: "v5",
+	})
+	if err != nil {
+		t.Fatalf("MountFileSystem failed: %v", err)
+	}
+	if !result.ReadOnly || result.LayerRef != "style-analyst" || result.CheckpointID != "v5" || result.Driver != "fuse" {
+		t.Fatalf("unexpected layer mount result: %#v", result)
+	}
+	mountCall := requireFakeDrive9CallWithoutArg(t, recordPath, "--help", "mount")
+	want := []string{"mount", "--mode", "fuse", "--read-only", "--layer", "style-analyst", "--checkpoint", "v5", ":/research/q3-market", mountPath}
+	if fmt.Sprint(mountCall.Args) != fmt.Sprint(want) {
+		t.Fatalf("mount args = %#v, want %#v", mountCall.Args, want)
+	}
+	locator, _, err := mountlocator.Read(home, mountPath)
+	if err != nil {
+		t.Fatalf("read mount locator: %v", err)
+	}
+	if locator.LayerRef != "style-analyst" || locator.CheckpointID != "v5" || !locator.ReadOnly || locator.RemotePath != "/research/q3-market" {
+		t.Fatalf("unexpected layer mount locator: %#v", locator)
+	}
+}
+
+func TestLayerMountValidationRejectsUnsupportedInputs(t *testing.T) {
+	profile := dataProfile()
+	service := Service{}
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{Profile: profile, MountPath: "/tmp/x", Driver: "fuse", CheckpointID: "v5"}); apperr.CodeFor(err) != "fs.checkpoint_requires_layer" {
+		t.Fatalf("checkpoint-only error = %v", err)
+	}
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{Profile: profile, MountPath: "/tmp/x", Driver: "webdav", LayerRef: "layer"}); apperr.CodeFor(err) != "fs.layer_mount_requires_fuse" {
+		t.Fatalf("webdav layer error = %v", err)
+	}
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{Profile: profile, MountPath: "/tmp/x", Driver: "fuse", LayerRef: "layer", CheckpointID: "v5", ReadOnlySet: true}); apperr.CodeFor(err) != "fs.checkpoint_mount_read_only" {
+		t.Fatalf("explicit writable checkpoint error = %v", err)
+	}
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{Profile: profile, MountPath: "/tmp/x", Driver: "fuse", LayerRef: "layer", CheckpointID: "v5", WriteBackCache: true, WriteBackCacheSet: true}); apperr.CodeFor(err) != "fs.checkpoint_mount_read_only" {
+		t.Fatalf("checkpoint write-back error = %v", err)
+	}
+}
+
+func TestLayerReferenceValidation(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value string
+		code  string
+	}{
+		{name: "empty", value: " ", code: "fs.missing_layer_reference"},
+		{name: "slash", value: "parent/child", code: "fs.invalid_layer_reference"},
+		{name: "backslash", value: `parent\child`, code: "fs.invalid_layer_reference"},
+		{name: "control", value: "parent\nchild", code: "fs.invalid_layer_reference"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := ValidateLayerReference(tc.value, "--layer-ref"); apperr.CodeFor(err) != tc.code {
+				t.Fatalf("error = %v, want %s", err, tc.code)
+			}
+		})
+	}
+	if err := ValidateLayerReference("tag:run=123", "--layer-ref"); err != nil {
+		t.Fatalf("valid tag reference failed: %v", err)
+	}
+}
+
+func TestDrive9RecursiveLayerCopyIsRejectedLocally(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile: dataProfile(), FromLocal: ".", ToRemote: "/research/q3-market", Recursive: true, LayerID: "research-base",
+	})
+	if apperr.CodeFor(err) != "fs.recursive_layer_copy_unsupported" {
+		t.Fatalf("error = %v, want fs.recursive_layer_copy_unsupported", err)
+	}
+	if _, statErr := os.Stat(recordPath); !os.IsNotExist(statErr) {
+		t.Fatalf("rejected copy invoked companion: %v", statErr)
+	}
+}
+
 func TestDrive9MissingCompanionIsActionable(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	_, err := Service{CompanionPath: filepath.Join(t.TempDir(), "missing-ti-drive9")}.ReadFile(context.Background(), ReadFileOptions{
@@ -633,6 +813,35 @@ func main() {
 		return
 	}
 	switch {
+	case len(args) >= 3 && args[0] == "fs" && args[1] == "layer" && args[2] == "help":
+		if os.Getenv("TI_FAKE_DRIVE9_OLD_LAYER") == "1" {
+			fmt.Println("usage: drive9 fs layer <create|list|status|diff|checkpoint|rollback|commit>")
+		} else {
+			fmt.Println("usage: drive9 fs layer <create|list|status|diff|checkpoint|rollback|commit|fork|chain|delete>")
+		}
+	case len(args) >= 2 && args[0] == "mount" && args[1] == "--help":
+		if os.Getenv("TI_FAKE_DRIVE9_OLD_LAYER") == "1" {
+			fmt.Println("usage: drive9 mount [flags] [:/remote] <mountpoint>")
+		} else {
+			fmt.Println("-layer string")
+			fmt.Println("-checkpoint string")
+		}
+	case len(args) >= 3 && args[0] == "fs" && args[1] == "layer" && args[2] == "fork":
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{
+			"layer_id": "child-id", "name": "style-analyst", "state": "active", "base_root_path": "/research/q3-market",
+			"parent_layer_id": "parent-id", "origin_seq": 12, "origin_checkpoint_id": "seed", "root_layer_id": "root-id", "depth": 1,
+		})
+	case len(args) >= 3 && args[0] == "fs" && args[1] == "layer" && args[2] == "chain":
+		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"chain": []map[string]any{
+			{"layer_id": "root-id", "name": "research-base", "state": "active", "depth": 0, "limit_seq": 12, "base_root_path": "/research/q3-market"},
+			{"layer_id": "child-id", "name": "style-analyst", "state": "active", "depth": 1, "parent_layer_id": "root-id", "origin_seq": 12, "limit_seq": 12, "origin_checkpoint_id": "seed", "base_root_path": "/research/q3-market"},
+		}})
+	case len(args) >= 3 && args[0] == "fs" && args[1] == "layer" && args[2] == "delete":
+		if os.Getenv("TI_FAKE_DRIVE9_DELETE_DESCENDANT") == "1" {
+			fmt.Fprintln(os.Stderr, "fs layer delete: layer has live descendants")
+			os.Exit(1)
+		}
+		fmt.Fprintln(os.Stdout, "ok")
 	case args[0] == "create":
 		if path := os.Getenv("TI_FAKE_DRIVE9_BREAK_CREDENTIAL_ROOT"); path != "" {
 			_ = os.RemoveAll(path)
@@ -648,7 +857,11 @@ func main() {
 		})
 	case args[0] == "mount" && (len(args) == 1 || args[1] != "drain"):
 		fmt.Fprintln(os.Stderr, "component: drive9 mount")
-		fmt.Fprintln(os.Stderr, "drive9: mount mode: webdav")
+		if flagValue(args, "--mode") == "fuse" {
+			fmt.Fprintln(os.Stderr, "drive9: mount mode: fuse")
+		} else {
+			fmt.Fprintln(os.Stderr, "drive9: mount mode: webdav")
+		}
 		if os.Getenv("TI_FAKE_DRIVE9_MOUNT_FAIL") == "1" {
 			fmt.Fprintln(os.Stderr, "mount: drive9 mount: background mount exited before becoming ready")
 			os.Exit(1)
@@ -825,6 +1038,17 @@ func requireFakeDrive9Call(t *testing.T, recordPath string, prefix ...string) fa
 		}
 	}
 	t.Fatalf("missing fake companion call with prefix %#v", prefix)
+	return fakeDrive9Call{}
+}
+
+func requireFakeDrive9CallWithoutArg(t *testing.T, recordPath, excluded string, prefix ...string) fakeDrive9Call {
+	t.Helper()
+	for _, call := range readFakeDrive9Calls(t, recordPath) {
+		if hasArgPrefix(call.Args, prefix) && !containsArg(call.Args, excluded) {
+			return call
+		}
+	}
+	t.Fatalf("missing fake companion call with prefix %#v without %q", prefix, excluded)
 	return fakeDrive9Call{}
 }
 

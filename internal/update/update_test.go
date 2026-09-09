@@ -147,7 +147,7 @@ func TestApplyReplacesOwnedUnixBinary(t *testing.T) {
 		tag: "v0.2.0",
 		assets: map[string][]byte{
 			artifactForRuntime(t): archiveBytes,
-			companionArtifact:     []byte("#!/bin/sh\necho companion\n"),
+			companionArtifact:     []byte(compatibleDrive9CompanionScript),
 		},
 	})
 	current := filepath.Join(t.TempDir(), "ti")
@@ -186,6 +186,75 @@ func TestApplyReplacesOwnedUnixBinary(t *testing.T) {
 		t.Fatalf("companion was not replaced:\n%s", string(companion))
 	}
 }
+
+func TestApplyRejectsIncompatibleCompanionBeforeReplacingFiles(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows self-update is unsupported")
+	}
+
+	archiveBytes := tarGzBinary(t, "ti", "#!/bin/sh\necho 'ti 0.2.0 (test, now, linux/amd64)'\n")
+	companionArtifact, err := drive9ArtifactName(runtime.GOOS, runtime.GOARCH)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := fakeReleaseServer(t, releaseFixture{
+		tag: "v0.2.0",
+		assets: map[string][]byte{
+			artifactForRuntime(t): archiveBytes,
+			companionArtifact:     []byte("#!/bin/sh\necho old-companion\n"),
+		},
+	})
+	installDir := t.TempDir()
+	current := filepath.Join(installDir, "ti")
+	companion := filepath.Join(installDir, companionBinaryName())
+	if err := os.WriteFile(current, []byte("#!/bin/sh\necho current\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(companion, []byte("existing companion"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Apply(context.Background(), version.Info{
+		Version:       "0.1.0",
+		OS:            runtime.GOOS,
+		Arch:          runtime.GOARCH,
+		InstallSource: "archive",
+	}, ApplyOptions{
+		ReleaseAPIBaseURL: server.URL,
+		Drive9ReleaseURL:  server.URL + "/assets",
+		ExecutablePath:    current,
+	})
+	if err == nil {
+		t.Fatal("expected incompatible companion rejection")
+	}
+	if got := apperr.CodeFor(err); got != "update.companion_incompatible" {
+		t.Fatalf("error code = %q, want update.companion_incompatible: %v", got, err)
+	}
+	currentBytes, readErr := os.ReadFile(current)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	companionBytes, readErr := os.ReadFile(companion)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(currentBytes) != "#!/bin/sh\necho current\n" || string(companionBytes) != "existing companion" {
+		t.Fatalf("targets changed after incompatible companion rejection: ti=%q companion=%q", currentBytes, companionBytes)
+	}
+}
+
+const compatibleDrive9CompanionScript = `#!/bin/sh
+if [ "$1 $2 $3" = "fs layer help" ]; then
+  echo 'usage: drive9 fs layer <create|list|fork|chain|delete>'
+  exit 0
+fi
+if [ "$1 $2" = "mount --help" ]; then
+  echo '  -layer string'
+  echo '  -checkpoint string'
+  exit 0
+fi
+echo companion
+`
 
 func TestApplyRefusesProtectedTargetWithoutChangingFiles(t *testing.T) {
 	if runtime.GOOS == "windows" {
