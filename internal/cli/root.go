@@ -949,6 +949,9 @@ func usageFlagValueType(flag *pflag.Flag) string {
 	}
 	switch flag.Value.Type() {
 	case "bool":
+		if flag.NoOptDefVal == "" {
+			return "boolean"
+		}
 		return ""
 	case "stringArray":
 		return "string"

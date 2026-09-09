@@ -110,6 +110,10 @@ Implemented:
 - `ti fs delete-file-system`
 - `ti fs list-file-systems`
 - `ti fs describe-file-system`
+- `ti fs describe-file-system-extract-configuration`
+- `ti fs update-file-system-extract-configuration`
+- `ti fs describe-file-system-embedding-configuration`
+- `ti fs update-file-system-embedding-configuration`
 - `ti fs check-file-system`
 - `ti fs copy-file`
 - `ti fs read-file`
@@ -165,6 +169,9 @@ Implemented:
 - direct TiDB Cloud Filesystem tenant create/list/describe/delete control plane,
   authoritative display metadata, quota output, and inventory filters from
   `docs/spec/done/0031-fs-tenant-metadata-control-plane.md`
+- optional tenant-scoped media extraction and embedding provider configuration,
+  provider-secret redaction, and media quota output from
+  `docs/spec/done/0032-file-system-ai-provider-configuration.md`
 - ti fs/fs-git/fs-journal/fs-vault commands routed through the bundled
   `ti-drive9` companion, with ti-owned profile loading, credential storage,
   region resolution, and output/error handling
@@ -346,6 +353,7 @@ internal/db/sqlsingle/      one-statement validation
 internal/db/validate/       DB flag and request validation helpers
 internal/dryrun/            shared dry-run result envelope
 internal/fs/                ti fs control-plane, data-plane, and mount use cases
+internal/fs/aiconfig/       optional Filesystem extraction and embedding configuration
 internal/fs/fscred/         ID-keyed ti fs credentials, selection, and legacy migration
 internal/fs/mountlocator/   non-secret Drive9 background mount routing state
 internal/fs/tokenmgmt/      Filesystem token lifecycle and local rotation safety
@@ -426,6 +434,11 @@ Follow these rules unless `docs/priciples.md` is updated:
 - Filesystem token refresh is bearer-only and non-idempotent. Do not retry it
   after an ambiguous network failure. Generate, list, enable, disable, and
   delete use only TiDB Cloud public/private keys.
+- Filesystem AI provider configuration is optional and uses only TiDB Cloud
+  public/private keys. Provider secrets come only from
+  `TI_FS_AI_PROVIDER_API_KEY`, are never persisted locally, and must be
+  redacted from every output and diagnostic path. Provider-validating PUTs are
+  not retried after ambiguous failures.
 - Reject refresh, disable, or deletion of a token correlated with a known
   active local mount. The error must show exact drain and unmount commands.
 - Read-only commands reject `--dry-run`.
@@ -557,6 +570,10 @@ Implemented command behavior:
 - `ti fs delete-file-system --file-system-id <file-system-id> --dry-run`
 - `ti fs list-file-systems`
 - `ti fs describe-file-system --file-system-id <file-system-id>`
+- `ti fs describe-file-system-extract-configuration --file-system-id <file-system-id> --media-type image`
+- `ti fs update-file-system-extract-configuration --file-system-id <file-system-id> --media-type image --enabled false`
+- `ti fs describe-file-system-embedding-configuration --file-system-id <file-system-id>`
+- `ti fs update-file-system-embedding-configuration --file-system-id <file-system-id> --enabled false`
 - `ti fs check-file-system`
 - `ti fs check-file-system --file-system-id <file-system-id>`
 - `ti fs copy-file --from-local ./README.md --to-remote /workspace/README.md`

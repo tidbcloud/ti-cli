@@ -241,6 +241,24 @@ ti fs generate-file-system-scoped-token \
 
 An owner FS token authorizes Filesystem use and token management, but it is not a TiDB Cloud administrative credential. Creating, listing, describing, and deleting Filesystem resources require TiDB Cloud API keys. In particular, `ti fs delete-file-system` always requires an explicit `--file-system-id`; `TI_FS_TOKEN` cannot select or authorize deletion of the Filesystem itself. For token list, enable, disable, and delete commands, `--file-system-id` is required only when the command uses TiDB Cloud API keys. When an owner token is supplied through `--fs-token` or `TI_FS_TOKEN`, `ti` derives the Filesystem ID from that token.
 
+Filesystem AI provider configuration is optional. Without it, existing create, mount, file, search, layer, vault, journal, and Git workflows continue to work normally. Organization administrators can inspect or customize image, audio, and video extraction and OpenAI-compatible 1024-dimension embedding for an explicit Filesystem ID:
+
+```shell
+ti fs describe-file-system-extract-configuration \
+  --file-system-id "$FILE_SYSTEM_ID" \
+  --media-type image
+
+TI_FS_AI_PROVIDER_API_KEY="<provider-api-key>" \
+ti fs update-file-system-extract-configuration \
+  --file-system-id "$FILE_SYSTEM_ID" \
+  --media-type image \
+  --enabled true \
+  --provider-api-base https://api.openai.com/v1 \
+  --provider-model "<vision-model>"
+```
+
+Extraction supports the `openai` protocol for image, audio, and video. Audio also supports Alibaba Cloud Model Studio Qwen ASR through `--provider-protocol qwen-asr`. Exact OpenAI-compatible endpoints can work when they implement the required API contract; native Anthropic, Gemini, Vertex AI, Bedrock, and Azure OpenAI interfaces are not supported. Enabling or replacing a provider sends a real validation request that can incur a small provider charge. After enablement, Filesystem content is sent to the selected extraction provider, and text or descriptions are sent to the selected embedding provider. The provider key is accepted only through `TI_FS_AI_PROVIDER_API_KEY`, is not stored locally, and is returned by the backend only in masked form.
+
 Generation does not modify local credentials by default. Add `--store-locally` to select the new token locally; if a selected token already exists, add `--replace` explicitly. Replacing local selection does not revoke the previous remote token. Use immutable `token_id` values from the list response to disable, enable, or permanently revoke a token:
 
 ```shell
@@ -314,6 +332,10 @@ ti fs refresh-file-system-token
 ti fs delete-file-system
 ti fs list-file-systems
 ti fs describe-file-system
+ti fs describe-file-system-extract-configuration
+ti fs update-file-system-extract-configuration
+ti fs describe-file-system-embedding-configuration
+ti fs update-file-system-embedding-configuration
 ti fs check-file-system
 ti fs copy-file
 ti fs read-file

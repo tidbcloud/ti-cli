@@ -26,13 +26,17 @@ type AdminTenantQuotaConfig struct {
 	MaxStorageSize         int64  `json:"max_storage_size"`
 	MaxFileSize            int64  `json:"max_file_size"`
 	MaxFileCount           int64  `json:"max_file_count"`
+	MaxMediaLLMFiles       int64  `json:"max_media_llm_files"`
+	MaxVideoLLMFiles       int64  `json:"max_video_llm_files"`
 	TiDBCloudSpendingLimit *int64 `json:"tidbcloud_spending_limit"`
 }
 
 type AdminTenantQuotaUsage struct {
-	StorageBytes  int64 `json:"storage_bytes"`
-	ReservedBytes int64 `json:"reserved_bytes"`
-	FileCount     int64 `json:"file_count"`
+	StorageBytes   int64 `json:"storage_bytes"`
+	ReservedBytes  int64 `json:"reserved_bytes"`
+	FileCount      int64 `json:"file_count"`
+	MediaFileCount int64 `json:"media_file_count"`
+	VideoFileCount int64 `json:"video_file_count"`
 }
 
 type AdminTenantQuota struct {
