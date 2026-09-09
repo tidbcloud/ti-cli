@@ -26,8 +26,6 @@ func testConfig() Config {
 		RateLimitPerMinute:   60,
 		RateLimitBurst:       120,
 		TiDBDSN:              "user:password@tcp(localhost:4000)/telemetry?tls=true",
-		PostHogAPIHost:       "https://us.i.posthog.com",
-		PostHogProjectToken:  "phc_test",
 	}
 }
 

@@ -302,7 +302,8 @@ func retryableRequest(req *http.Request) bool {
 func (c *Client) statusError(req *http.Request, res *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 64*1024))
 	body = []byte(c.Redactor.Redact(string(body)))
-	apiMessage := responseMessage(body)
+	remoteError := parseRemoteError(body)
+	apiMessage := remoteError.Message
 	requestID := responseRequestID(res.Header)
 	switch res.StatusCode {
 	case http.StatusBadRequest:
@@ -392,13 +393,16 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 		}
 	case http.StatusPaymentRequired:
 		return &Error{
-			Code:       "api.payment_required",
-			Category:   "api",
-			ExitCode:   1,
-			StatusCode: res.StatusCode,
-			RequestID:  requestID,
-			Message:    "payment required: " + messageOrDefault(apiMessage, "the remote service rejected the request because payment could not be processed"),
-			Body:       string(body),
+			Code:             "api.payment_required",
+			Category:         "api",
+			ExitCode:         1,
+			StatusCode:       res.StatusCode,
+			RequestID:        requestID,
+			Message:          "payment required: " + messageOrDefault(apiMessage, "the remote service rejected the request because payment could not be processed"),
+			Body:             string(body),
+			RemoteCode:       remoteError.Code,
+			RemoteDetails:    remoteError.Details,
+			RemoteActionType: remoteError.ActionType,
 		}
 	case http.StatusTooManyRequests:
 		return &Error{
@@ -443,22 +447,39 @@ func (c *Client) resolveURL(requestPath string) (string, error) {
 	return base.String(), nil
 }
 
-func responseMessage(body []byte) string {
+type remoteErrorResponse struct {
+	Message    string
+	Code       string
+	Details    []byte
+	ActionType string
+}
+
+func parseRemoteError(body []byte) remoteErrorResponse {
 	if len(body) == 0 {
-		return ""
+		return remoteErrorResponse{}
 	}
 	var payload struct {
-		Message string `json:"message"`
-		Error   string `json:"error"`
-		Code    any    `json:"code"`
+		Message string          `json:"message"`
+		Error   string          `json:"error"`
+		Code    json.RawMessage `json:"code"`
+		Details json.RawMessage `json:"details"`
+		Action  json.RawMessage `json:"action"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return ""
+		return remoteErrorResponse{}
 	}
-	if payload.Message != "" {
-		return payload.Message
+	result := remoteErrorResponse{Message: payload.Message, Details: payload.Details}
+	if result.Message == "" {
+		result.Message = payload.Error
 	}
-	return payload.Error
+	_ = json.Unmarshal(payload.Code, &result.Code)
+	var action struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload.Action, &action) == nil {
+		result.ActionType = action.Type
+	}
+	return result
 }
 
 func messageOrDefault(message, fallback string) string {

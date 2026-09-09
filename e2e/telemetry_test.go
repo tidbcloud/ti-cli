@@ -8,7 +8,6 @@ import (
 	"errors"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"strings"
@@ -49,21 +48,7 @@ flag_names_json, exit_code, duration_ms, cli_version, os, arch, schema_version
 	runTelemetryMigrator(t, ctx, migrator, databaseDSN)
 	assertLegacyEventSurvivesMigration(t, ctx, testDB)
 
-	postHogRequests := make(chan struct{}, 1)
-	postHog := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != http.MethodPost || request.URL.Path != "/batch/" {
-			http.NotFound(writer, request)
-			return
-		}
-		select {
-		case postHogRequests <- struct{}{}:
-		default:
-		}
-		writer.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(postHog.Close)
-
-	endpoint := startTelemetryBackend(t, ctx, databaseDSN, postHog.URL)
+	endpoint := startTelemetryBackend(t, ctx, databaseDSN)
 	tag := "telemetry-e2e-" + databaseName
 	runID := "run-" + tag
 	result := runTIWithInput(t, tiBinary(t), "", append(tiConfigEnv(),
@@ -77,11 +62,6 @@ flag_names_json, exit_code, duration_ms, cli_version, os, arch, schema_version
 	result.wantExitCode(0)
 
 	assertTelemetryEventStored(t, ctx, testDB, tag, runID)
-	select {
-	case <-postHogRequests:
-	case <-time.After(10 * time.Second):
-		t.Fatal("local PostHog receiver did not receive the telemetry batch")
-	}
 }
 
 func createTelemetryE2EDatabase(t *testing.T, ctx context.Context, baseDSN string) (string, string) {
@@ -150,7 +130,7 @@ func assertLegacyEventSurvivesMigration(t *testing.T, ctx context.Context, db *s
 	}
 }
 
-func startTelemetryBackend(t *testing.T, ctx context.Context, dsn, postHogURL string) string {
+func startTelemetryBackend(t *testing.T, ctx context.Context, dsn string) string {
 	t.Helper()
 	binary := strings.TrimSpace(os.Getenv("TI_TELEMETRY_BACKEND_E2E_BIN"))
 	if binary == "" {
@@ -170,8 +150,6 @@ func startTelemetryBackend(t *testing.T, ctx context.Context, dsn, postHogURL st
 	command.Stderr = &stderr
 	command.Env = append(os.Environ(),
 		"TIDB_DSN="+dsn,
-		"POSTHOG_API_HOST="+postHogURL,
-		"POSTHOG_PROJECT_TOKEN=telemetry-e2e",
 		"TELEMETRY_BIND_ADDR="+address,
 		"TELEMETRY_PUBLIC_HOST=telemetry-e2e.local",
 		"TELEMETRY_ENVIRONMENT=telemetry-e2e",

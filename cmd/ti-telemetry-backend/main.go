@@ -35,26 +35,15 @@ func main() {
 
 	tidbSink := telemetrybackend.NewTiDBSink(db)
 
-	postHogSink, err := telemetrybackend.NewPostHogSink(
-		config.PostHogAPIHost,
-		config.PostHogProjectToken,
-		config.Environment,
-		&http.Client{},
-	)
-	if err != nil {
-		logger.Error("initialize PostHog sink failed")
-		os.Exit(1)
-	}
-
 	metrics := &telemetrybackend.Metrics{}
 	batcher := telemetrybackend.NewBatcher(
 		config,
-		[]telemetrybackend.Sink{tidbSink, postHogSink},
+		[]telemetrybackend.Sink{tidbSink},
 		logger,
 		metrics,
 	)
 	batcher.Start()
-	api := telemetrybackend.NewServer(config, batcher, tidbSink, postHogSink, logger, metrics)
+	api := telemetrybackend.NewServer(config, batcher, tidbSink, logger, metrics)
 	httpServer := &http.Server{
 		Addr:              config.BindAddr,
 		Handler:           api.Handler(),

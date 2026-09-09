@@ -7,14 +7,17 @@ import (
 )
 
 type Error struct {
-	Code       string
-	Category   string
-	ExitCode   int
-	StatusCode int
-	RequestID  string
-	Message    string
-	Body       string
-	Cause      error
+	Code             string
+	Category         string
+	ExitCode         int
+	StatusCode       int
+	RequestID        string
+	Message          string
+	Body             string
+	RemoteCode       string
+	RemoteDetails    []byte
+	RemoteActionType string
+	Cause            error
 }
 
 func (e *Error) Error() string {

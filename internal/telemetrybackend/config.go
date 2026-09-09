@@ -3,7 +3,6 @@ package telemetrybackend
 import (
 	"fmt"
 	"net/netip"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -42,8 +41,6 @@ type Config struct {
 	RateLimitBurst       int
 	TrustedProxyCIDRs    []netip.Prefix
 	TiDBDSN              string
-	PostHogAPIHost       string
-	PostHogProjectToken  string
 }
 
 // LoadConfig reads configuration through getenv. Docker Compose supplies these
@@ -64,8 +61,6 @@ func LoadConfig(getenv func(string) string) (Config, error) {
 		RateLimitPerMinute:   defaultRateLimitPerMinute,
 		RateLimitBurst:       defaultRateLimitBurst,
 		TiDBDSN:              strings.TrimSpace(getenv("TIDB_DSN")),
-		PostHogAPIHost:       valueOrDefault(getenv("POSTHOG_API_HOST"), "https://us.i.posthog.com"),
-		PostHogProjectToken:  strings.TrimSpace(getenv("POSTHOG_PROJECT_TOKEN")),
 	}
 
 	var err error
@@ -152,16 +147,6 @@ func (c Config) Validate() error {
 		case "", "false", "skip-verify", "preferred":
 			return fmt.Errorf("TIDB_DSN must enable verified TLS in production")
 		}
-	}
-	if c.PostHogProjectToken == "" {
-		return fmt.Errorf("POSTHOG_PROJECT_TOKEN is required")
-	}
-	u, err := url.Parse(c.PostHogAPIHost)
-	if err != nil || u.Host == "" || (u.Scheme != "https" && u.Scheme != "http") {
-		return fmt.Errorf("POSTHOG_API_HOST must be an absolute HTTP URL")
-	}
-	if strings.EqualFold(c.Environment, "production") && u.Scheme != "https" {
-		return fmt.Errorf("POSTHOG_API_HOST must use HTTPS in production")
 	}
 	return nil
 }

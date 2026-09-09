@@ -22,7 +22,6 @@ type Server struct {
 	config  Config
 	batcher *Batcher
 	tidb    readinessCheck
-	posthog readinessCheck
 	limiter *ipRateLimiter
 	logger  *slog.Logger
 	metrics *Metrics
@@ -33,7 +32,6 @@ func NewServer(
 	config Config,
 	batcher *Batcher,
 	tidb readinessCheck,
-	posthog readinessCheck,
 	logger *slog.Logger,
 	metrics *Metrics,
 ) *Server {
@@ -47,7 +45,6 @@ func NewServer(
 		config:  config,
 		batcher: batcher,
 		tidb:    tidb,
-		posthog: posthog,
 		limiter: newIPRateLimiter(config.RateLimitPerMinute, config.RateLimitBurst),
 		logger:  logger,
 		metrics: metrics,
@@ -80,9 +77,7 @@ func (s *Server) handleMetrics(writer http.ResponseWriter, request *http.Request
 			"telemetry_buffer_dropped_total %d\n"+
 			"telemetry_flush_events_total %d\n"+
 			"telemetry_sink_total{sink=\"tidb\",result=\"success\"} %d\n"+
-			"telemetry_sink_total{sink=\"tidb\",result=\"failure\"} %d\n"+
-			"telemetry_sink_total{sink=\"posthog\",result=\"success\"} %d\n"+
-			"telemetry_sink_total{sink=\"posthog\",result=\"failure\"} %d\n",
+			"telemetry_sink_total{sink=\"tidb\",result=\"failure\"} %d\n",
 		s.metrics.AcceptedEvents.Load(),
 		s.metrics.RejectedRequests.Load(),
 		s.metrics.RateLimited.Load(),
@@ -91,8 +86,6 @@ func (s *Server) handleMetrics(writer http.ResponseWriter, request *http.Request
 		s.metrics.FlushedEvents.Load(),
 		s.metrics.TiDBSuccesses.Load(),
 		s.metrics.TiDBFailures.Load(),
-		s.metrics.PostHogSuccesses.Load(),
-		s.metrics.PostHogFailures.Load(),
 	)
 }
 
@@ -112,15 +105,13 @@ func (s *Server) handleReady(writer http.ResponseWriter, request *http.Request) 
 	ctx, cancel := context.WithTimeout(request.Context(), s.config.SinkTimeout)
 	defer cancel()
 	tidbReady := s.tidb != nil && s.tidb.Ready(ctx) == nil
-	postHogReady := s.posthog != nil && s.posthog.Ready(ctx) == nil
 	status := http.StatusOK
-	if !tidbReady || !postHogReady {
+	if !tidbReady {
 		status = http.StatusServiceUnavailable
 	}
 	writeJSON(writer, status, map[string]any{
-		"ok":                 tidbReady && postHogReady,
-		"tidb_configured":    tidbReady,
-		"posthog_configured": postHogReady,
+		"ok":              tidbReady,
+		"tidb_configured": tidbReady,
 	})
 }
 

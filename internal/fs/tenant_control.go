@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -31,6 +32,7 @@ const (
 	invalidDisplayFilterMessage = "--display-name filter cannot be empty or contain %, _, or control characters"
 	invalidLabelKeyMessage      = "label keys must be Kubernetes qualified names: an optional lowercase DNS prefix of at most 253 bytes and '/', followed by 1-63 bytes using ASCII letters, numbers, '-', '_' or '.', starting and ending with a letter or number"
 	invalidLabelValueMessage    = "label values must be empty or at most 63 bytes using ASCII letters, numbers, '-', '_' or '.', and must start and end with a letter or number"
+	tiDBCloudBillingPaymentsURL = "https://tidbcloud.com/org-settings/billing/payments"
 )
 
 var (
@@ -451,6 +453,9 @@ func mapAdminTenantError(err error, operation, fileSystemID, regionCode string) 
 	if !errors.As(err, &apiErr) {
 		return err
 	}
+	if operation == "create" && apiErr.StatusCode == http.StatusPaymentRequired && apiErr.RemoteActionType == "add_payment_method" && isFreeTierPaymentCode(apiErr.RemoteCode) {
+		return apperr.Wrap("fs.payment_method_required", "api", 1, fileSystemPaymentMethodMessage(apiErr), err)
+	}
 	if apiErr.StatusCode == http.StatusConflict && operation == "create" {
 		return apperr.Wrap("fs.display_name_conflict", "api", 1, "display name conflicts with an existing file system in the organization", err)
 	}
@@ -466,4 +471,28 @@ func mapAdminTenantError(err error, operation, fileSystemID, regionCode string) 
 		return apperr.New(apiErr.Code, apiErr.Category, apiErr.ExitCode, fmt.Sprintf("%s (request ID: %s)", apiErr.Message, apiErr.RequestID))
 	}
 	return err
+}
+
+func isFreeTierPaymentCode(code string) bool {
+	switch code {
+	case "free_tenant_limit_reached", "free_quota_exceeded", "free_spending_limit_forbidden", "free_quota_mutation_forbidden", "free_tenant_pool_forbidden":
+		return true
+	default:
+		return false
+	}
+}
+
+func fileSystemPaymentMethodMessage(apiErr *api.Error) string {
+	message := "the free TiDB Cloud plan does not allow another Filesystem"
+	if apiErr.RemoteCode == "free_tenant_limit_reached" {
+		message = "free TiDB Cloud Filesystem limit reached"
+		var details struct {
+			TenantCount *int `json:"tenant_count"`
+			TenantLimit *int `json:"tenant_limit"`
+		}
+		if json.Unmarshal(apiErr.RemoteDetails, &details) == nil && details.TenantCount != nil && details.TenantLimit != nil && *details.TenantCount >= 0 && *details.TenantLimit >= 0 {
+			message += fmt.Sprintf(" (%d of %d used)", *details.TenantCount, *details.TenantLimit)
+		}
+	}
+	return fmt.Sprintf("%s. Add a payment method to create more Filesystems: %s", message, tiDBCloudBillingPaymentsURL)
 }

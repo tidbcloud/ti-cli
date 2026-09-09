@@ -87,7 +87,12 @@ func TestClientMapsAPIGap(t *testing.T) {
 }
 
 func TestClientMapsPaymentRequired(t *testing.T) {
-	err := statusError(t, http.StatusPaymentRequired, `{"message":"payment cannot be processed"}`, authz.StarterClusterCreate)
+	err := statusError(t, http.StatusPaymentRequired, `{
+		"error":"free TiDB Cloud tenant limit reached",
+		"code":"free_tenant_limit_reached",
+		"details":{"tenant_count":1,"tenant_limit":1},
+		"action":{"type":"add_payment_method"}
+	}`, authz.StarterClusterCreate)
 	var apiErr *Error
 	if !errors.As(err, &apiErr) {
 		t.Fatalf("expected api.Error, got %T", err)
@@ -97,6 +102,15 @@ func TestClientMapsPaymentRequired(t *testing.T) {
 	}
 	if !strings.Contains(apperr.MessageFor(err), "payment required") {
 		t.Fatalf("unexpected message %q", apperr.MessageFor(err))
+	}
+	if apiErr.RemoteCode != "free_tenant_limit_reached" {
+		t.Fatalf("remote code = %q", apiErr.RemoteCode)
+	}
+	if apiErr.RemoteActionType != "add_payment_method" {
+		t.Fatalf("remote action = %q", apiErr.RemoteActionType)
+	}
+	if !strings.Contains(string(apiErr.RemoteDetails), `"tenant_count":1`) || !strings.Contains(string(apiErr.RemoteDetails), `"tenant_limit":1`) {
+		t.Fatalf("remote details = %s", apiErr.RemoteDetails)
 	}
 }
 
