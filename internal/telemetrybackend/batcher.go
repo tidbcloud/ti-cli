@@ -22,12 +22,8 @@ type Metrics struct {
 	RateLimited      atomic.Uint64
 	DroppedEvents    atomic.Uint64
 	FlushedEvents    atomic.Uint64
-	SinkSuccesses    atomic.Uint64
-	SinkFailures     atomic.Uint64
 	TiDBSuccesses    atomic.Uint64
 	TiDBFailures     atomic.Uint64
-	PostHogSuccesses atomic.Uint64
-	PostHogFailures  atomic.Uint64
 }
 
 type queuedEvent struct {
@@ -190,7 +186,6 @@ func (b *Batcher) flushNext(parent context.Context) {
 		err := sink.Write(ctx, batch)
 		cancel()
 		if err != nil {
-			b.metrics.SinkFailures.Add(1)
 			b.recordSinkResult(sink.Name(), false)
 			b.logger.Error(
 				"telemetry sink write failed",
@@ -200,7 +195,6 @@ func (b *Batcher) flushNext(parent context.Context) {
 			)
 			continue
 		}
-		b.metrics.SinkSuccesses.Add(1)
 		b.recordSinkResult(sink.Name(), true)
 		b.logger.Info(
 			"telemetry sink write completed",
@@ -219,12 +213,6 @@ func (b *Batcher) recordSinkResult(name string, success bool) {
 			b.metrics.TiDBSuccesses.Add(1)
 		} else {
 			b.metrics.TiDBFailures.Add(1)
-		}
-	case "posthog":
-		if success {
-			b.metrics.PostHogSuccesses.Add(1)
-		} else {
-			b.metrics.PostHogFailures.Add(1)
 		}
 	}
 }

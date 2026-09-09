@@ -360,6 +360,78 @@ func TestTenantControlMapsErrorsAndRejectsContractViolations(t *testing.T) {
 	}
 }
 
+func TestTenantControlCreateMapsFreeTierUpgradeGuidance(t *testing.T) {
+	tests := []struct {
+		name              string
+		body              string
+		wantCode          string
+		wantMessageParts  []string
+		rejectMessagePart string
+	}{
+		{
+			name: "limit with usage details",
+			body: `{
+				"error":"free TiDB Cloud tenant limit reached",
+				"code":"free_tenant_limit_reached",
+				"details":{"tenant_count":1,"tenant_limit":1},
+				"action":{"type":"add_payment_method"}
+			}`,
+			wantCode: "fs.payment_method_required",
+			wantMessageParts: []string{
+				"free TiDB Cloud Filesystem limit reached (1 of 1 used)",
+				"https://tidbcloud.com/org-settings/billing/payments",
+			},
+		},
+		{
+			name: "upgrade action without optional details",
+			body: `{
+				"error":"free tenant pool creation is not available",
+				"code":"free_tenant_pool_forbidden",
+				"action":{"type":"add_payment_method"}
+			}`,
+			wantCode: "fs.payment_method_required",
+			wantMessageParts: []string{
+				"free TiDB Cloud plan does not allow another Filesystem",
+				"https://tidbcloud.com/org-settings/billing/payments",
+			},
+			rejectMessagePart: "0 of 0",
+		},
+		{
+			name:     "generic payment error remains generic",
+			body:     `{"error":"payment could not be processed","code":"payment_required"}`,
+			wantCode: "api.payment_required",
+			wantMessageParts: []string{
+				"payment required",
+			},
+			rejectMessagePart: "https://tidbcloud.com/org-settings/billing/payments",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusPaymentRequired)
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer server.Close()
+
+			_, err := directTenantService(t.TempDir(), server.URL).CreateFileSystem(context.Background(), CreateFileSystemOptions{Profile: testProfile()})
+			if got := apperr.CodeFor(err); got != test.wantCode {
+				t.Fatalf("code = %q, want %q; error = %v", got, test.wantCode, err)
+			}
+			message := apperr.MessageFor(err)
+			for _, part := range test.wantMessageParts {
+				if !strings.Contains(message, part) {
+					t.Fatalf("message = %q, want %q", message, part)
+				}
+			}
+			if test.rejectMessagePart != "" && strings.Contains(message, test.rejectMessagePart) {
+				t.Fatalf("message = %q, must not contain %q", message, test.rejectMessagePart)
+			}
+		})
+	}
+}
+
 func TestTenantControlDeleteFailurePreservesCredential(t *testing.T) {
 	home := t.TempDir()
 	profile := testProfile()

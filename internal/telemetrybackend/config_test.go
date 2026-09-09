@@ -14,8 +14,6 @@ func TestLoadConfigDefaultsAndOverrides(t *testing.T) {
 		"TELEMETRY_MAX_EVENTS_PER_REQUEST": "12",
 		"TELEMETRY_TRUSTED_PROXY_CIDRS":    "10.0.0.0/8, 127.0.0.1/32",
 		"TIDB_DSN":                         "user:password@tcp(localhost:4000)/telemetry",
-		"POSTHOG_API_HOST":                 "http://localhost:8000",
-		"POSTHOG_PROJECT_TOKEN":            "phc_test",
 	}
 	cfg, err := LoadConfig(func(key string) string { return values[key] })
 	if err != nil {
@@ -39,7 +37,6 @@ func TestLoadConfigRejectsProductionWithoutVerifiedTLS(t *testing.T) {
 	values := map[string]string{
 		"TELEMETRY_PUBLIC_HOST": "telemetry.example.com",
 		"TIDB_DSN":              "user:password@tcp(localhost:4000)/telemetry?tls=skip-verify",
-		"POSTHOG_PROJECT_TOKEN": "phc_test",
 	}
 	_, err := LoadConfig(func(key string) string { return values[key] })
 	if err == nil || !strings.Contains(err.Error(), "verified TLS") {
@@ -54,7 +51,6 @@ func TestLoadConfigRejectsInvalidAndInconsistentLimits(t *testing.T) {
 		"TELEMETRY_BUFFER_MAX_EVENTS": "10",
 		"TELEMETRY_FLUSH_MAX_EVENTS":  "11",
 		"TIDB_DSN":                    "user:password@tcp(localhost:4000)/telemetry",
-		"POSTHOG_PROJECT_TOKEN":       "phc_test",
 	}
 	_, err := LoadConfig(func(key string) string { return values[key] })
 	if err == nil || !strings.Contains(err.Error(), "cannot exceed") {

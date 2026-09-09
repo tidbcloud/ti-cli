@@ -181,7 +181,7 @@ Implemented:
 - GoReleaser/GitHub Releases install and update workflow
 - Makefile build/test/e2e workflow
 - independent telemetry ingestion backend with strict schema validation,
-  bounded in-memory batching, TiDB storage, and personless PostHog forwarding
+  bounded in-memory batching, and TiDB storage
 
 There are no registered placeholder commands at the current stage. Implemented
 mutating commands support `--dry-run` where their command contract declares
@@ -363,7 +363,7 @@ internal/query/             JMESPath query application
 internal/secretinput/       no-echo secret input helper
 internal/settings/          global settings parsing and legacy logging migration
 internal/telemetry/         CLI eligibility, identity, event, and delivery path
-internal/telemetrybackend/  telemetry API, batcher, TiDB, and PostHog sinks
+internal/telemetrybackend/  telemetry API, batcher, and TiDB sink
 internal/update/            GitHub Releases update checks and self-update logic
 internal/version/           build version metadata
 scripts/                    installer scripts

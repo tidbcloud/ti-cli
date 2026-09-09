@@ -434,7 +434,7 @@ Build the independently deployed telemetry ingestion service:
 make build-telemetry-backend
 ```
 
-The backend binary is written to `bin/ti-telemetry-backend`. Its API, privacy contract, TiDB/PostHog batching behavior, and Docker deployment are documented in [Telemetry Backend Design](docs/telemetry-backend-design.md).
+The backend binary is written to `bin/ti-telemetry-backend`. Its API, privacy contract, TiDB batching behavior, and Docker deployment are documented in [Telemetry Backend Design](docs/telemetry-backend-design.md).
 
 ## Test
 

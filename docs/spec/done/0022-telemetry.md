@@ -4,7 +4,7 @@
 
 Collect minimal, privacy-preserving CLI telemetry that helps improve tdc reliability and command UX without capturing sensitive user data or adding telemetry management commands to the public CLI surface.
 
-Telemetry is routed only through a product-owned HTTPS backend. The CLI never sends events directly to PostHog or another third-party analytics endpoint.
+Telemetry is routed only through a product-owned HTTPS backend and stored only in TiDB. The CLI and backend do not send events to a third-party analytics endpoint.
 
 ## Product Decisions
 
@@ -14,8 +14,8 @@ Telemetry is routed only through a product-owned HTTPS backend. The CLI never se
 - Do not add `tdc cli describe-telemetry`, `tdc cli enable-telemetry`, `tdc cli disable-telemetry`, or another telemetry command.
 - `tdc update`, help, version, and commandless usage invocations never send telemetry.
 - Telemetry is best-effort and lossy. Delivery must not change command stdout, stderr, output format, exit code, or user-visible result.
-- The backend returns `202 Accepted` after validated events enter its bounded in-memory batcher. This does not guarantee that TiDB or PostHog has completed its sink write.
-- No local durable queue, MQ, Kafka, SQS, Pub/Sub, or TiDB-to-PostHog consumer is required for MVP.
+- The backend returns `202 Accepted` after validated events enter its bounded in-memory batcher. This does not guarantee that TiDB has completed its sink write.
+- No local durable queue, MQ, Kafka, SQS, Pub/Sub, or downstream forwarding consumer is required for MVP.
 
 ## Eligible Commands
 
@@ -231,7 +231,7 @@ Delivery behavior:
 6. The CLI boundary maps the result to stable exit and application error codes.
 7. The telemetry package constructs one allowlisted event and posts it to `POST /v1/telemetry/batch`.
 8. The backend validates the schema, enqueues accepted events, and returns `202 Accepted`.
-9. The backend flush loop independently writes the same sanitized batch to TiDB and PostHog.
+9. The backend flush loop writes the sanitized batch to TiDB.
 10. The CLI ignores the delivery result except for optional redacted debug diagnostics.
 
 ## Package Design
@@ -256,8 +256,8 @@ The CLI depends on these guarantees:
 - valid event batches are acknowledged with `202 Accepted` after entering a bounded in-memory buffer;
 - unknown or prohibited fields are rejected;
 - accepted events are best-effort and may be lost before sink flush;
-- TiDB and PostHog receive the same sanitized event batch through independent sink attempts;
-- PostHog person profiles are disabled with `$process_person_profile = false`;
+- TiDB is the only persistent telemetry destination;
+- the backend does not forward telemetry to third-party analytics services;
 - no CLI-shipped backend credential is required.
 
 ## Acceptance Criteria
@@ -297,4 +297,4 @@ The CLI depends on these guarantees:
 - User-configurable telemetry endpoints.
 - Capturing command output, API response bodies, SQL text, paths, file contents, credentials, flag values, raw errors, host identity, or cloud resource IDs.
 - Local durable telemetry queues.
-- MQ, Kafka, SQS, Pub/Sub, durable outbox tables, or TiDB-to-PostHog consumer workflows.
+- MQ, Kafka, SQS, Pub/Sub, durable outbox tables, or downstream forwarding workflows.

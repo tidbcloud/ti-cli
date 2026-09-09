@@ -156,7 +156,7 @@ ALTER TABLE telemetry_events
 
 The implementation must account for repeated startup and partially applied migration state rather than assuming a new database. Do not index `extra_json`; ad hoc JSON inspection is allowed, but a repeatedly queried key should become a separately designed first-class field later.
 
-TiDB receives `tag` and complete `extra_json`. PostHog receives `tag` and `extra` as nested event properties. The backend must not flatten arbitrary extra keys into top-level PostHog properties or use either field as `distinct_id` or person properties.
+TiDB receives `tag` and complete `extra_json`. The backend must not flatten arbitrary extra keys into first-class columns or use either field as an identity.
 
 ## Failure Behavior
 
@@ -189,10 +189,9 @@ Backend tests must cover:
 - strict UTF-8, size, depth, prohibited-key, and unknown-field rejection;
 - TiDB migration behavior for a new and existing schema;
 - TiDB batch insertion preserving JSON type;
-- PostHog nested properties with person profiles disabled;
-- independent TiDB and PostHog sink failure behavior remaining unchanged.
+- TiDB sink failure behavior remaining best-effort and non-fatal to the CLI.
 
-Black-box `make e2e` uses a local telemetry receiver to inspect schema v2 payloads without contacting production. A separate opt-in `make telemetry-e2e` loads the ignored `e2e/.env.telemetry` file and requires a test-only `TDC_TEST_TELEMETRY_TIDB_DSN` with database create/drop privileges. It creates a unique empty database, migrates it through legacy schema version 1, inserts a legacy event, migrates to the latest version, proves that event is preserved, then starts a local telemetry backend and fake PostHog receiver. It executes a no-side-effect CLI dry run against that local backend, verifies the stored schema v2 event and extra JSON, and drops only its temporary database. Ordinary `make test`, `make e2e`, and all live-e2e targets must not read the dotenv file or require a live TiDB instance.
+Black-box `make e2e` uses a local telemetry receiver to inspect schema v2 payloads without contacting production. A separate opt-in `make telemetry-e2e` loads the ignored `e2e/.env.telemetry` file and requires a test-only `TI_TEST_TELEMETRY_TIDB_DSN` with database create/drop privileges; the test target also accepts the legacy pre-v0.2 `TDC_TEST_TELEMETRY_TIDB_DSN` name. It creates a unique empty database, migrates it through legacy schema version 1, inserts a legacy event, migrates to the latest version, proves that event is preserved, then starts a local telemetry backend. It executes a no-side-effect CLI dry run against that local backend, verifies the stored schema v2 event and extra JSON, and drops only its temporary database. Ordinary `make test`, `make e2e`, and all live-e2e targets must not read the dotenv file or require a live TiDB instance.
 
 ## Documentation Updates
 

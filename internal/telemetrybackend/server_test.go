@@ -16,7 +16,7 @@ import (
 func TestServerAcceptsValidBatchWith202BeforeFlush(t *testing.T) {
 	cfg := testConfig()
 	batcher := NewBatcher(cfg, nil, discardLogger(), nil)
-	server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, discardLogger(), nil)
+	server := NewServer(cfg, batcher, readinessStub{}, discardLogger(), nil)
 
 	response := performBatchRequest(server.Handler(), validRequestBody())
 	if response.Code != http.StatusAccepted {
@@ -42,7 +42,7 @@ func TestServerAcceptsCurrentAndLegacyCLIUserAgents(t *testing.T) {
 		t.Run(userAgent, func(t *testing.T) {
 			cfg := testConfig()
 			batcher := NewBatcher(cfg, nil, discardLogger(), nil)
-			server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, discardLogger(), nil)
+			server := NewServer(cfg, batcher, readinessStub{}, discardLogger(), nil)
 			request := newBatchRequest(validRequestBody())
 			request.Header.Set("User-Agent", userAgent)
 			response := httptest.NewRecorder()
@@ -109,7 +109,7 @@ func TestServerRejectsInvalidRequestsWithGenericErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			batcher := NewBatcher(cfg, nil, discardLogger(), nil)
-			server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, discardLogger(), nil)
+			server := NewServer(cfg, batcher, readinessStub{}, discardLogger(), nil)
 			request := httptest.NewRequest(test.method, "/v1/telemetry/batch", bytes.NewReader(test.body))
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("User-Agent", "ti/0.2.0")
@@ -133,7 +133,7 @@ func TestServerDoesNotLogRequestBodiesOrInstallationIDs(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logs, nil))
 	batcher := NewBatcher(cfg, nil, logger, nil)
-	server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, logger, nil)
+	server := NewServer(cfg, batcher, readinessStub{}, logger, nil)
 
 	body := bytes.Replace(
 		validRequestBody(),
@@ -157,7 +157,7 @@ func TestServerReturns503WhenBufferIsFull(t *testing.T) {
 	cfg.BufferMaxEvents = 1
 	cfg.FlushMaxEvents = 1
 	batcher := NewBatcher(cfg, nil, discardLogger(), nil)
-	server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, discardLogger(), nil)
+	server := NewServer(cfg, batcher, readinessStub{}, discardLogger(), nil)
 	if response := performBatchRequest(server.Handler(), validRequestBody()); response.Code != http.StatusAccepted {
 		t.Fatalf("first status = %d", response.Code)
 	}
@@ -172,7 +172,7 @@ func TestServerRateLimitsByTrustedForwardedIP(t *testing.T) {
 	cfg.RateLimitBurst = 1
 	cfg.TrustedProxyCIDRs, _ = parseTrustedProxyCIDRs("192.0.2.0/24")
 	batcher := NewBatcher(cfg, nil, discardLogger(), nil)
-	server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, discardLogger(), nil)
+	server := NewServer(cfg, batcher, readinessStub{}, discardLogger(), nil)
 
 	request := newBatchRequest(validRequestBody())
 	request.RemoteAddr = "192.0.2.10:1234"
@@ -196,7 +196,7 @@ func TestServerRateLimitsByTrustedForwardedIP(t *testing.T) {
 func TestServerHealthAndReadiness(t *testing.T) {
 	cfg := testConfig()
 	batcher := NewBatcher(cfg, nil, discardLogger(), nil)
-	server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, discardLogger(), nil)
+	server := NewServer(cfg, batcher, readinessStub{}, discardLogger(), nil)
 
 	health := httptest.NewRecorder()
 	server.Handler().ServeHTTP(health, httptest.NewRequest(http.MethodGet, "/healthz", nil))
@@ -208,12 +208,14 @@ func TestServerHealthAndReadiness(t *testing.T) {
 	if ready.Code != http.StatusOK {
 		t.Fatalf("ready status = %d", ready.Code)
 	}
+	if strings.Contains(ready.Body.String(), "posthog") {
+		t.Fatalf("readiness response exposes removed PostHog dependency: %s", ready.Body.String())
+	}
 
 	unreadyServer := NewServer(
 		cfg,
 		batcher,
 		readinessStub{err: errors.New("db unavailable")},
-		readinessStub{},
 		discardLogger(),
 		nil,
 	)
@@ -228,7 +230,7 @@ func TestServerExportsAggregateMetricsWithoutEventValues(t *testing.T) {
 	cfg := testConfig()
 	metrics := &Metrics{}
 	batcher := NewBatcher(cfg, nil, discardLogger(), metrics)
-	server := NewServer(cfg, batcher, readinessStub{}, readinessStub{}, discardLogger(), metrics)
+	server := NewServer(cfg, batcher, readinessStub{}, discardLogger(), metrics)
 	if response := performBatchRequest(server.Handler(), validRequestBody()); response.Code != http.StatusAccepted {
 		t.Fatalf("ingest status = %d", response.Code)
 	}
@@ -241,6 +243,9 @@ func TestServerExportsAggregateMetricsWithoutEventValues(t *testing.T) {
 	if !strings.Contains(response.Body.String(), "telemetry_events_accepted_total 1") ||
 		!strings.Contains(response.Body.String(), "telemetry_buffer_events 1") {
 		t.Fatalf("metrics body = %s", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), "posthog") {
+		t.Fatalf("metrics expose removed PostHog sink: %s", response.Body.String())
 	}
 	if strings.Contains(response.Body.String(), "ti_01j0a0n8m9f4q2x6cn0b9q3k3z") {
 		t.Fatalf("metrics exposed installation ID: %s", response.Body.String())
@@ -295,7 +300,7 @@ func TestReadyUsesSinkTimeout(t *testing.T) {
 	cfg := testConfig()
 	cfg.SinkTimeout = 10 * time.Millisecond
 	batcher := NewBatcher(cfg, nil, discardLogger(), nil)
-	server := NewServer(cfg, batcher, blockingReadiness{}, readinessStub{}, discardLogger(), nil)
+	server := NewServer(cfg, batcher, blockingReadiness{}, discardLogger(), nil)
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if response.Code != http.StatusServiceUnavailable {
@@ -305,7 +310,7 @@ func TestReadyUsesSinkTimeout(t *testing.T) {
 
 func TestServerConvertsUnexpectedPanicTo500(t *testing.T) {
 	cfg := testConfig()
-	server := NewServer(cfg, nil, readinessStub{}, readinessStub{}, discardLogger(), nil)
+	server := NewServer(cfg, nil, readinessStub{}, discardLogger(), nil)
 	response := performBatchRequest(server.Handler(), validRequestBody())
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", response.Code)

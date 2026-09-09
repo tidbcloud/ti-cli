@@ -2,26 +2,24 @@
 
 ## Purpose
 
-The ti telemetry backend is a small product-owned HTTPS ingestion service between the ti CLI, TiDB, and PostHog.
+The ti telemetry backend is a small product-owned HTTPS ingestion service between the ti CLI and TiDB.
 
 ```text
-ti CLI -> telemetry backend -> in-memory batcher
-  |-> TiDB
-  |-> PostHog /batch/
+ti CLI -> telemetry backend -> in-memory batcher -> TiDB
 ```
 
-The backend exists so the CLI never sends directly to PostHog, never embeds a PostHog project token, and never relies on PostHog as the only telemetry data store. The backend enforces the privacy schema, rate limits abuse, rejects unknown fields, batches valid events in memory, then best-effort writes the same sanitized batch to TiDB and PostHog.
+The backend exists so the CLI sends only to a product-owned endpoint and never embeds storage credentials. The backend enforces the privacy schema, rate limits abuse, rejects unknown fields, batches valid events in memory, then best-effort writes each sanitized batch to TiDB.
 
-TiDB is the ti-owned telemetry store and future migration/analysis base. PostHog is an analytics destination. TiDB is not an outbox queue in MVP, and the backend must not consume events from TiDB to forward them to PostHog.
+TiDB is the only telemetry store and the analysis base. The backend does not forward telemetry to another analytics destination.
 
 ## Non-goals
 
 - Do not store raw telemetry request bodies.
 - Do not capture command output, API payloads, SQL text, file paths, credentials, profile names, cloud resource IDs, or raw error messages.
-- Do not identify users, create PostHog person profiles, call PostHog identify, alias, group, or feature flag APIs.
+- Do not identify users or create user profiles in an analytics service.
 - Do not require a CLI-shipped API token. Anything shipped in the CLI is public.
-- Do not add MQ, Kafka, SQS, Pub/Sub, durable outbox tables, or TiDB-to-PostHog consumer workflows for MVP.
-- Do not add internal worker concurrency for PostHog forwarding. One process owns one in-memory batcher and one flush loop.
+- Do not add MQ, Kafka, SQS, Pub/Sub, durable outbox tables, or downstream forwarding workflows for MVP.
+- Do not add internal worker concurrency for sink writes. One process owns one in-memory batcher and one flush loop.
 
 ## Runtime Configuration
 
@@ -43,11 +41,11 @@ TELEMETRY_RATE_LIMIT_PER_MINUTE=60
 TELEMETRY_RATE_LIMIT_BURST=120
 TELEMETRY_TRUSTED_PROXY_CIDRS=172.16.0.0/12
 TIDB_DSN=tdc_telemetry:password@tcp(gateway01.us-east-1.prod.aws.tidbcloud.com:4000)/tdc_telemetry?tls=true&parseTime=true
-POSTHOG_API_HOST=https://us.i.posthog.com
-POSTHOG_PROJECT_TOKEN=phc_xxx
 ```
 
-`TIDB_DSN` and `POSTHOG_PROJECT_TOKEN` are application credentials. They must remain only in the server-side `.env`, must never be stored in GitHub repository or Environment secrets, must never be committed to git, and must never be logged. GitHub may store only deployment transport credentials such as the SSH host, username, and key. For TiDB Cloud, the DSN must enable TLS with certificate and identity verification. For EU PostHog Cloud, use `https://eu.i.posthog.com`. For self-hosted PostHog, use the ingestion host for that instance.
+`TIDB_DSN` is an application credential. It must remain only in the server-side `.env`, must never be stored in GitHub repository or Environment secrets, must never be committed to git, and must never be logged. GitHub may store only deployment transport credentials such as the SSH host, username, and key. For TiDB Cloud, the DSN must enable TLS with certificate and identity verification. `TELEMETRY_ENVIRONMENT=production` enables this strict TLS validation.
+
+Deployments upgraded from the former dual-sink implementation may still have `POSTHOG_API_HOST` and `POSTHOG_PROJECT_TOKEN` in their server-local `.env`. The backend ignores those variables; operators should remove them after deployment. This change stops future forwarding but does not delete historical data already held by an external service.
 
 ## HTTP API
 
@@ -65,15 +63,14 @@ Response:
 
 ### `GET /readyz`
 
-Readiness check. This verifies that required environment variables are present, the TiDB connection can be opened, and the service can construct the PostHog batch URL. It does not need to send a test event to PostHog.
+Readiness check. This verifies that required environment variables are present and the TiDB connection can be opened.
 
 Response:
 
 ```json
 {
   "ok": true,
-  "tidb_configured": true,
-  "posthog_configured": true
+  "tidb_configured": true
 }
 ```
 
@@ -83,9 +80,9 @@ Prometheus text-format process counters for accepted, rejected, rate-limited, bu
 
 ### `POST /v1/telemetry/batch`
 
-Accepts one small request batch of sanitized ti CLI telemetry events, validates it, enqueues valid events into the bounded in-memory batcher, and returns immediately. The response means the backend accepted the events into memory; it does not mean TiDB and PostHog have already flushed the batch.
+Accepts one small request batch of sanitized ti CLI telemetry events, validates it, enqueues valid events into the bounded in-memory batcher, and returns immediately. The response means the backend accepted the events into memory; it does not mean TiDB has already flushed the batch.
 
-The only success status for this endpoint is `202 Accepted`. Do not return `200 OK` for an accepted batch because the asynchronous TiDB and PostHog sink writes are not complete.
+The only success status for this endpoint is `202 Accepted`. Do not return `200 OK` for an accepted batch because the asynchronous TiDB write is not complete.
 
 Required request headers:
 
@@ -216,13 +213,13 @@ Accepted events are appended to a bounded in-memory batcher. The batcher has exa
 - `TELEMETRY_FLUSH_INTERVAL`, default 5 seconds.
 - Shutdown drain, capped by `TELEMETRY_SHUTDOWN_DRAIN_TIMEOUT`.
 
-The flush loop writes the same sanitized batch to TiDB and PostHog. These writes are independent best-effort sink writes. A TiDB failure must not prevent the PostHog attempt, and a PostHog failure must not prevent the TiDB attempt. Failures are logged as aggregate operational errors and exported through the private `/metrics` endpoint; they are not reported back to the CLI because the CLI already received `202 Accepted`.
+The flush loop writes each sanitized batch to TiDB. Failures are logged as aggregate operational errors and exported through the private `/metrics` endpoint; they are not reported back to the CLI because the CLI already received `202 Accepted`.
 
 The batcher may do a small in-memory retry for sink failures, but it must not write retry state to disk and must not replay from TiDB. A process crash can lose accepted-but-unflushed events. That is acceptable for MVP telemetry because the data is best-effort and lossy by design.
 
 ## TiDB Storage
 
-TiDB stores sanitized telemetry events as ti-owned telemetry data. It is not a queue for PostHog forwarding in MVP.
+TiDB stores sanitized telemetry events as ti-owned telemetry data and is the only persistent telemetry destination.
 
 Recommended schema:
 
@@ -280,63 +277,6 @@ The same deployment identity runs the one-shot migrations and the API, so it nee
 
 `make telemetry-e2e` is intentionally isolated from this production database. Its ignored `e2e/.env.telemetry` must point to a test-only TiDB identity with `CREATE` and `DROP` database privileges. The test creates a unique `tdc_telemetry_e2e_*` database, validates initial migration and an additive upgrade with a preserved legacy row, verifies a real event write through a local backend, then drops that temporary database. It never queries, deletes, or migrates production telemetry rows.
 
-## PostHog Forwarding
-
-Forward accepted batches to PostHog's `/batch/` endpoint during the same flush cycle as the TiDB write:
-
-```http
-POST {POSTHOG_API_HOST}/batch/
-Content-Type: application/json
-```
-
-PostHog request body:
-
-```json
-{
-  "api_key": "<POSTHOG_PROJECT_TOKEN>",
-  "historical_migration": false,
-  "batch": [
-    {
-      "event": "ti.command.finished",
-      "timestamp": "2026-07-08T12:00:00Z",
-      "properties": {
-        "distinct_id": "ti_01j0a0n8m9f4q2x6cn0b9q3k3z",
-        "$process_person_profile": false,
-        "schema_version": 2,
-        "event_id": "018f7e67-8fe4-7cc2-9ca5-2d3536c7fb44",
-        "command_path": "ti fs create-file-system",
-        "flag_names": ["file-system-name", "output"],
-        "exit_code": 0,
-        "error_code": "",
-        "duration_ms": 182,
-        "cloud_provider": "aws",
-        "region_code": "aws-us-east-1",
-        "cli_version": "0.1.0",
-        "os": "darwin",
-        "arch": "arm64",
-        "install_source": "github-release",
-        "profile_source": "default",
-        "ti_environment": "production",
-        "tag": "e2b-preview",
-        "extra": {"campaign":"launch","runtime":"e2b"}
-      }
-    }
-  ]
-}
-```
-
-Important:
-
-- Set `$process_person_profile` to `false` for every event.
-- Do not send `$identify`, `$create_alias`, `$groupidentify`, or feature flag events.
-- Do not add person properties.
-- Do not add IP-derived location fields in the backend.
-- Use `anonymous_installation_id` only as `distinct_id`.
-- Use `TELEMETRY_SINK_TIMEOUT` for the PostHog request.
-- Do not log the full PostHog request body in production.
-
-PostHog's capture docs state that `/i/v0/e` and `/batch` are the primary event ingestion endpoints, that the API uses a project token, and that API-captured events should set `$process_person_profile: false` to remain anonymous.
-
 ## Rate Limiting And Abuse Controls
 
 The endpoint is public because the CLI cannot safely hold a secret. Protect it with cheap server-side controls:
@@ -364,14 +304,12 @@ Safe logs:
 - rate limit decision
 - batch flush size
 - TiDB sink success/failure category
-- PostHog sink success/failure category
 - latency bucket
 
 Never log:
 
 - request body
 - `TIDB_DSN`
-- `POSTHOG_PROJECT_TOKEN`
 - `anonymous_installation_id`
 - raw client IP beyond normal reverse proxy access logs, unless required for abuse handling
 - rejected field values
@@ -428,8 +366,6 @@ TELEMETRY_RATE_LIMIT_PER_MINUTE=60
 TELEMETRY_RATE_LIMIT_BURST=120
 TELEMETRY_TRUSTED_PROXY_CIDRS=172.16.0.0/12
 TIDB_DSN=tdc_telemetry:password@tcp(gateway01.us-east-1.prod.aws.tidbcloud.com:4000)/tdc_telemetry?tls=true&parseTime=true
-POSTHOG_API_HOST=https://us.i.posthog.com
-POSTHOG_PROJECT_TOKEN=phc_xxx
 ```
 
 The checked-in Compose definition is `deploy/telemetry/docker-compose.yml`. It first runs the non-root one-shot `migrate` service, then starts `api` only after migration completes successfully. Both use the same embedded Go migrations and server-local `.env`. The API has a read-only root filesystem, is exposed only to the private Compose network, and only Caddy publishes ports 80 and 443. The checked-in Caddy configuration does not enable access logging, so client IP addresses are not persisted by default.
@@ -460,7 +396,7 @@ Deployment secrets available to the `telemetry-production` job:
 - `DEPLOY_SSH_KEY`
 - `DEPLOY_PATH`
 
-These are deployment transport credentials only. Keep `TIDB_DSN`, `POSTHOG_PROJECT_TOKEN`, and all other application credentials exclusively in the server-side `.env`; do not duplicate them in GitHub repository secrets, GitHub Environment secrets, workflow inputs, artifacts, or SSH script arguments.
+These are deployment transport credentials only. Keep `TIDB_DSN` and all other application credentials exclusively in the server-side `.env`; do not duplicate them in GitHub repository secrets, GitHub Environment secrets, workflow inputs, artifacts, or SSH script arguments.
 
 Example workflow:
 
@@ -550,23 +486,23 @@ Expected response:
 }
 ```
 
-Then verify the event appears in TiDB after the next flush and appears in PostHog as `ti.command.finished` without creating a person profile.
+Then verify the event appears in TiDB after the next flush.
 
 ## When To Add MQ Or Durable Queues
 
 Do not add MQ or durable queues for MVP. Add SQS, Pub/Sub, Redpanda, Kafka, durable outbox tables, or another queue only when at least one of these becomes true:
 
 - accepted-but-unflushed event loss becomes unacceptable
-- PostHog or TiDB downtime causes unacceptable event loss
+- TiDB downtime causes unacceptable event loss
 - replay/backfill becomes a product requirement
 - multiple destinations need fan-out with delivery guarantees
 - strict traffic smoothing is required across multiple backend instances
 
-Until then, in-memory batching plus independent best-effort TiDB/PostHog sink writes is simpler and matches the lossy nature of CLI telemetry.
+Until then, in-memory batching plus best-effort TiDB writes is simpler and matches the lossy nature of CLI telemetry.
 
 ## Backend Acceptance Checklist
 
-- `POST /v1/telemetry/batch` accepts the documented valid request, enqueues it without synchronously writing TiDB or PostHog, and returns `202 Accepted`.
+- `POST /v1/telemetry/batch` accepts the documented valid request, enqueues it without synchronously writing TiDB, and returns `202 Accepted`.
 - The ingestion endpoint never returns `200 OK` for a successfully enqueued batch.
 - Unknown fields are rejected.
 - Disallowed field names are rejected.
@@ -576,15 +512,12 @@ Until then, in-memory batching plus independent best-effort TiDB/PostHog sink wr
 - Full in-memory buffer returns `503` without blocking indefinitely.
 - Batcher flushes on max events, max bytes, interval, and shutdown drain.
 - TiDB sink performs batch insert into `telemetry_events` using sanitized fields only.
-- PostHog sink sends batches to `/batch/` and sets `$process_person_profile: false`.
-- TiDB sink failure does not skip the PostHog sink attempt.
-- PostHog sink failure does not skip the TiDB sink attempt.
-- No component consumes events from TiDB to forward them to PostHog.
-- PostHog token and TiDB DSN are not logged.
+- No component forwards accepted events from the batcher or TiDB to a third-party analytics service.
+- TiDB DSN is not logged.
 - Full request bodies are not logged.
 - Sink failures do not crash the service.
 - `GET /healthz` and `GET /readyz` work behind Caddy.
 - Private `GET /metrics` exposes aggregate counters without event values, and Caddy does not expose it publicly.
 - Docker Compose deploy runs `migrate` successfully before starting `api` and `caddy`.
 - GitHub Actions SSH deploy can rebuild and restart the service with one manual workflow dispatch after approval through the `telemetry-production` Environment.
-- `TIDB_DSN`, `POSTHOG_PROJECT_TOKEN`, and other application credentials exist only in the server-side `.env` and are absent from GitHub secrets, workflow inputs, logs, and artifacts.
+- `TIDB_DSN` and other application credentials exist only in the server-side `.env` and are absent from GitHub secrets, workflow inputs, logs, and artifacts.

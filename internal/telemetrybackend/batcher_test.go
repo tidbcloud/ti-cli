@@ -6,45 +6,45 @@ import (
 	"time"
 )
 
-func TestBatcherFlushesAtEventThresholdAndAttemptsIndependentSinks(t *testing.T) {
+func TestBatcherFlushesAtEventThreshold(t *testing.T) {
 	cfg := testConfig()
 	cfg.FlushMaxEvents = 2
-	failing := newRecordingSink("tidb", errTestSink)
-	succeeding := newRecordingSink("posthog", nil)
+	sink := newRecordingSink("tidb", nil)
 	metrics := &Metrics{}
-	batcher := NewBatcher(cfg, []Sink{failing, succeeding}, discardLogger(), metrics)
+	batcher := NewBatcher(cfg, []Sink{sink}, discardLogger(), metrics)
 	batcher.Start()
 	defer closeBatcher(t, batcher)
 
 	if !batcher.Enqueue([]Event{testEvent(), testEvent()}) {
 		t.Fatal("Enqueue returned false")
 	}
-	waitForSink(t, failing)
-	waitForSink(t, succeeding)
-	if failing.eventCount() != 2 || succeeding.eventCount() != 2 {
-		t.Fatalf("sink event counts = %d, %d", failing.eventCount(), succeeding.eventCount())
+	waitForSink(t, sink)
+	if sink.eventCount() != 2 {
+		t.Fatalf("sink event count = %d, want 2", sink.eventCount())
 	}
-	if metrics.SinkFailures.Load() != 1 || metrics.SinkSuccesses.Load() != 1 {
-		t.Fatalf("sink metrics = failures %d, successes %d", metrics.SinkFailures.Load(), metrics.SinkSuccesses.Load())
+	if metrics.TiDBSuccesses.Load() != 1 || metrics.TiDBFailures.Load() != 0 {
+		t.Fatalf("TiDB metrics = failures %d, successes %d", metrics.TiDBFailures.Load(), metrics.TiDBSuccesses.Load())
 	}
 }
 
-func TestBatcherAttemptsTiDBWhenPostHogFails(t *testing.T) {
+func TestBatcherRecordsTiDBFailure(t *testing.T) {
 	cfg := testConfig()
 	cfg.FlushMaxEvents = 1
-	posthog := newRecordingSink("posthog", errTestSink)
-	tidb := newRecordingSink("tidb", nil)
-	batcher := NewBatcher(cfg, []Sink{posthog, tidb}, discardLogger(), nil)
+	tidb := newRecordingSink("tidb", errTestSink)
+	metrics := &Metrics{}
+	batcher := NewBatcher(cfg, []Sink{tidb}, discardLogger(), metrics)
 	batcher.Start()
 	defer closeBatcher(t, batcher)
 
 	if !batcher.Enqueue([]Event{testEvent()}) {
 		t.Fatal("Enqueue returned false")
 	}
-	waitForSink(t, posthog)
 	waitForSink(t, tidb)
 	if tidb.eventCount() != 1 {
 		t.Fatalf("TiDB event count = %d, want 1", tidb.eventCount())
+	}
+	if metrics.TiDBFailures.Load() != 1 || metrics.TiDBSuccesses.Load() != 0 {
+		t.Fatalf("TiDB metrics = failures %d, successes %d", metrics.TiDBFailures.Load(), metrics.TiDBSuccesses.Load())
 	}
 }
 

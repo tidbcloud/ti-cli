@@ -50,7 +50,9 @@ e2e: build
 telemetry-e2e: build build-telemetry-backend build-telemetry-migrator
 	@test -f "$(TELEMETRY_E2E_ENV)" || { echo "missing $(TELEMETRY_E2E_ENV); set TI_TEST_TELEMETRY_TIDB_DSN in that ignored file" >&2; exit 2; }
 	@set -a; . "$(TELEMETRY_E2E_ENV)"; set +a; \
-		TI_E2E_BIN="$(abspath $(TI_BIN))" TI_TELEMETRY_BACKEND_E2E_BIN="$(abspath $(TELEMETRY_BACKEND_BIN))" TI_TELEMETRY_MIGRATOR_E2E_BIN="$(abspath $(TELEMETRY_MIGRATOR_BIN))" TI_TELEMETRY_E2E=1 $(GO) test ./e2e -count=1 -v -run '^TestTelemetryDeliveryToTiDB$$'
+		TI_TEST_TELEMETRY_TIDB_DSN="$${TI_TEST_TELEMETRY_TIDB_DSN:-$${TDC_TEST_TELEMETRY_TIDB_DSN:-}}"; \
+		test -n "$$TI_TEST_TELEMETRY_TIDB_DSN" || { echo "TI_TEST_TELEMETRY_TIDB_DSN is required in $(TELEMETRY_E2E_ENV)" >&2; exit 2; }; \
+		TI_TEST_TELEMETRY_TIDB_DSN="$$TI_TEST_TELEMETRY_TIDB_DSN" TI_E2E_BIN="$(abspath $(TI_BIN))" TI_TELEMETRY_BACKEND_E2E_BIN="$(abspath $(TELEMETRY_BACKEND_BIN))" TI_TELEMETRY_MIGRATOR_E2E_BIN="$(abspath $(TELEMETRY_MIGRATOR_BIN))" TI_TELEMETRY_E2E=1 $(GO) test ./e2e -count=1 -v -run '^TestTelemetryDeliveryToTiDB$$'
 
 live-e2e: build
 	$(LIVE_E2E_RUN) -run '^TestLive'
