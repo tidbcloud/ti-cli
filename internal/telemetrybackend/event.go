@@ -71,6 +71,7 @@ var allowedRegions = map[string]struct{}{
 	"aws-ap-southeast-1":      {},
 	"ali-ap-southeast-1":      {},
 	"alicloud-ap-southeast-1": {},
+	"gcp-us-east-1":           {},
 }
 
 var allowedOperatingSystems = map[string]struct{}{
@@ -205,7 +206,7 @@ func validateEvent(raw wireEvent, schemaVersion int, receivedAt time.Time) (Even
 	if raw.DurationMS == nil || *raw.DurationMS < 0 || *raw.DurationMS > 86_400_000 {
 		return Event{}, errors.New("invalid duration_ms")
 	}
-	if !oneOf(raw.CloudProvider, "", "aws", "alibaba_cloud", "unknown") {
+	if !oneOf(raw.CloudProvider, "", "aws", "alibaba_cloud", "gcp", "unknown") {
 		return Event{}, errors.New("invalid cloud_provider")
 	}
 	if _, ok := allowedRegions[raw.RegionCode]; !ok {

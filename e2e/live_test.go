@@ -203,6 +203,8 @@ func TestLiveDBCommandSurface(t *testing.T) {
 		{"db", "help"},
 		{"db", "create-db-cluster", "help"},
 		{"db", "list-db-clusters", "help"},
+		{"db", "list-export-tasks", "help"},
+		{"db", "download-exported-data", "help"},
 	})
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
 		{"db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "tdc-e2e-dry-run", "--wait"},
@@ -214,6 +216,7 @@ func TestLiveDBCommandSurface(t *testing.T) {
 		{"db", "describe-db-cluster-branch"},
 		{"db", "format-db-connection-string"},
 		{"db", "execute-sql-statement"},
+		{"db", "list-export-tasks"},
 	})
 
 	clusters := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--db-cluster-type", "starter", "--page-size", "1")
@@ -249,7 +252,44 @@ func TestLiveDBCommandSurface(t *testing.T) {
 		describe.wantExitCode(0)
 		describe.wantStdoutContains(`"id"`)
 		describe.wantStdoutContains(clusterList.Clusters[0].ID)
+
+		exports := runTI(t, bin, "--profile", profileName, "db", "list-export-tasks", "--db-cluster-id", clusterList.Clusters[0].ID, "--page-size", "1")
+		exports.wantExitCode(0)
+		exports.wantStdoutContains(`"export_tasks"`)
 	}
+}
+
+func TestLiveDBDownloadExportedData(t *testing.T) {
+	requireLive(t)
+	exportID := strings.TrimSpace(os.Getenv("TI_LIVE_EXPORT_ID"))
+	if exportID == "" {
+		t.Skip("TI_LIVE_EXPORT_ID is required for live export download")
+	}
+	clusterID := strings.TrimSpace(os.Getenv("TI_LIVE_DB_CLUSTER_ID"))
+	bin := tiBinary(t)
+	profileName := liveProfileName(t)
+	if clusterID == "" {
+		clusters := runTI(t, bin, "--profile", profileName, "db", "list-db-clusters", "--db-cluster-type", "starter", "--page-size", "1")
+		clusters.wantExitCode(0)
+		var clusterList struct {
+			Clusters []struct {
+				ID string `json:"id"`
+			} `json:"clusters"`
+		}
+		if err := json.Unmarshal([]byte(clusters.stdout), &clusterList); err != nil || len(clusterList.Clusters) == 0 || clusterList.Clusters[0].ID == "" {
+			t.Fatalf("set TI_LIVE_DB_CLUSTER_ID or list a Starter cluster to download export %s", exportID)
+		}
+		clusterID = clusterList.Clusters[0].ID
+	}
+	out := t.TempDir()
+	dryRun := runTI(t, bin, "--profile", profileName, "db", "download-exported-data", "--db-cluster-id", clusterID, "--export-id", exportID, "--output-path", out, "--dry-run")
+	dryRun.wantExitCode(0)
+	dryRun.wantStdoutContains(`"dry_run": true`)
+	result := runTI(t, bin, "--profile", profileName, "db", "download-exported-data", "--db-cluster-id", clusterID, "--export-id", exportID, "--output-path", out)
+	result.wantExitCode(0)
+	result.wantStdoutContains(`"export_id"`)
+	result.wantStdoutNotContains("http://")
+	result.wantStdoutNotContains("https://")
 }
 
 func TestLiveFSCommandSurface(t *testing.T) {
@@ -1826,6 +1866,10 @@ func TestLiveDBClusterLifecycle(t *testing.T) {
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
 		{"db", "delete-db-cluster-branch", "--db-cluster-id", clusterID, "--db-cluster-branch-id", branchID},
 	}, "remote_mutation")
+
+	exports := runTI(t, bin, "--profile", profileName, "db", "list-export-tasks", "--db-cluster-id", clusterID, "--page-size", "1")
+	exports.wantExitCode(0)
+	exports.wantStdoutContains(`"export_tasks"`)
 
 	branches := runTI(t, bin, "--profile", profileName, "db", "list-db-cluster-branches", "--db-cluster-id", clusterID, "--page-size", "100")
 	branches.wantExitCode(0)

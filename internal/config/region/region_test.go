@@ -13,6 +13,7 @@ func TestValidateSupportedProviderRegions(t *testing.T) {
 		{ProviderAWS, "ap-northeast-1"},
 		{ProviderAWS, "ap-southeast-1"},
 		{ProviderAlibabaCloud, "ap-southeast-1"},
+		{ProviderGCP, "us-east-1"},
 	}
 
 	for _, tt := range tests {
@@ -29,7 +30,7 @@ func TestValidateRejectsUnsupportedProviderRegions(t *testing.T) {
 		provider string
 		region   string
 	}{
-		{"gcp", "us-east-1"},
+		{"azure", "eastus"},
 		{ProviderAlibabaCloud, "us-east-1"},
 		{ProviderAWS, "cn-hangzhou"},
 	}
@@ -54,6 +55,7 @@ func TestParsePlacementCode(t *testing.T) {
 		{"aws-ap-southeast-1", "aws-ap-southeast-1", ProviderAWS, "ap-southeast-1"},
 		{"alicloud-ap-southeast-1", "alicloud-ap-southeast-1", ProviderAlibabaCloud, "ap-southeast-1"},
 		{"ali-ap-southeast-1", "alicloud-ap-southeast-1", ProviderAlibabaCloud, "ap-southeast-1"},
+		{"gcp-us-east-1", "gcp-us-east-1", ProviderGCP, "us-east-1"},
 	}
 
 	for _, tt := range tests {
@@ -70,7 +72,7 @@ func TestParsePlacementCode(t *testing.T) {
 }
 
 func TestParsePlacementCodeRejectsUnsupportedValues(t *testing.T) {
-	for _, code := range []string{"us-east-1", "ali-us-east-1", "gcp-us-east-1"} {
+	for _, code := range []string{"us-east-1", "ali-us-east-1", "gcp-us-east1"} {
 		t.Run(code, func(t *testing.T) {
 			if _, err := ParsePlacementCode(code); err == nil {
 				t.Fatal("expected placement code to be rejected")

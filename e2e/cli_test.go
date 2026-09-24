@@ -52,6 +52,8 @@ func TestHelpAndVersion(t *testing.T) {
 	db.wantStdoutContains("create-db-cluster")
 	db.wantStdoutContains("create-db-sql-users")
 	db.wantStdoutContains("format-db-connection-string")
+	db.wantStdoutContains("list-export-tasks")
+	db.wantStdoutContains("download-exported-data")
 
 	subcommand := runTI(t, bin, "fs", "mount-file-system", "help")
 	subcommand.wantExitCode(0)
@@ -115,6 +117,23 @@ func TestHelpAndVersion(t *testing.T) {
 	createDBCluster.wantStdoutContains("--db-cluster-type <string> (required)")
 	createDBCluster.wantStdoutNotContains("[--db-cluster-type <string>]")
 	createDBCluster.wantStdoutNotContains("--project-id")
+	listExports := runTI(t, bin, "db", "list-export-tasks", "help")
+	listExports.wantExitCode(0)
+	listExports.wantStdoutContains("--db-cluster-id <string> (required)")
+	listExports.wantStdoutContains("[--page-size <int32>]")
+	listExports.wantStdoutContains("[--page-token <string>]")
+	listExports.wantStdoutContains("[--order-by <string>]")
+	listExports.wantStdoutNotContains("[--dry-run]")
+	listExports.wantStdoutNotContains("-c,")
+	downloadExport := runTI(t, bin, "db", "download-exported-data", "help")
+	downloadExport.wantExitCode(0)
+	downloadExport.wantStdoutContains("--db-cluster-id <string> (required)")
+	downloadExport.wantStdoutContains("--export-id <string> (required)")
+	downloadExport.wantStdoutContains("[--output-path <string>]")
+	downloadExport.wantStdoutContains("[--concurrency <int32>]")
+	downloadExport.wantStdoutContains("[--dry-run]")
+	downloadExport.wantStdoutNotContains("-c,")
+	downloadExport.wantStdoutNotContains("-e,")
 	removedProjectFlag := runTI(t, bin, "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "demo", "--project-id", "project-1", "--dry-run")
 	removedProjectFlag.wantExitCode(2)
 	removedProjectFlag.wantStderrContains("unknown flag: --project-id")
@@ -566,6 +585,102 @@ func TestCreateDBClusterUsesServerDefaultProjectThroughBinary(t *testing.T) {
 	result.wantStdoutContains(`"custom": "preserved"`)
 	if !created {
 		t.Fatal("create request was not sent")
+	}
+}
+
+func TestListExportTasksThroughBinary(t *testing.T) {
+	bin := tiBinary(t)
+	home := t.TempDir()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1":
+			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo","servicePlan":"Starter","state":"ACTIVE"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1/exports":
+			if r.URL.Query().Get("pageSize") != "1" {
+				t.Errorf("pageSize = %q", r.URL.Query().Get("pageSize"))
+			}
+			_, _ = w.Write([]byte(`{"exports":[{"exportId":"export-1","displayName":"nightly","state":"SUCCEEDED","clusterId":"cluster-1","target":{"type":"LOCAL"},"exportOptions":{"fileType":"CSV"}}],"nextPageToken":"token-2"}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	writeE2EFile(t, filepath.Join(home, ".ti", "config"), "[default]\nregion_code = 'aws-us-east-1'\n", 0o600)
+	writeE2EFile(t, filepath.Join(home, ".ti", "credentials"), "[default]\ntidb_cloud_public_key = 'public'\ntidb_cloud_private_key = 'private'\n", 0o600)
+	env := []string{
+		"HOME=" + home,
+		"TI_ALLOW_TEST_ENDPOINTS=1",
+		"TI_TEST_STARTER_BASE_URL=" + server.URL,
+	}
+
+	result := runTIWithInput(t, bin, "", env, "db", "list-export-tasks", "--db-cluster-id", "cluster-1", "--page-size", "1")
+	result.wantExitCode(0)
+	result.wantStdoutContains(`"export_tasks"`)
+	result.wantStdoutContains(`"id": "export-1"`)
+	result.wantStdoutContains(`"next_page_token": "token-2"`)
+	result.wantStdoutNotContains("accessKey")
+
+	query := runTIWithInput(t, bin, "", env, "db", "list-export-tasks", "--db-cluster-id", "cluster-1", "--page-size", "1", "--query", "export_tasks[].id")
+	query.wantExitCode(0)
+	query.wantStdoutContains("export-1")
+
+	text := runTIWithInput(t, bin, "", env, "db", "list-export-tasks", "--db-cluster-id", "cluster-1", "--page-size", "1", "--output", "text")
+	text.wantExitCode(0)
+	text.wantStdoutContains("nightly")
+
+	rejected := runTIWithInput(t, bin, "", env, "db", "list-export-tasks", "--db-cluster-id", "cluster-1", "--dry-run")
+	rejected.wantExitCode(2)
+	rejected.wantStderrContains("unknown flag: --dry-run")
+}
+
+func TestDownloadExportedDataThroughBinary(t *testing.T) {
+	bin := tiBinary(t)
+	home := t.TempDir()
+	var posts int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1":
+			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo","servicePlan":"Starter","state":"ACTIVE"}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1/exports/export-1/files":
+			_, _ = w.Write([]byte(`{"files":[{"name":"DUMP/hello.csv","size":5}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1beta1/clusters/cluster-1/exports/export-1/files:download":
+			posts++
+			_, _ = fmt.Fprintf(w, `{"files":[{"name":"DUMP/hello.csv","size":5,"url":%q}]}`, "http://"+r.Host+"/payload/hello.csv")
+		case r.Method == http.MethodGet && r.URL.Path == "/payload/hello.csv":
+			_, _ = w.Write([]byte("hello"))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			http.Error(w, "not found", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	writeE2EFile(t, filepath.Join(home, ".ti", "config"), "[default]\nregion_code = 'aws-us-east-1'\n", 0o600)
+	writeE2EFile(t, filepath.Join(home, ".ti", "credentials"), "[default]\ntidb_cloud_public_key = 'public'\ntidb_cloud_private_key = 'private'\n", 0o600)
+	env := []string{
+		"HOME=" + home,
+		"TI_ALLOW_TEST_ENDPOINTS=1",
+		"TI_TEST_STARTER_BASE_URL=" + server.URL,
+	}
+	out := filepath.Join(home, "export-out")
+
+	dryRun := runTIWithInput(t, bin, "", env, "db", "download-exported-data", "--db-cluster-id", "cluster-1", "--export-id", "export-1", "--output-path", out, "--dry-run")
+	dryRun.wantExitCode(0)
+	dryRun.wantStdoutContains(`"dry_run": true`)
+	dryRun.wantStdoutContains("files:download")
+	if posts != 0 {
+		t.Fatalf("dry-run requested download URLs %d times", posts)
+	}
+
+	result := runTIWithInput(t, bin, "", env, "db", "download-exported-data", "--db-cluster-id", "cluster-1", "--export-id", "export-1", "--output-path", out)
+	result.wantExitCode(0)
+	result.wantStdoutContains(`"succeeded": 1`)
+	result.wantStdoutNotContains("http://")
+	got, err := os.ReadFile(filepath.Join(out, "DUMP", "hello.csv"))
+	if err != nil || string(got) != "hello" {
+		t.Fatalf("downloaded file = %q, %v", got, err)
 	}
 }
 

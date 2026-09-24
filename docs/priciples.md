@@ -6,7 +6,7 @@ ti is currently in Preview. Its feature and command contracts can change before 
 
 ## Product Scope
 
-- `ti db` manages TiDB Cloud Starter clusters and branches, prepares SQL users, formats connection strings, and executes one SQL statement per invocation.
+- `ti db` manages TiDB Cloud Starter clusters and branches, prepares SQL users, formats connection strings, executes one SQL statement per invocation, lists export tasks, and downloads completed local-target export files.
 - `ti fs` manages TiDB Cloud Filesystem resources, files, layers, packs, and mounts.
 - `ti fs-git`, `ti fs-journal`, and `ti fs-vault` expose Filesystem-backed Git workspace, append-only journal, and secret-management workflows.
 - `ti configure` initializes a local profile.
@@ -77,7 +77,7 @@ Supported TiDB Cloud Starter placement values are:
 | `aws-ap-southeast-1` | AWS | Singapore |
 | `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
 
-`aws` maps to the internal provider `aws`; `alicloud` maps to `alibaba_cloud`. TiDB Cloud Filesystem supports `aws-us-east-1`, `aws-ap-southeast-1`, `aws-us-west-2`, and `alicloud-ap-southeast-1` through endpoint mappings built into `ti`.
+`aws` maps to the internal provider `aws`; `alicloud` maps to `alibaba_cloud`; `gcp` maps to `gcp`. TiDB Cloud Filesystem supports `aws-us-east-1`, `aws-ap-southeast-1`, `aws-us-west-2`, `alicloud-ap-southeast-1`, and `gcp-us-east-1` through endpoint mappings built into `ti`.
 
 ## TiDB Cloud Authentication
 

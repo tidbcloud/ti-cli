@@ -130,6 +130,38 @@ func BranchID(value string) (string, error) {
 	return trimmed, nil
 }
 
+func ExportID(value string) (string, error) {
+	if err := Required("--export-id", value); err != nil {
+		return "", err
+	}
+	trimmed := strings.TrimSpace(value)
+	if idx := strings.LastIndex(trimmed, "/exports/"); idx >= 0 {
+		trimmed = trimmed[idx+len("/exports/"):]
+	}
+	trimmed = strings.TrimPrefix(trimmed, "exports/")
+	if trimmed == "" || strings.Contains(trimmed, "/") {
+		return "", apperr.New(
+			"db.invalid_export_id",
+			"usage",
+			2,
+			"--export-id must be a TiDB Cloud export id, optionally prefixed with exports/ or clusters/<cluster-id>/exports/",
+		)
+	}
+	return trimmed, nil
+}
+
+func Concurrency(value int32) (int, error) {
+	if value < 1 || value > 32 {
+		return 0, apperr.New(
+			"db.invalid_concurrency",
+			"usage",
+			2,
+			"--concurrency must be between 1 and 32",
+		)
+	}
+	return int(value), nil
+}
+
 func View(value string) error {
 	switch strings.TrimSpace(value) {
 	case "", "BASIC", "FULL":

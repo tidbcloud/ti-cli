@@ -181,6 +181,8 @@ func newDBCommand(info version.Info) *cobra.Command {
 		newDBPrepareQueryAccessCommand(info),
 		newDBCreateConnectionStringCommand(info),
 		newDBExecuteSQLCommand(info),
+		newDBListExportTasksCommand(info),
+		newDBDownloadExportedDataCommand(info),
 	)
 	return cmd
 }
@@ -623,6 +625,87 @@ func newDBExecuteSQLCommand(info version.Info) *cobra.Command {
 	return cmd
 }
 
+func newDBListExportTasksCommand(info version.Info) *cobra.Command {
+	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
+		Use:         "list-export-tasks",
+		Short:       "List Starter export tasks for a database cluster.",
+		Mutation:    readOnlyCommand,
+		DBOperation: db.OperationExportList,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := dbServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			clusterID, err := ctx.StringFlag("db-cluster-id")
+			if err != nil {
+				return nil, err
+			}
+			pageSize, err := ctx.Int32Flag("page-size")
+			if err != nil {
+				return nil, err
+			}
+			pageToken, err := ctx.StringFlag("page-token")
+			if err != nil {
+				return nil, err
+			}
+			orderBy, err := ctx.StringFlag("order-by")
+			if err != nil {
+				return nil, err
+			}
+			return service.ListExportTasks(ctx.cmd.Context(), db.ListExportTasksOptions{
+				Profile:   profile,
+				ClusterID: clusterID,
+				PageSize:  pageSize,
+				PageToken: pageToken,
+				OrderBy:   orderBy,
+			})
+		},
+	}, info)
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
+	cmd.Flags().Int32("page-size", 0, "The number of export tasks to request; 0 uses the default.")
+	cmd.Flags().String("page-token", "", "For pagination, the page token returned by a previous list-export-tasks call.")
+	cmd.Flags().String("order-by", "", "Optional API order expression, for example create_time desc.")
+	markUsageRequired(cmd, "db-cluster-id")
+	return cmd
+}
+
+func newDBDownloadExportedDataCommand(info version.Info) *cobra.Command {
+	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
+		Use:         "download-exported-data",
+		Short:       "Download files from a completed local-target Starter export.",
+		Mutation:    mutatingCommand,
+		DBOperation: db.OperationExportDownload,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := dbServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			opts, err := downloadExportedDataOptions(ctx, profile)
+			if err != nil {
+				return nil, err
+			}
+			return service.DownloadExportedData(ctx.cmd.Context(), opts)
+		},
+		DryRun: func(ctx commandContext) (dryrun.Result, error) {
+			service, profile, err := dbServiceAndProfile(ctx)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			opts, err := downloadExportedDataOptions(ctx, profile)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
+			return service.DryRunDownloadExportedData(ctx.cmd.Context(), ctx.CommandPath(), opts)
+		},
+	}, info)
+	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID that owns the export.")
+	cmd.Flags().String("export-id", "", "Completed export ID to download.")
+	cmd.Flags().String("output-path", "", "Local directory to write export files. Default: the current directory.")
+	cmd.Flags().Int32("concurrency", 3, "Number of files to download at once (1-32).")
+	markUsageRequired(cmd, "db-cluster-id", "export-id")
+	return cmd
+}
+
 func addSQLCredentialFlags(cmd *cobra.Command) {
 	cmd.Flags().String("db-cluster-id", "", "Starter database cluster ID.")
 	cmd.Flags().Bool("read-only", false, "Use the prepared read_only role for credentials.")
@@ -812,6 +895,32 @@ func executeSQLOptions(ctx commandContext, profile *config.Profile) (db.ExecuteS
 		ReadWrite: common.readWrite,
 		Admin:     common.admin,
 		Transport: transport,
+	}, nil
+}
+
+func downloadExportedDataOptions(ctx commandContext, profile *config.Profile) (db.DownloadExportedDataOptions, error) {
+	clusterID, err := ctx.StringFlag("db-cluster-id")
+	if err != nil {
+		return db.DownloadExportedDataOptions{}, err
+	}
+	exportID, err := ctx.StringFlag("export-id")
+	if err != nil {
+		return db.DownloadExportedDataOptions{}, err
+	}
+	outputPath, err := ctx.StringFlag("output-path")
+	if err != nil {
+		return db.DownloadExportedDataOptions{}, err
+	}
+	concurrency, err := ctx.Int32Flag("concurrency")
+	if err != nil {
+		return db.DownloadExportedDataOptions{}, err
+	}
+	return db.DownloadExportedDataOptions{
+		Profile:     profile,
+		ClusterID:   clusterID,
+		ExportID:    exportID,
+		OutputPath:  outputPath,
+		Concurrency: concurrency,
 	}, nil
 }
 

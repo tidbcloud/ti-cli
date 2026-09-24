@@ -192,7 +192,7 @@ Allowed event fields:
 | `exit_code` | integer | yes | 0 to 255. |
 | `error_code` | string | no | Stable code only, max 64 bytes; empty string allowed. |
 | `duration_ms` | integer | yes | 0 to 86,400,000. |
-| `cloud_provider` | string | no | `aws`, `alibaba_cloud`, `unknown`, or empty. |
+| `cloud_provider` | string | no | `aws`, `alibaba_cloud`, `gcp`, `unknown`, or empty. |
 | `region_code` | string | no | Known ti region code, `unknown`, or empty. |
 | `cli_version` | string | yes | Version-safe characters only, max 64 bytes. |
 | `os` | string | yes | Known Go `runtime.GOOS` value. |

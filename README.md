@@ -102,8 +102,8 @@ Automation should move to `TI_*` and `TIDB_CLOUD_*` environment variables. The v
 ### Configure
 
 - Authentication: a TiDB Cloud Public Key and a Private Key from the [TiDB Cloud API Keys](https://tidbcloud.com/org-settings/api-keys) console. When either credential is missing, `ti` links to this page in its authentication error before suggesting `ti configure` or the corresponding environment variables.
-- Default region: one of aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or alicloud-ap-southeast-1.
-    - Regions supporting TiDB Cloud Filesystem: aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, or alicloud-ap-southeast-1. These endpoints are built into `ti`; endpoint resolution does not download a Drive9 region manifest.
+- Default region: one of aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, alicloud-ap-southeast-1, or gcp-us-east-1.
+    - Regions supporting TiDB Cloud Filesystem: aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1, or gcp-us-east-1. These endpoints are built into `ti`; endpoint resolution does not download a Drive9 region manifest.
     - Regions supporting TiDB Cloud Starter: aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or alicloud-ap-southeast-1.
 
 Set up a default profile with one command:
@@ -319,6 +319,8 @@ ti db delete-db-cluster-branch
 ti db create-db-sql-users
 ti db format-db-connection-string
 ti db execute-sql-statement
+ti db list-export-tasks --db-cluster-id
+ti db download-exported-data --db-cluster-id
 
 ti fs create-file-system
 ti fs import-file-system-token

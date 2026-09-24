@@ -470,6 +470,8 @@ func normalizeProvider(provider string) string {
 		return region.ProviderAlibabaCloud
 	case region.ProviderAWS:
 		return region.ProviderAWS
+	case region.ProviderGCP:
+		return region.ProviderGCP
 	default:
 		return strings.TrimSpace(provider)
 	}
