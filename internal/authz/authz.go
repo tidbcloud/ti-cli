@@ -22,6 +22,7 @@ const (
 	StarterSQLUserCreate    Permission = "starter.sql_user.create"
 	StarterSQLUserUpdate    Permission = "starter.sql_user.update"
 	StarterSQLExecute       Permission = "starter.sql.execute"
+	StarterExportRead       Permission = "starter.export.read"
 	FSVolumeRead            Permission = "fs.volume.read"
 	FSVolumeCreate          Permission = "fs.volume.create"
 	FSVolumeDelete          Permission = "fs.volume.delete"

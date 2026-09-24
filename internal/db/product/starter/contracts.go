@@ -20,7 +20,11 @@ type BranchResult = rootdb.BranchResult
 type PrepareQueryAccessOptions = rootdb.PrepareQueryAccessOptions
 type CreateConnectionStringOptions = rootdb.CreateConnectionStringOptions
 type ExecuteSQLOptions = rootdb.ExecuteSQLOptions
+type DownloadExportedDataOptions = rootdb.DownloadExportedDataOptions
+type ListExportTasksOptions = rootdb.ListExportTasksOptions
 type PrepareQueryAccessResult = rootdb.PrepareQueryAccessResult
+type DownloadExportedDataResult = rootdb.DownloadExportedDataResult
+type ListExportTasksResult = rootdb.ListExportTasksResult
 
 type CreateOptions struct {
 	MonthlySpendingLimitUSDCents int32

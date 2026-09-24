@@ -47,6 +47,8 @@ Implemented:
   `docs/spec/done/0007-starter-db-branch-lifecycle.md`
 - Starter DB SQL access and query from
   `docs/spec/done/0008-starter-db-sql-access-and-query.md`
+- Starter export task listing and file download from
+  `docs/spec/done/0035-starter-export-download.md`
 - Historical default virtual project discovery from
   `docs/spec/done/0017-default-virtual-project-resolution.md`, superseded by
   project selection and inventory removal
@@ -98,6 +100,8 @@ Implemented:
 - `ti db create-db-sql-users`
 - `ti db format-db-connection-string`
 - `ti db execute-sql-statement`
+- `ti db list-export-tasks`
+- `ti db download-exported-data`
 - `ti fs create-file-system`
 - `ti fs import-file-system-token`
 - `ti fs generate-file-system-token`
@@ -267,7 +271,11 @@ the full release/CI verification suite. `LIVE_E2E_PROFILE=<profile>` overrides
 the profile for both focused and complete live targets.
 Live e2e must strictly cover every implemented interface and command for the
 current project stage, including real create/update/delete flows when those
-commands are implemented. For Starter DB clusters, the live suite creates a
+commands are implemented. `ti db list-export-tasks` is covered against a live
+Starter cluster (an empty page is valid). `ti db download-exported-data` help
+is always covered; a real download runs only when `TI_LIVE_EXPORT_ID` names a
+completed local-target export (`TI_LIVE_DB_CLUSTER_ID` may select the
+cluster). For Starter DB clusters, the live suite creates a
 uniquely named `ti-e2e-*` cluster with `--wait`, without a
 spending limit or project selection, verifies the returned state is `ACTIVE`,
 preserves any server-selected project metadata, and deletes only that cluster.
@@ -554,6 +562,10 @@ Implemented command behavior:
 - `ti db execute-sql-statement --db-cluster-id <cluster-id> --admin --sql "select 1"`
 - `ti db execute-sql-statement --db-cluster-id <cluster-id> --transport https --sql "select 1"`
 - `ti db execute-sql-statement --db-cluster-id <cluster-id> --transport mysql --sql "select 1"`
+- `ti db list-export-tasks --db-cluster-id <cluster-id>`
+- `ti db list-export-tasks --db-cluster-id <cluster-id> --page-size 10`
+- `ti db download-exported-data --db-cluster-id <cluster-id> --export-id <export-id>`
+- `ti db download-exported-data --db-cluster-id <cluster-id> --export-id <export-id> --output-path ./export --dry-run`
 - `ti fs create-file-system`
 - `ti fs create-file-system --wait`
 - `ti fs create-file-system --dry-run`
@@ -671,6 +683,8 @@ Registered command surface:
 - `ti db create-db-sql-users`
 - `ti db format-db-connection-string`
 - `ti db execute-sql-statement`
+- `ti db list-export-tasks`
+- `ti db download-exported-data`
 - `ti fs create-file-system`
 - `ti fs import-file-system-token`
 - `ti fs generate-file-system-token`
@@ -890,7 +904,7 @@ for SQL execution Basic Auth.
 Use `internal/api/endpoints` for Starter, IAM/account, and fs endpoint
 selection. Do not add service URLs to user config. The default Starter host is
 `https://serverless.tidbapi.com`; the default IAM host is
-`https://iam.tidbapi.com`. The ti fs host is resolved from the four-region
+`https://iam.tidbapi.com`. The ti fs host is resolved from the built-in
 endpoint mapping owned by `internal/api/endpoints`. If the mapping does not
 contain the profile placement, return a clear unsupported endpoint error; do
 not add a user-facing raw server URL flag or config key or restore a runtime
@@ -986,10 +1000,12 @@ Supported MVP placement values:
 | `aws-ap-northeast-1` | AWS | Tokyo |
 | `aws-ap-southeast-1` | AWS | Singapore |
 | `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
+| `gcp-us-east-1` | Google Cloud | South Carolina |
 
 The prefix before the first `-` is the cloud provider selector. `aws` maps to
 internal provider `aws`; `alicloud` maps to internal provider
-`alibaba_cloud`. Keep this mapping centralized in `internal/config/region`.
+`alibaba_cloud`; `gcp` maps to internal provider `gcp`. Keep this mapping
+centralized in `internal/config/region`.
 
 Do not store secrets in logs, telemetry, generated docs examples, or test
 fixtures.

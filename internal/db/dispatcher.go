@@ -349,6 +349,48 @@ func (d *Dispatcher) ExecuteSQL(ctx context.Context, opts ExecuteSQLOptions) (sq
 	return capability.ExecuteSQL(ctx, opts)
 }
 
+func (d *Dispatcher) ListExportTasks(ctx context.Context, opts ListExportTasksOptions) (ListExportTasksResult, error) {
+	provider, resolved, permission, err := d.discoveredProvider(ctx, opts.Profile, opts.ClusterID, "BASIC", OperationExportList)
+	if err != nil {
+		return ListExportTasksResult{}, err
+	}
+	capability, ok := provider.(ExportTaskLister)
+	if !ok {
+		return ListExportTasksResult{}, MissingCapability(provider.ClusterType(), OperationExportList)
+	}
+	opts.ClusterID = resolved.ID
+	opts.Dispatch = dispatchContext(resolved, permission)
+	return capability.ListExportTasks(ctx, opts)
+}
+
+func (d *Dispatcher) DownloadExportedData(ctx context.Context, opts DownloadExportedDataOptions) (DownloadExportedDataResult, error) {
+	provider, resolved, permission, err := d.discoveredProvider(ctx, opts.Profile, opts.ClusterID, "BASIC", OperationExportDownload)
+	if err != nil {
+		return DownloadExportedDataResult{}, err
+	}
+	capability, ok := provider.(ExportedDataDownloader)
+	if !ok {
+		return DownloadExportedDataResult{}, MissingCapability(provider.ClusterType(), OperationExportDownload)
+	}
+	opts.ClusterID = resolved.ID
+	opts.Dispatch = dispatchContext(resolved, permission)
+	return capability.DownloadExportedData(ctx, opts)
+}
+
+func (d *Dispatcher) DryRunDownloadExportedData(ctx context.Context, commandPath string, opts DownloadExportedDataOptions) (dryrun.Result, error) {
+	provider, resolved, permission, err := d.discoveredProvider(ctx, opts.Profile, opts.ClusterID, "BASIC", OperationExportDownload)
+	if err != nil {
+		return dryrun.Result{}, err
+	}
+	capability, ok := provider.(ExportedDataDownloader)
+	if !ok {
+		return dryrun.Result{}, MissingCapability(provider.ClusterType(), OperationExportDownload)
+	}
+	opts.ClusterID = resolved.ID
+	opts.Dispatch = dispatchContext(resolved, permission)
+	return capability.DryRunDownloadExportedData(ctx, commandPath, opts)
+}
+
 func (d *Dispatcher) selectedProvider(rawType string, operation Operation) (Provider, authz.Permission, error) {
 	clusterType, err := ParseCLIClusterType(rawType)
 	if err != nil {

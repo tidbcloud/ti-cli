@@ -29,6 +29,8 @@ func TestRegisteredCommandResultsSupportTextOutput(t *testing.T) {
 		"db create sql users":             db.PrepareQueryAccessResult{},
 		"db connection string":            connectionstring.Result{},
 		"db execute sql":                  sqlresult.Result{},
+		"db list export tasks":            db.ListExportTasksResult{},
+		"db download exported data":       db.DownloadExportedDataResult{},
 		"fs create":                       fs.FileSystemResult{},
 		"fs list file systems":            fs.ListFileSystemsResult{},
 		"fs describe file system":         fs.DescribeFileSystemResult{},

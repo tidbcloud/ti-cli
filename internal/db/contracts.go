@@ -147,6 +147,67 @@ type ExecuteSQLOptions struct {
 	Dispatch  DispatchContext
 }
 
+type ListExportTasksOptions struct {
+	Profile   *config.Profile
+	ClusterID string
+	PageSize  int32
+	PageToken string
+	OrderBy   string
+	Dispatch  DispatchContext
+}
+
+type ExportTask struct {
+	ID           string `json:"id"`
+	Name         string `json:"name,omitempty"`
+	ClusterID    string `json:"db_cluster_id,omitempty"`
+	DisplayName  string `json:"display_name,omitempty"`
+	State        string `json:"state,omitempty"`
+	TargetType   string `json:"target_type,omitempty"`
+	FileType     string `json:"file_type,omitempty"`
+	CreatedBy    string `json:"created_by,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+	CreateTime   string `json:"create_time,omitempty"`
+	UpdateTime   string `json:"update_time,omitempty"`
+	CompleteTime string `json:"complete_time,omitempty"`
+	SnapshotTime string `json:"snapshot_time,omitempty"`
+	ExpireTime   string `json:"expire_time,omitempty"`
+}
+
+type ListExportTasksResult struct {
+	ExportTasks   []ExportTask `json:"export_tasks"`
+	NextPageToken string       `json:"next_page_token,omitempty"`
+	TotalSize     int64        `json:"total_size,omitempty"`
+}
+
+type DownloadExportedDataOptions struct {
+	Profile     *config.Profile
+	ClusterID   string
+	ExportID    string
+	OutputPath  string
+	Concurrency int32
+	Dispatch    DispatchContext
+}
+
+type DownloadedExportFile struct {
+	Name   string `json:"name"`
+	Size   int64  `json:"size,omitempty"`
+	Status string `json:"status"`
+	Path   string `json:"path,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
+type DownloadExportedDataResult struct {
+	ClusterID      string                 `json:"db_cluster_id"`
+	ExportID       string                 `json:"export_id"`
+	OutputPath     string                 `json:"output_path"`
+	FileCount      int                    `json:"file_count"`
+	TotalSizeBytes int64                  `json:"total_size_bytes"`
+	Succeeded      int                    `json:"succeeded"`
+	Skipped        int                    `json:"skipped"`
+	Failed         int                    `json:"failed"`
+	Files          []DownloadedExportFile `json:"files"`
+}
+
 type PrepareQueryAccessResult struct {
 	sqlaccess.Result
 }
@@ -219,6 +280,15 @@ type SQLExecutor interface {
 	ExecuteSQL(context.Context, ExecuteSQLOptions) (sqlresult.Result, error)
 }
 
+type ExportTaskLister interface {
+	ListExportTasks(context.Context, ListExportTasksOptions) (ListExportTasksResult, error)
+}
+
+type ExportedDataDownloader interface {
+	DownloadExportedData(context.Context, DownloadExportedDataOptions) (DownloadExportedDataResult, error)
+	DryRunDownloadExportedData(context.Context, string, DownloadExportedDataOptions) (dryrun.Result, error)
+}
+
 func (r ListClustersResult) Human() string {
 	var out strings.Builder
 	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
@@ -267,6 +337,32 @@ func (r BranchResult) Human() string {
 		lines = append(lines, "Created: "+r.CreateTime)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func (r ListExportTasksResult) Human() string {
+	var out strings.Builder
+	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(writer, "ID\tDISPLAY_NAME\tSTATE\tTARGET\tFILE\tCREATED")
+	for _, task := range r.ExportTasks {
+		_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\t%s\t%s\n", task.ID, task.DisplayName, task.State, task.TargetType, task.FileType, task.CreateTime)
+	}
+	if r.NextPageToken != "" {
+		_, _ = fmt.Fprintf(writer, "next_page_token\t%s\t\t\t\t\n", r.NextPageToken)
+	}
+	_ = writer.Flush()
+	return strings.TrimRight(out.String(), "\n")
+}
+
+func (r DownloadExportedDataResult) Human() string {
+	var out strings.Builder
+	_, _ = fmt.Fprintf(&out, "Cluster ID: %s\nExport ID: %s\nOutput path: %s\nFiles: %d  Succeeded: %d  Skipped: %d  Failed: %d\n", r.ClusterID, r.ExportID, r.OutputPath, r.FileCount, r.Succeeded, r.Skipped, r.Failed)
+	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
+	_, _ = fmt.Fprintln(writer, "NAME\tSIZE\tSTATUS\tPATH")
+	for _, file := range r.Files {
+		_, _ = fmt.Fprintf(writer, "%s\t%d\t%s\t%s\n", file.Name, file.Size, file.Status, file.Path)
+	}
+	_ = writer.Flush()
+	return strings.TrimRight(out.String(), "\n")
 }
 
 func clusterPlanDisplay(cluster apistarter.Cluster) string {

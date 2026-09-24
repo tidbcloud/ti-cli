@@ -42,6 +42,8 @@ func (Service) Permission(operation rootdb.Operation) (authz.Permission, error) 
 		return authz.StarterSQLUserRead, nil
 	case rootdb.OperationSQLExecute:
 		return authz.StarterSQLExecute, nil
+	case rootdb.OperationExportList, rootdb.OperationExportDownload:
+		return authz.StarterExportRead, nil
 	default:
 		return "", rootdb.MissingPermission(rootdb.ClusterTypeStarter, operation)
 	}

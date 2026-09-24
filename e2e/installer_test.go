@@ -208,7 +208,7 @@ fi
 			t.Fatalf("installer did not validate companion command surface %q; calls:\n%s", want, companionCallData)
 		}
 	}
-	for _, regionCode := range []string{"aws-us-east-1", "aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1"} {
+	for _, regionCode := range []string{"aws-us-east-1", "aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1", "gcp-us-east-1"} {
 		if !strings.Contains(string(output), regionCode) {
 			t.Fatalf("installer did not list ti fs region %q:\n%s", regionCode, output)
 		}
@@ -294,7 +294,7 @@ func TestInstallersUseProductOwnedFSRegionsAndHideCompanionPath(t *testing.T) {
 		if strings.Contains(content, "ti fs companion installed to") {
 			t.Fatalf("%s still reports the companion installation path", path)
 		}
-		for _, regionCode := range []string{"aws-us-east-1", "aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1"} {
+		for _, regionCode := range []string{"aws-us-east-1", "aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1", "gcp-us-east-1"} {
 			if !strings.Contains(content, regionCode) {
 				t.Fatalf("%s does not list ti fs region %q", path, regionCode)
 			}

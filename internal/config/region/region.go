@@ -9,10 +9,12 @@ import (
 const (
 	ProviderAWS          = "aws"
 	ProviderAlibabaCloud = "alibaba_cloud"
+	ProviderGCP          = "gcp"
 
 	ProviderPrefixAWS                = "aws"
 	ProviderPrefixAlibabaCloud       = "alicloud"
 	ProviderPrefixAlibabaCloudLegacy = "ali"
+	ProviderPrefixGCP                = "gcp"
 )
 
 type Region struct {
@@ -40,17 +42,22 @@ var supported = map[string][]Region{
 	ProviderAlibabaCloud: {
 		{Code: "ap-southeast-1", Label: "Singapore"},
 	},
+	ProviderGCP: {
+		{Code: "us-east-1", Label: "South Carolina"},
+	},
 }
 
 var providerPrefixes = map[string]string{
 	ProviderPrefixAWS:                ProviderAWS,
 	ProviderPrefixAlibabaCloud:       ProviderAlibabaCloud,
 	ProviderPrefixAlibabaCloudLegacy: ProviderAlibabaCloud,
+	ProviderPrefixGCP:                ProviderGCP,
 }
 
 var providerToPrefix = map[string]string{
 	ProviderAWS:          ProviderPrefixAWS,
 	ProviderAlibabaCloud: ProviderPrefixAlibabaCloud,
+	ProviderGCP:          ProviderPrefixGCP,
 }
 
 func Providers() []string {

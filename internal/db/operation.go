@@ -16,4 +16,6 @@ const (
 	OperationSQLUserCreate          Operation = "sql_user.create"
 	OperationConnectionStringFormat Operation = "connection_string.format"
 	OperationSQLExecute             Operation = "sql.execute"
+	OperationExportList             Operation = "export.list"
+	OperationExportDownload         Operation = "export.download"
 )

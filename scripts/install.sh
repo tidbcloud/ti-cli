@@ -279,7 +279,7 @@ print_regions() {
   printf "    alicloud-ap-southeast-1\n"
   printf "\n"
   printf "  ${BOLD}ti fs regions:${RESET}\n"
-  printf "    aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1\n"
+  printf "    aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1, gcp-us-east-1\n"
 }
 
 print_next_steps() {

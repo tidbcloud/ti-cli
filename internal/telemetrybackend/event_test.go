@@ -22,6 +22,27 @@ func TestDecodeAndValidateBatchAcceptsAllowlistedEvent(t *testing.T) {
 	}
 }
 
+func TestDecodeAndValidateBatchAcceptsGCPPlacement(t *testing.T) {
+	var request map[string]any
+	if err := json.Unmarshal(validRequestBody(), &request); err != nil {
+		t.Fatal(err)
+	}
+	event := request["events"].([]any)[0].(map[string]any)
+	event["cloud_provider"] = "gcp"
+	event["region_code"] = "gcp-us-east-1"
+	body, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	events, err := decodeAndValidateBatch(body, 20, time.Now())
+	if err != nil {
+		t.Fatalf("gcp placement should be accepted: %v", err)
+	}
+	if len(events) != 1 || events[0].CloudProvider != "gcp" || events[0].RegionCode != "gcp-us-east-1" {
+		t.Fatalf("unexpected gcp event: %#v", events)
+	}
+}
+
 func TestDecodeAndValidateBatchAcceptsLegacyTDCEvent(t *testing.T) {
 	body := bytes.ReplaceAll(validRequestBody(), []byte("ti.command.finished"), []byte("tdc.command.finished"))
 	body = bytes.ReplaceAll(body, []byte("ti_01j0a0n8m9f4q2x6cn0b9q3k3z"), []byte("tdc_01j0a0n8m9f4q2x6cn0b9q3k3z"))
@@ -180,7 +201,7 @@ func TestDecodeAndValidateBatchRejectsInvalidEnumsAndLimits(t *testing.T) {
 		{"event_name", "custom.event"},
 		{"command_path", "rm -rf"},
 		{"command_path", "ti db list-db-clusters select secret"},
-		{"cloud_provider", "gcp"},
+		{"cloud_provider", "azure"},
 		{"region_code", "us-east-1"},
 		{"install_source", "curl"},
 		{"profile_source", "production"},
