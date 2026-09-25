@@ -1000,7 +1000,7 @@ Supported MVP placement values:
 | `aws-ap-northeast-1` | AWS | Tokyo |
 | `aws-ap-southeast-1` | AWS | Singapore |
 | `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
-| `gcp-us-east-1` | Google Cloud | South Carolina |
+| `gcp-us-east1` | Google Cloud | South Carolina |
 
 The prefix before the first `-` is the cloud provider selector. `aws` maps to
 internal provider `aws`; `alicloud` maps to internal provider
