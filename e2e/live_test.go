@@ -730,7 +730,8 @@ func resolveLiveFSResourceByID(t *testing.T, profile *config.Profile, fileSystem
 func isLiveFSQuotaError(message string) bool {
 	message = strings.ToLower(message)
 	return strings.Contains(message, "maximum number of free clusters") ||
-		strings.Contains(message, "quota or capacity limit")
+		strings.Contains(message, "quota or capacity limit") ||
+		strings.Contains(message, "filesystem limit reached")
 }
 
 func TestLiveFSDataPlaneLifecycle(t *testing.T) {

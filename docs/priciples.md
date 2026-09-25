@@ -77,7 +77,7 @@ Supported TiDB Cloud Starter placement values are:
 | `aws-ap-southeast-1` | AWS | Singapore |
 | `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
 
-`aws` maps to the internal provider `aws`; `alicloud` maps to `alibaba_cloud`; `gcp` maps to `gcp`. TiDB Cloud Filesystem supports `aws-us-east-1`, `aws-ap-southeast-1`, `aws-us-west-2`, `alicloud-ap-southeast-1`, and `gcp-us-east-1` through endpoint mappings built into `ti`.
+`aws` maps to the internal provider `aws`; `alicloud` maps to `alibaba_cloud`; `gcp` maps to `gcp`. TiDB Cloud Filesystem supports `aws-us-east-1`, `aws-ap-southeast-1`, `aws-us-west-2`, `alicloud-ap-southeast-1`, and `gcp-us-east1` through endpoint mappings built into `ti`.
 
 ## TiDB Cloud Authentication
 

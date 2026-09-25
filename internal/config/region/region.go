@@ -43,7 +43,7 @@ var supported = map[string][]Region{
 		{Code: "ap-southeast-1", Label: "Singapore"},
 	},
 	ProviderGCP: {
-		{Code: "us-east-1", Label: "South Carolina"},
+		{Code: "us-east1", Label: "South Carolina"},
 	},
 }
 

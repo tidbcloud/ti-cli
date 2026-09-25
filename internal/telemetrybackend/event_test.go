@@ -29,7 +29,7 @@ func TestDecodeAndValidateBatchAcceptsGCPPlacement(t *testing.T) {
 	}
 	event := request["events"].([]any)[0].(map[string]any)
 	event["cloud_provider"] = "gcp"
-	event["region_code"] = "gcp-us-east-1"
+	event["region_code"] = "gcp-us-east1"
 	body, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +38,7 @@ func TestDecodeAndValidateBatchAcceptsGCPPlacement(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gcp placement should be accepted: %v", err)
 	}
-	if len(events) != 1 || events[0].CloudProvider != "gcp" || events[0].RegionCode != "gcp-us-east-1" {
+	if len(events) != 1 || events[0].CloudProvider != "gcp" || events[0].RegionCode != "gcp-us-east1" {
 		t.Fatalf("unexpected gcp event: %#v", events)
 	}
 }

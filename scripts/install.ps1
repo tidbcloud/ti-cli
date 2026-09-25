@@ -116,7 +116,7 @@ function Print-Regions {
     Write-Output "    alicloud-ap-southeast-1"
     Write-Output ""
     Write-Output "  ti fs regions:"
-    Write-Output "    aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1, gcp-us-east-1"
+    Write-Output "    aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1, gcp-us-east1"
 }
 
 function Print-NextSteps {
