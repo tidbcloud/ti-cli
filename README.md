@@ -72,7 +72,7 @@ ti --version
 
 The installer writes `ti` and `ti-drive9` to `~/.ti/bin` without sudo. Add the `export PATH=...` line to your shell profile to make it persistent.
 
-The macOS/Linux installer downloads both binaries and their checksum files from CDN-fronted sources and verifies the checksums before installation.
+The shell and PowerShell installers download `ti` from GitHub Releases and `ti-drive9` from the [`drive9-fe` GitHub repository](https://github.com/mem9-ai/drive9-fe/tree/main/site/releases). Both installers and `ti update` verify the companion against `checksums.txt` from the same GitHub directory before installation.
 
 Windows users:
 

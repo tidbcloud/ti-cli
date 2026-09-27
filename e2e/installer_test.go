@@ -172,8 +172,8 @@ done
 case "$url" in
   */ti_checksums.txt) source=%q ;;
   */%s) source=%q ;;
-  https://releases.drive9.ai/latest/SHA256SUMS) source=%q ;;
-  https://releases.drive9.ai/latest/%s) source=%q ;;
+  https://raw.githubusercontent.com/mem9-ai/drive9-fe/main/site/releases/checksums.txt) source=%q ;;
+  https://raw.githubusercontent.com/mem9-ai/drive9-fe/main/site/releases/%s) source=%q ;;
   *) printf 'unexpected URL: %%s\n' "$url" >&2; exit 1 ;;
 esac
 if [ -n "$out" ]; then

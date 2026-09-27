@@ -189,9 +189,9 @@ ARCHIVE_URL="${RELEASE_BASE}/${ARTIFACT}"
 CHECKSUMS_URL="${RELEASE_BASE}/ti_checksums.txt"
 TARGET="${INSTALL_DIR}/ti"
 COMPANION_ARTIFACT="drive9-${OS}-${ARCH}"
-COMPANION_BASE="https://releases.drive9.ai/latest"
+COMPANION_BASE="https://raw.githubusercontent.com/mem9-ai/drive9-fe/main/site/releases"
 COMPANION_URL="${COMPANION_BASE}/${COMPANION_ARTIFACT}"
-COMPANION_CHECKSUMS_URL="${COMPANION_BASE}/SHA256SUMS"
+COMPANION_CHECKSUMS_URL="${COMPANION_BASE}/checksums.txt"
 COMPANION_TARGET="${INSTALL_DIR}/ti-drive9"
 
 if [ "$DRY_RUN" -eq 1 ]; then

@@ -184,8 +184,9 @@ $ArchiveUrl = "$ReleaseBase/$Artifact"
 $ChecksumsUrl = "$ReleaseBase/ti_checksums.txt"
 $Target = Join-Path $InstallDir "ti.exe"
 $CompanionArtifact = "drive9-windows-amd64.exe"
-$CompanionUrl = "https://drive9.ai/releases/$CompanionArtifact"
-$CompanionChecksumsUrl = "https://drive9.ai/releases/checksums.txt"
+$CompanionBase = "https://raw.githubusercontent.com/mem9-ai/drive9-fe/main/site/releases"
+$CompanionUrl = "$CompanionBase/$CompanionArtifact"
+$CompanionChecksumsUrl = "$CompanionBase/checksums.txt"
 $CompanionTarget = Join-Path $InstallDir "ti-drive9.exe"
 
 if ($DryRun) {

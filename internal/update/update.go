@@ -28,7 +28,7 @@ import (
 const (
 	DefaultReleaseAPIBaseURL = "https://api.github.com/repos/tidbcloud/ti-cli"
 	checksumAssetName        = "ti_checksums.txt"
-	drive9ReleaseBaseURL     = "https://drive9.ai/releases"
+	drive9ReleaseBaseURL     = "https://raw.githubusercontent.com/mem9-ai/drive9-fe/main/site/releases"
 	drive9ChecksumAssetName  = "checksums.txt"
 )
 

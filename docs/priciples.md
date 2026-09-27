@@ -215,7 +215,7 @@ GitHub Releases and GoReleaser produce release archives and checksums. Supported
 
 - Installation and update do not require sudo.
 - Installers do not edit shell profiles automatically; they print the command that prepends `~/.ti/bin` to `PATH`.
-- Installers support ti release version pinning and checksum verification. The shell installer downloads the companion and its checksums from Drive9's CloudFront-fronted release endpoint (`releases.drive9.ai/latest`); the PowerShell installer and updater use Drive9's origin release endpoint. These companion sources are unversioned; ti does not yet negotiate a companion version range.
+- Installers support ti release version pinning and checksum verification. The shell installer, PowerShell installer, and updater download the companion and `checksums.txt` from `mem9-ai/drive9-fe` on GitHub (`main/site/releases`, served by `raw.githubusercontent.com`). This companion source is unversioned; ti does not yet negotiate a companion version range.
 - `ti update --check` checks explicitly; there is no background update.
 - `ti update` is itself explicit consent and does not require `--yes`.
 - The updater stages and verifies ti and its companion before replacement.
