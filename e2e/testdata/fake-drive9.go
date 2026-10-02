@@ -143,6 +143,10 @@ func main() {
 	}
 	if hasPrefix(args, "mount") {
 		fmt.Fprintln(os.Stderr, "drive9: mount mode: "+mountMode(args))
+		if mountPath := args[len(args)-1]; len(args) >= 2 && len(mountPath) > 0 && mountPath[0] != '-' {
+			_ = os.MkdirAll(mountPath, 0o755)
+			_ = os.WriteFile(mountPath+string(os.PathSeparator)+".drive9-mounted", []byte("fake mount ready\n"), 0o644)
+		}
 		return
 	}
 }

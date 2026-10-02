@@ -866,6 +866,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, "mount: drive9 mount: background mount exited before becoming ready")
 			os.Exit(1)
 		}
+		if mountPath := args[len(args)-1]; len(args) >= 2 && len(mountPath) > 0 && mountPath[0] != '-' {
+			_ = os.MkdirAll(mountPath, 0o755)
+			_ = os.WriteFile(mountPath+string(os.PathSeparator)+".drive9-mounted", []byte("fake mount ready\n"), 0o644)
+		}
 		fmt.Fprintln(os.Stderr, "drive9: mount running in background")
 		fmt.Fprintln(os.Stderr, "drive9: unmount with drive9 umount /workspace")
 	case len(args) >= 3 && args[0] == "admin" && args[1] == "tenant" && args[2] == "delete":

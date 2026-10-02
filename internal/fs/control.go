@@ -29,6 +29,7 @@ type Service struct {
 	Timeout                 time.Duration
 	FSReadyWaitTimeout      time.Duration
 	FSReadyWaitPollInterval time.Duration
+	MountReadyPollInterval  time.Duration
 	Debug                   bool
 	DebugWriter             io.Writer
 	HomeDir                 string

@@ -1193,6 +1193,9 @@ func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (
 		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
 		return MountResult{}, err
 	}
+	if err := s.waitForMountReady(ctx, opts.MountPath, opts.ReadyTimeout, fmt.Sprintf("; to stop it run: ti fs-vault unmount-vault --mount-path %q", opts.MountPath)); err != nil {
+		return MountResult{}, err
+	}
 	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: "vault", MountPath: opts.MountPath, RemotePath: "/n/vault", Driver: "fuse"}, nil
 }
 
@@ -1294,6 +1297,9 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	}
 	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", opts); err != nil {
 		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
+		return MountResult{}, err
+	}
+	if err := s.waitForMountReady(ctx, opts.MountPath, opts.ReadyTimeout, fmt.Sprintf("; to stop it run: ti fs unmount-file-system --mount-path %q", opts.MountPath)); err != nil {
 		return MountResult{}, err
 	}
 	endpoint, _ := s.resolveFS(opts.Profile)
