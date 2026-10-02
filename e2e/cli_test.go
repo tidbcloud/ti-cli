@@ -825,6 +825,7 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	baseEnv := []string{
 		"HOME=" + home,
 		"TI_DRIVE9_BIN=" + companion,
+		"TI_TEST_FAKE_MOUNT_READY=1",
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 		"TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
@@ -1097,6 +1098,7 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 		"HOME=" + home,
 		"TI_LOGGING=on",
 		"TI_DRIVE9_BIN=" + companion,
+		"TI_TEST_FAKE_MOUNT_READY=1",
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 		"TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
@@ -1207,6 +1209,7 @@ func TestFSLayerForkWorkflowCommands(t *testing.T) {
 	env := []string{
 		"HOME=" + home,
 		"TI_DRIVE9_BIN=" + companion,
+		"TI_TEST_FAKE_MOUNT_READY=1",
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 		"TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
@@ -1295,6 +1298,7 @@ func TestFSImportFileSystemToken(t *testing.T) {
 	baseEnv := []string{
 		"HOME=" + home,
 		"TI_DRIVE9_BIN=" + companion,
+		"TI_TEST_FAKE_MOUNT_READY=1",
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 		"FAKE_DRIVE9_EXPECT_API_KEY=" + token,
 		"TI_ALLOW_TEST_ENDPOINTS=1",

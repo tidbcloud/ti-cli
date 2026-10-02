@@ -414,7 +414,9 @@ func TestDrive9LayerCheckpointMountIsReadOnlyAndRecorded(t *testing.T) {
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	mountPath := filepath.Join(t.TempDir(), "checkpoint")
-	result, err := testCompanionService(home, companion).MountFileSystem(context.Background(), MountFileSystemOptions{
+	checkpointService := testCompanionService(home, companion)
+	checkpointService.mountPointActive = trueMountEvidence
+	result, err := checkpointService.MountFileSystem(context.Background(), MountFileSystemOptions{
 		Profile: dataProfile(), MountPath: mountPath, RemotePath: "/research/q3-market", Driver: "fuse", LayerRef: "style-analyst", CheckpointID: "v5",
 	})
 	if err != nil {
@@ -535,6 +537,7 @@ func TestDrive9MountLocatorRoutesDrainAndUnmountWithoutCredentials(t *testing.T)
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	service := testCompanionService(home, companion)
+	service.mountPointActive = trueMountEvidence
 	mountPath := filepath.Join(t.TempDir(), "workspace")
 	profile := dataProfile()
 
@@ -599,6 +602,7 @@ func TestDrive9VaultMountUsesBackgroundMode(t *testing.T) {
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	service := testCompanionService(home, companion)
+	service.mountPointActive = trueMountEvidence
 	service.Stdout = &bytes.Buffer{}
 	service.Stderr = &bytes.Buffer{}
 	mountPath := filepath.Join(t.TempDir(), "vault")
@@ -631,6 +635,7 @@ func TestDrive9MountSuppressesCompanionSuccessChatter(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	service := testCompanionService(home, companion)
+	service.mountPointActive = trueMountEvidence
 	service.Stdout = &stdout
 	service.Stderr = &stderr
 
@@ -673,6 +678,7 @@ func TestDrive9FailedUnmountPreservesMountLocator(t *testing.T) {
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	service := testCompanionService(home, companion)
+	service.mountPointActive = trueMountEvidence
 	mountPath := filepath.Join(t.TempDir(), "workspace")
 	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
 		Profile:        dataProfile(),
@@ -865,6 +871,10 @@ func main() {
 		if os.Getenv("TI_FAKE_DRIVE9_MOUNT_FAIL") == "1" {
 			fmt.Fprintln(os.Stderr, "mount: drive9 mount: background mount exited before becoming ready")
 			os.Exit(1)
+		}
+		if mountPath := args[len(args)-1]; len(args) >= 2 && len(mountPath) > 0 && mountPath[0] != '-' {
+			_ = os.MkdirAll(mountPath, 0o755)
+			_ = os.WriteFile(mountPath+string(os.PathSeparator)+".drive9-mounted", []byte("fake mount ready\n"), 0o644)
 		}
 		fmt.Fprintln(os.Stderr, "drive9: mount running in background")
 		fmt.Fprintln(os.Stderr, "drive9: unmount with drive9 umount /workspace")

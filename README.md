@@ -179,6 +179,8 @@ Automatic mounting uses FUSE on Linux and WebDAV on macOS and Windows. macOS use
 
 Mount commands start the companion runtime in the background, wait until the mount is ready, and then return a structured result. Use `ti fs unmount-file-system` or `ti fs-vault unmount-vault` to end a mount. The public CLI does not expose a foreground mount mode.
 
+Mount readiness means the mounted path is readable: `ti fs mount-file-system` and `ti fs-vault mount-vault` keep polling the mount path until directory listing succeeds, bounded by `--ready-timeout` (default `30s`). If the mount path never becomes readable in time, the command fails with `fs.mount_ready_timeout`, the background mount is left running, and the mount locator is preserved so the matching unmount command can stop it.
+
 Filesystem layers can fork copy-on-write child timelines without copying a workspace. Layer and checkpoint mounts require FUSE; checkpoint mounts are always read-only. Drive9 does not support combining recursive copy with a layer, so seed a directory tree through a writable layer mount, drain it, and then create the checkpoint:
 
 ```shell
