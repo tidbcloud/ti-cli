@@ -14,7 +14,11 @@ import (
 const (
 	defaultMountReadyTimeout      = 30 * time.Second
 	defaultMountReadyPollInterval = 100 * time.Millisecond
-	mountReadyProbeTimeout        = 2 * time.Second
+	// mountReadyProbeTimeout only guards against a wedged mount blocking a
+	// probe forever. It must stay well above a healthy cold first readdir:
+	// a WebDAV mount's initial directory listing crosses the companion
+	// proxy and the remote region and can legitimately take seconds.
+	mountReadyProbeTimeout = 10 * time.Second
 )
 
 // probeMountPointReady reports whether mountPath is a directory that the
