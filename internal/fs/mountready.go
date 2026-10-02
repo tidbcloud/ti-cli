@@ -14,24 +14,37 @@ import (
 const (
 	defaultMountReadyTimeout      = 30 * time.Second
 	defaultMountReadyPollInterval = 100 * time.Millisecond
-	// mountReadyProbeTimeout only guards against a wedged mount blocking a
-	// probe forever. It must stay well above a healthy cold first readdir:
-	// a WebDAV mount's initial directory listing crosses the companion
-	// proxy and the remote region and can legitimately take seconds.
+	// mountReadyProbeTimeout bounds a single probe so a wedged mount cannot
+	// block one probe forever. It is an upper bound only: every probe is also
+	// capped by the remaining --ready-timeout budget and the command context,
+	// so a short --ready-timeout never waits a full probe bound. It must stay
+	// well above a healthy cold first readdir: a WebDAV mount's initial
+	// directory listing crosses the companion proxy and the remote region and
+	// can legitimately take seconds.
 	mountReadyProbeTimeout = 10 * time.Second
 )
 
-// probeMountPointReady reports whether mountPath is a directory that the
-// kernel can list through the mounted filesystem. A background mount is only
-// usable once stat and readdir are served from the mount root, which can lag
-// the mount process exit while the companion runtime warms up.
-func probeMountPointReady(mountPath string) error {
+// errMountReadyProbeExhausted marks a probe whose budget elapsed before the
+// probe answered. It means "not ready yet", not a mount failure.
+var errMountReadyProbeExhausted = errors.New("mount readiness probe budget exhausted")
+
+// probeMountPointReady reports whether mountPath is an active mount that the
+// kernel can list. A background mount is only usable once the mount exists,
+// is visible in the mount table, and readdir is served from the mount root.
+func probeMountPointReady(mountPath string, mounted func(string) (bool, error)) error {
 	info, err := os.Stat(mountPath)
 	if err != nil {
 		return err
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("mount path %q is not a directory", mountPath)
+	}
+	active, err := mounted(mountPath)
+	if err != nil {
+		return fmt.Errorf("mount evidence for %q: %w", mountPath, err)
+	}
+	if !active {
+		return fmt.Errorf("mount path %q is not an active mount", mountPath)
 	}
 	dir, err := os.Open(mountPath)
 	if err != nil {
@@ -44,21 +57,31 @@ func probeMountPointReady(mountPath string) error {
 	return nil
 }
 
-// probeMountPointOnce bounds one readiness probe. A wedged mount can block
-// readdir indefinitely, so slow probes are abandoned and treated as not
-// ready; the abandoned goroutine finishes and closes its handle once the
-// syscall returns.
-func probeMountPointOnce(mountPath string) error {
+// probeMountPointOnce runs one probe bounded by budget and ctx. A blocked or
+// wedged probe is abandoned when either expires; the abandoned goroutine
+// finishes and closes its handle once the underlying syscall returns.
+func probeMountPointOnce(ctx context.Context, mountPath string, budget time.Duration, mounted func(string) (bool, error)) error {
 	done := make(chan error, 1)
 	go func() {
-		done <- probeMountPointReady(mountPath)
+		done <- probeMountPointReady(mountPath, mounted)
 	}()
+	timer := time.NewTimer(budget)
+	defer timer.Stop()
 	select {
 	case err := <-done:
 		return err
-	case <-time.After(mountReadyProbeTimeout):
-		return fmt.Errorf("mount readiness probe did not complete within %s", mountReadyProbeTimeout)
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return errMountReadyProbeExhausted
 	}
+}
+
+func (s Service) mountEvidence() func(string) (bool, error) {
+	if s.mountPointActive != nil {
+		return s.mountPointActive
+	}
+	return defaultMountPointActive
 }
 
 func (s Service) waitForMountReady(ctx context.Context, mountPath string, timeout time.Duration, stopHint string) error {
@@ -69,15 +92,28 @@ func (s Service) waitForMountReady(ctx context.Context, mountPath string, timeou
 	if interval <= 0 {
 		interval = defaultMountReadyPollInterval
 	}
+	mounted := s.mountEvidence()
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for {
-		if err := probeMountPointOnce(mountPath); err != nil {
-			lastErr = err
-		} else {
-			return nil
-		}
 		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		budget := mountReadyProbeTimeout
+		if remaining < budget {
+			budget = remaining
+		}
+		err := probeMountPointOnce(ctx, mountPath, budget, mounted)
+		switch {
+		case err == nil:
+			return nil
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return mountReadyCanceled(mountPath, stopHint, err)
+		default:
+			lastErr = err
+		}
+		remaining = time.Until(deadline)
 		if remaining <= 0 {
 			break
 		}

@@ -38,6 +38,11 @@ type Service struct {
 	Stdin         io.Reader
 	Stdout        io.Writer
 	Stderr        io.Writer
+
+	// mountPointActive overrides active-mount evidence detection. It exists
+	// for tests of unrelated mount behaviors whose fake companion cannot
+	// create a real kernel mount; production leaves it nil.
+	mountPointActive func(string) (bool, error)
 }
 
 type CreateFileSystemOptions struct {
