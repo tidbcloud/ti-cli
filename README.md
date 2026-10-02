@@ -411,6 +411,7 @@ ti update --target-version v0.1.1
 ## Documentation
 
 - [Preview Documentation](docs/pingcap-docs/docs/ai/ti/ti-overview.md)
+- [Release Guide](docs/releasing.md)
 
 ## Build From Source
 
