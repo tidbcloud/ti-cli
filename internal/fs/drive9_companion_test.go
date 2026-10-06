@@ -278,6 +278,72 @@ func TestDrive9CopyDoesNotTreatNotFoundAfterTransientFailureAsSuccess(t *testing
 	}
 }
 
+func TestDrive9CopyUploadWithoutOverwriteRejectsExistingRemoteTarget(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	// The fake companion's `fs stat` succeeds by default, i.e. the target exists.
+
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:   dataProfile(),
+		FromLocal: filepath.Join(t.TempDir(), "replacement.txt"),
+		ToRemote:  "/workspace/existing.txt",
+	})
+	if apperr.CodeFor(err) != "fs.target_exists" {
+		t.Fatalf("copy error = %v, want fs.target_exists", err)
+	}
+	for _, call := range readFakeDrive9Calls(t, recordPath) {
+		if hasArgPrefix(call.Args, []string{"fs", "cp"}) {
+			t.Fatalf("blocked copy still invoked companion: %#v", call.Args)
+		}
+	}
+}
+
+func TestDrive9CopyUploadGuardBypassedForOverwriteAppendAndResume(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*CopyFileOptions)
+	}{
+		{name: "overwrite", mutate: func(o *CopyFileOptions) { o.Overwrite = true }},
+		{name: "append", mutate: func(o *CopyFileOptions) { o.Append = true }},
+		{name: "resume", mutate: func(o *CopyFileOptions) { o.Resume = true }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			companion, recordPath := buildFakeDrive9(t)
+			t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+			opts := CopyFileOptions{
+				Profile:   dataProfile(),
+				FromLocal: filepath.Join(t.TempDir(), "input.txt"),
+				ToRemote:  "/workspace/existing.txt",
+			}
+			tc.mutate(&opts)
+			if _, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), opts); err != nil {
+				t.Fatalf("copy failed: %v", err)
+			}
+			requireFakeDrive9Call(t, recordPath, "fs", "cp")
+		})
+	}
+}
+
+func TestDrive9CopyUploadGuardFailsClosedOnStatError(t *testing.T) {
+	companion, _ := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_STAT_ALWAYS_FAIL", "1")
+
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:   dataProfile(),
+		FromLocal: filepath.Join(t.TempDir(), "input.txt"),
+		ToRemote:  "/workspace/existing.txt",
+	})
+	if err == nil {
+		t.Fatal("copy should fail when the target probe cannot determine existence")
+	}
+	if isDrive9NotFound(err) {
+		t.Fatalf("copy error = %v, want non-not-found probe failure", err)
+	}
+	if message := apperr.MessageFor(err); !strings.Contains(message, "backend unavailable") {
+		t.Fatalf("probe failure = %q, want the stat error to propagate", message)
+	}
+}
+
 func TestDrive9CopyDoesNotRetryNonReplayableStreamsOrAppend(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -291,6 +357,7 @@ func TestDrive9CopyDoesNotRetryNonReplayableStreamsOrAppend(t *testing.T) {
 			companion, recordPath := buildFakeDrive9(t)
 			t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 			t.Setenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE", filepath.Join(t.TempDir(), "copy-attempted"))
+			t.Setenv("TI_FAKE_DRIVE9_STAT_NOT_FOUND", "1")
 			tc.opts.Profile = dataProfile()
 
 			if _, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), tc.opts); err == nil {
@@ -960,6 +1027,10 @@ func main() {
 		}
 		if os.Getenv("TI_FAKE_DRIVE9_STAT_ALWAYS_FAIL") == "1" {
 			fmt.Fprintln(os.Stderr, "fs stat: storage backend unavailable; resource is still provisioning")
+			os.Exit(1)
+		}
+		if os.Getenv("TI_FAKE_DRIVE9_STAT_NOT_FOUND") == "1" {
+			fmt.Fprintln(os.Stderr, "fs stat: remote file not found")
 			os.Exit(1)
 		}
 		if sequencePath := os.Getenv("TI_FAKE_DRIVE9_STAT_FAILURE_SEQUENCE"); sequencePath != "" {
