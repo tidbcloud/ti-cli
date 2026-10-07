@@ -405,6 +405,9 @@ func (s Service) drive9CopyFile(ctx context.Context, opts CopyFileOptions) (File
 	if err != nil {
 		return FileOperationResult{}, err
 	}
+	if err := s.ensureDrive9UploadTargetAbsent(ctx, opts); err != nil {
+		return FileOperationResult{}, err
+	}
 	if opts.CreateParents && strings.TrimSpace(opts.ToLocal) != "" {
 		if err := os.MkdirAll(filepath.Dir(opts.ToLocal), 0o755); err != nil {
 			return FileOperationResult{}, apperr.Wrap("fs.create_local_parent", "runtime", 1, fmt.Sprintf("create parent directories for %q", opts.ToLocal), err)
@@ -427,6 +430,38 @@ func (s Service) drive9CopyFile(ctx context.Context, opts CopyFileOptions) (File
 		status = "resumed"
 	}
 	return FileOperationResult{Operation: "copy_file", SourcePath: source, TargetPath: target, Status: status}, nil
+}
+
+// ensureDrive9UploadTargetAbsent enforces the documented --overwrite=false
+// contract for companion uploads. drive9CopyArgs has no overwrite flag to
+// forward because the delegated `drive9 fs cp` treats every drive9
+// destination as overwrite-enabled, so ti must probe the target itself.
+func (s Service) ensureDrive9UploadTargetAbsent(ctx context.Context, opts CopyFileOptions) error {
+	if opts.Overwrite || opts.Append || opts.Resume {
+		return nil
+	}
+	target := ""
+	switch {
+	case opts.FromStdin && opts.ToRemote != "":
+		target = opts.ToRemote
+	case opts.FromLocal != "" && opts.ToRemote != "":
+		target = opts.ToRemote
+	}
+	if target == "" {
+		return nil
+	}
+	targetPath, err := normalizeRemotePath(target)
+	if err != nil {
+		return err
+	}
+	_, statErr := s.drive9RunTransientRetry(ctx, opts.Profile, []string{"fs", "stat", "--output", "json", drive9Remote(targetPath)}, true)
+	if statErr == nil {
+		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", targetPath))
+	}
+	if isDrive9NotFound(statErr) {
+		return nil
+	}
+	return statErr
 }
 
 func (s Service) drive9ReadFile(ctx context.Context, opts ReadFileOptions) ([]byte, error) {
