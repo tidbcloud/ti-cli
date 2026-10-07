@@ -1641,16 +1641,29 @@ func appendFlagValue(args *[]string, flag, value string) {
 	*args = append(*args, flag, strings.TrimSpace(value))
 }
 
+// parseDrive9LS parses `drive9 fs ls -l` output. The companion prints
+// "kind<TAB>size<TAB>name" through a space-padding tabwriter with the name
+// as the final column, so only the kind and size tokens are fixed: parse
+// those two and keep the remainder verbatim as the name.
 func parseDrive9LS(raw []byte) []FileEntry {
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	entries := make([]FileEntry, 0, len(lines))
 	for _, line := range lines {
-		fields := strings.Fields(line)
-		if len(fields) < 3 {
+		rest := strings.TrimLeft(line, " ")
+		if len(rest) < 2 {
 			continue
 		}
-		size, _ := strconv.ParseInt(fields[1], 10, 64)
-		entries = append(entries, FileEntry{Name: fields[2], SizeBytes: size, IsDir: fields[0] == "d"})
+		kind := rest[:1]
+		rest = strings.TrimLeft(rest[1:], " ")
+		sizeText, name, ok := strings.Cut(rest, " ")
+		if !ok {
+			continue
+		}
+		size, err := strconv.ParseInt(sizeText, 10, 64)
+		if err != nil {
+			continue
+		}
+		entries = append(entries, FileEntry{Name: strings.TrimLeft(name, " "), SizeBytes: size, IsDir: kind == "d"})
 	}
 	if entries == nil {
 		return []FileEntry{}
@@ -1658,6 +1671,9 @@ func parseDrive9LS(raw []byte) []FileEntry {
 	return entries
 }
 
+// parseDrive9Paths parses line-oriented companion output where each line is
+// a path (`fs find`) or a path followed by a TAB-separated score
+// (`fs grep`). Paths may contain spaces; only a tab terminates the path.
 func parseDrive9Paths(raw []byte, limit int32) []SearchResult {
 	lines := strings.Split(strings.TrimSpace(string(raw)), "\n")
 	results := make([]SearchResult, 0, len(lines))
@@ -1666,8 +1682,8 @@ func parseDrive9Paths(raw []byte, limit int32) []SearchResult {
 		if line == "" {
 			continue
 		}
-		fields := strings.Fields(line)
-		pathValue := fields[0]
+		pathValue, _, _ := strings.Cut(line, "\t")
+		pathValue = strings.TrimSpace(pathValue)
 		if strings.HasPrefix(pathValue, ":") {
 			pathValue = strings.TrimPrefix(pathValue, ":")
 		}

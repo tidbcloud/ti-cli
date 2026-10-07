@@ -857,6 +857,66 @@ func TestDrive9VaultHelpers(t *testing.T) {
 	}
 }
 
+func TestParseDrive9LSPreservesNamesWithSpaces(t *testing.T) {
+	// Mirrors `drive9 fs ls -l` output: kind and size columns are
+	// space-padded by the companion's tabwriter, the name is the final
+	// column and may contain (multiple) spaces.
+	raw := []byte("" +
+		"-  17    alpha beta.txt\n" +
+		"d    4096  reports q3.md\n" +
+		"-  17    double  space.txt\n" +
+		"-  9     plain.txt\n")
+	entries := parseDrive9LS(raw)
+	if len(entries) != 4 {
+		t.Fatalf("entries = %d, want 4: %#v", len(entries), entries)
+	}
+	want := []FileEntry{
+		{Name: "alpha beta.txt", SizeBytes: 17, IsDir: false},
+		{Name: "reports q3.md", SizeBytes: 4096, IsDir: true},
+		{Name: "double  space.txt", SizeBytes: 17, IsDir: false},
+		{Name: "plain.txt", SizeBytes: 9, IsDir: false},
+	}
+	for i := range want {
+		if entries[i] != want[i] {
+			t.Errorf("entry[%d] = %#v, want %#v", i, entries[i], want[i])
+		}
+	}
+}
+
+func TestParseDrive9LSSkipsMalformedLines(t *testing.T) {
+	entries := parseDrive9LS([]byte("total 0\nnot a listing line\n-  x  bad size.txt\n"))
+	if len(entries) != 0 {
+		t.Fatalf("entries = %#v, want none", entries)
+	}
+	if got := parseDrive9LS(nil); len(got) != 0 {
+		t.Fatalf("entries = %#v, want empty", got)
+	}
+}
+
+func TestParseDrive9PathsPreservesSpaces(t *testing.T) {
+	raw := []byte("" +
+		"/docs/alpha beta.txt\n" +
+		":/docs/nested dir/two words.md\n" +
+		"/search hit\t0.85\n")
+	results := parseDrive9Paths(raw, 0)
+	if len(results) != 3 {
+		t.Fatalf("results = %d, want 3: %#v", len(results), results)
+	}
+	want := []SearchResult{
+		{Path: "/docs/alpha beta.txt", Name: "alpha beta.txt"},
+		{Path: "/docs/nested dir/two words.md", Name: "two words.md"},
+		{Path: "/search hit", Name: "search hit"},
+	}
+	for i := range want {
+		if results[i] != want[i] {
+			t.Errorf("results[%d] = %#v, want %#v", i, results[i], want[i])
+		}
+	}
+	if got := parseDrive9Paths(raw, 2); len(got) != 2 {
+		t.Fatalf("limit results = %d, want 2", len(got))
+	}
+}
+
 func buildFakeDrive9(t *testing.T) (binPath, recordPath string) {
 	t.Helper()
 	dir := t.TempDir()
