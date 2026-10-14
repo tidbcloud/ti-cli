@@ -1077,6 +1077,49 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	}
 }
 
+func TestFSCloudRegionsUseBuiltInEndpoints(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake companion build path is covered by unit tests on Windows")
+	}
+	bin := tiBinary(t)
+	companion := filepath.Join(t.TempDir(), "ti-drive9")
+	build := exec.Command("go", "build", "-o", companion, "./testdata/fake-drive9.go")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fake companion: %v\n%s", err, output)
+	}
+	for _, regionCode := range []string{"gcp-us-east1", "azure-centralus"} {
+		t.Run(regionCode, func(t *testing.T) {
+			home := t.TempDir()
+			recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
+			const fileSystemID = "tenant-cloud-sandbox"
+			token := drive9TestToken(fileSystemID)
+			env := []string{
+				"HOME=" + home,
+				"TI_PROFILE=default",
+				"TI_REGION_CODE=aws-us-east-1",
+				"TI_DRIVE9_BIN=" + companion,
+				"TI_FS_TOKEN=" + token,
+				"TIDB_CLOUD_PUBLIC_KEY=",
+				"TIDB_CLOUD_PRIVATE_KEY=",
+				"TI_ALLOW_TEST_ENDPOINTS=",
+				"TI_TEST_FS_MANIFEST_URL=http://127.0.0.1:1/must-not-be-used",
+				"FAKE_DRIVE9_RECORD=" + recordPath,
+				"DRIVE9_SERVER=https://wrong.example.test",
+				"DRIVE9_REGION_CODE=aws-us-west-2",
+				"DRIVE9_API_KEY=wrong-credential",
+			}
+			result := runTIWithInput(t, bin, "", env, "--region", regionCode, "fs", "list-files", "--path", "/")
+			result.wantExitCode(0)
+			assertFakeDrive9Call(t, readFakeDrive9Calls(t, recordPath), []string{"fs", "ls"}, token, home, "default", fileSystemID, "https://"+regionCode+".drive9.ai", regionCode)
+			for _, name := range []string{"config", "credentials", "fs_credentials"} {
+				if _, err := os.Stat(filepath.Join(home, ".ti", name)); !os.IsNotExist(err) {
+					t.Fatalf("token-only access persisted %s: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
 func TestFSConfigurationFreeAccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake companion build path is covered by unit tests on Windows")

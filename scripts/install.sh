@@ -277,10 +277,10 @@ print_regions() {
   printf "\n"
   printf "  ${BOLD}Config regions:${RESET}\n"
   printf "    aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1\n"
-  printf "    alicloud-ap-southeast-1\n"
+  printf "    alicloud-ap-southeast-1, gcp-us-east1, azure-centralus\n"
   printf "\n"
   printf "  ${BOLD}ti fs regions:${RESET}\n"
-  printf "    aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1, gcp-us-east1\n"
+  printf "    aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1, gcp-us-east1, azure-centralus\n"
 }
 
 print_next_steps() {

@@ -14,6 +14,7 @@ func TestValidateSupportedProviderRegions(t *testing.T) {
 		{ProviderAWS, "ap-southeast-1"},
 		{ProviderAlibabaCloud, "ap-southeast-1"},
 		{ProviderGCP, "us-east1"},
+		{ProviderAzure, "centralus"},
 	}
 
 	for _, tt := range tests {
@@ -31,6 +32,7 @@ func TestValidateRejectsUnsupportedProviderRegions(t *testing.T) {
 		region   string
 	}{
 		{"azure", "eastus"},
+		{"unsupported", "centralus"},
 		{ProviderAlibabaCloud, "us-east-1"},
 		{ProviderAWS, "cn-hangzhou"},
 	}
@@ -56,6 +58,7 @@ func TestParsePlacementCode(t *testing.T) {
 		{"alicloud-ap-southeast-1", "alicloud-ap-southeast-1", ProviderAlibabaCloud, "ap-southeast-1"},
 		{"ali-ap-southeast-1", "alicloud-ap-southeast-1", ProviderAlibabaCloud, "ap-southeast-1"},
 		{"gcp-us-east1", "gcp-us-east1", ProviderGCP, "us-east1"},
+		{"azure-centralus", "azure-centralus", ProviderAzure, "centralus"},
 	}
 
 	for _, tt := range tests {
@@ -67,12 +70,16 @@ func TestParsePlacementCode(t *testing.T) {
 			if placement.Code != tt.canonical || placement.Provider != tt.provider || placement.NativeCode != tt.nativeCode {
 				t.Fatalf("unexpected placement: %#v", placement)
 			}
+			canonical, err := CanonicalCode(placement.Provider, placement.NativeCode)
+			if err != nil || canonical != tt.canonical {
+				t.Fatalf("canonical placement = %q, %v; want %q", canonical, err, tt.canonical)
+			}
 		})
 	}
 }
 
 func TestParsePlacementCodeRejectsUnsupportedValues(t *testing.T) {
-	for _, code := range []string{"us-east-1", "ali-us-east-1", "gcp-us-east-1"} {
+	for _, code := range []string{"us-east-1", "ali-us-east-1", "gcp-us-east-1", "azure-eastus", "azure-central-us"} {
 		t.Run(code, func(t *testing.T) {
 			if _, err := ParsePlacementCode(code); err == nil {
 				t.Fatal("expected placement code to be rejected")

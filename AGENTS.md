@@ -1001,11 +1001,13 @@ Supported MVP placement values:
 | `aws-ap-southeast-1` | AWS | Singapore |
 | `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
 | `gcp-us-east1` | Google Cloud | South Carolina |
+| `azure-centralus` | Microsoft Azure | Central US |
 
 The prefix before the first `-` is the cloud provider selector. `aws` maps to
 internal provider `aws`; `alicloud` maps to internal provider
-`alibaba_cloud`; `gcp` maps to internal provider `gcp`. Keep this mapping
-centralized in `internal/config/region`.
+`alibaba_cloud`; `gcp` maps to internal provider `gcp`; `azure` maps to
+internal provider `azure`. Keep this mapping centralized in
+`internal/config/region`.
 
 Do not store secrets in logs, telemetry, generated docs examples, or test
 fixtures.

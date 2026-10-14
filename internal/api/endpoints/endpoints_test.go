@@ -160,6 +160,7 @@ func TestResolveFSUsesBuiltInRegionMapping(t *testing.T) {
 		{name: "AWS Oregon", provider: region.ProviderAWS, regionCode: "us-west-2", baseURL: "https://aws-us-west-2.drive9.ai", regionName: "aws-us-west-2"},
 		{name: "Alibaba Cloud Singapore", provider: region.ProviderAlibabaCloud, regionCode: "ap-southeast-1", baseURL: "https://alicloud-ap-southeast-1.drive9.ai", regionName: "alicloud-ap-southeast-1"},
 		{name: "GCP South Carolina", provider: region.ProviderGCP, regionCode: "us-east1", baseURL: "https://gcp-us-east1.drive9.ai", regionName: "gcp-us-east1"},
+		{name: "Azure Central US", provider: region.ProviderAzure, regionCode: "centralus", baseURL: "https://azure-centralus.drive9.ai", regionName: "azure-centralus"},
 	}
 	resolver := NewResolver()
 	if resolver.FSManifestURL != "" {

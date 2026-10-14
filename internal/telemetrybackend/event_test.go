@@ -22,24 +22,34 @@ func TestDecodeAndValidateBatchAcceptsAllowlistedEvent(t *testing.T) {
 	}
 }
 
-func TestDecodeAndValidateBatchAcceptsGCPPlacement(t *testing.T) {
-	var request map[string]any
-	if err := json.Unmarshal(validRequestBody(), &request); err != nil {
-		t.Fatal(err)
-	}
-	event := request["events"].([]any)[0].(map[string]any)
-	event["cloud_provider"] = "gcp"
-	event["region_code"] = "gcp-us-east1"
-	body, err := json.Marshal(request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	events, err := decodeAndValidateBatch(body, 20, time.Now())
-	if err != nil {
-		t.Fatalf("gcp placement should be accepted: %v", err)
-	}
-	if len(events) != 1 || events[0].CloudProvider != "gcp" || events[0].RegionCode != "gcp-us-east1" {
-		t.Fatalf("unexpected gcp event: %#v", events)
+func TestDecodeAndValidateBatchAcceptsFilesystemPlacements(t *testing.T) {
+	for _, test := range []struct {
+		provider string
+		region   string
+	}{
+		{provider: "gcp", region: "gcp-us-east1"},
+		{provider: "azure", region: "azure-centralus"},
+	} {
+		t.Run(test.provider, func(t *testing.T) {
+			var request map[string]any
+			if err := json.Unmarshal(validRequestBody(), &request); err != nil {
+				t.Fatal(err)
+			}
+			event := request["events"].([]any)[0].(map[string]any)
+			event["cloud_provider"] = test.provider
+			event["region_code"] = test.region
+			body, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events, err := decodeAndValidateBatch(body, 20, time.Now())
+			if err != nil {
+				t.Fatalf("placement should be accepted: %v", err)
+			}
+			if len(events) != 1 || events[0].CloudProvider != test.provider || events[0].RegionCode != test.region {
+				t.Fatalf("unexpected placement: %#v", events)
+			}
+		})
 	}
 }
 
@@ -201,7 +211,7 @@ func TestDecodeAndValidateBatchRejectsInvalidEnumsAndLimits(t *testing.T) {
 		{"event_name", "custom.event"},
 		{"command_path", "rm -rf"},
 		{"command_path", "ti db list-db-clusters select secret"},
-		{"cloud_provider", "azure"},
+		{"cloud_provider", "unsupported"},
 		{"region_code", "us-east-1"},
 		{"install_source", "curl"},
 		{"profile_source", "production"},

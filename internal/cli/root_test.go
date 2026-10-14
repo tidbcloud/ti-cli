@@ -1133,6 +1133,20 @@ func TestRegionOverrideWinsOverEnvironmentCredentials(t *testing.T) {
 	}
 }
 
+func TestAzureFileSystemRegionOverride(t *testing.T) {
+	withConfigEnv(t)
+
+	stdout, _, err := executeForTest("--region", "azure-centralus", "fs", "create-file-system", "--dry-run")
+	if err != nil {
+		t.Fatalf("expected Azure file system dry-run to succeed: %v", err)
+	}
+	for _, want := range []string{"azure centralus", "/v1/admin/tenants"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("Azure dry-run missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestRegionOverrideAllowsEnvironmentCredentialsWithoutEnvRegion(t *testing.T) {
 	t.Setenv("TI_REGION_CODE", "")
 	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "test-public")

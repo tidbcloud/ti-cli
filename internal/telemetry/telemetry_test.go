@@ -316,6 +316,33 @@ func TestFinishSendsOnlyAllowlistedEventFields(t *testing.T) {
 	}
 }
 
+func TestFinishPreservesAzurePlacement(t *testing.T) {
+	requests := make(chan []byte, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		requests <- body
+		writer.WriteHeader(http.StatusAccepted)
+	}))
+	defer server.Close()
+
+	cfg := enabledConfig(t.TempDir())
+	cfg.Endpoint = server.URL
+	session := Start(cfg)
+	session.Finish(EventInput{CommandPath: "ti fs list-file-systems", CloudProvider: "azure", RegionCode: "azure-centralus"})
+	var batch struct {
+		Events []struct {
+			CloudProvider string `json:"cloud_provider"`
+			RegionCode    string `json:"region_code"`
+		} `json:"events"`
+	}
+	if err := json.Unmarshal(<-requests, &batch); err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.Events) != 1 || batch.Events[0].CloudProvider != "azure" || batch.Events[0].RegionCode != "azure-centralus" {
+		t.Fatalf("Azure placement was not preserved: %#v", batch.Events)
+	}
+}
+
 func TestTelemetryEnvironmentMetadataIsBoundedAndNotPersisted(t *testing.T) {
 	requests := make(chan []byte, 1)
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
