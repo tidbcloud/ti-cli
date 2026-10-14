@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -117,6 +118,16 @@ func TestDefaultMountPointActiveAcceptsRealWebDAVMount(t *testing.T) {
 		t.Skipf("mount_webdav failed in this environment (%v): %s", err, out)
 	}
 	defer func() { _ = exec.Command("umount", mp).Run() }()
+
+	// macOS can permit mount_webdav while denying this process access to the
+	// mounted directory. Check the kernel mount independently of our probe so
+	// privacy or sandbox restrictions are not reported as a probe regression.
+	if _, err := os.ReadDir(mp); err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			t.Skipf("macOS does not permit reading the WebDAV fixture: %v", err)
+		}
+		t.Fatalf("read WebDAV fixture: %v", err)
+	}
 
 	if active, err := defaultMountPointActive(mp); err != nil || !active {
 		t.Fatalf("real WebDAV mount must count as active: active=%v err=%v", active, err)
