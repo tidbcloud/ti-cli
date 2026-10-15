@@ -160,6 +160,7 @@ func TestResolveFSUsesBuiltInRegionMapping(t *testing.T) {
 		{name: "AWS Oregon", provider: region.ProviderAWS, regionCode: "us-west-2", baseURL: "https://aws-us-west-2.drive9.ai", regionName: "aws-us-west-2"},
 		{name: "Alibaba Cloud Singapore", provider: region.ProviderAlibabaCloud, regionCode: "ap-southeast-1", baseURL: "https://alicloud-ap-southeast-1.drive9.ai", regionName: "alicloud-ap-southeast-1"},
 		{name: "GCP South Carolina", provider: region.ProviderGCP, regionCode: "us-east1", baseURL: "https://gcp-us-east1.drive9.ai", regionName: "gcp-us-east1"},
+		{name: "Azure Central US", provider: region.ProviderAzure, regionCode: "centralus", baseURL: "https://azure-centralus.drive9.ai", regionName: "azure-centralus"},
 	}
 	resolver := NewResolver()
 	if resolver.FSManifestURL != "" {
@@ -175,6 +176,29 @@ func TestResolveFSUsesBuiltInRegionMapping(t *testing.T) {
 				t.Fatalf("endpoint = %#v, want base URL %q and region %q", endpoint, tt.baseURL, tt.regionName)
 			}
 		})
+	}
+}
+
+func TestResolveStarterRejectsFilesystemOnlyPlacement(t *testing.T) {
+	resolver := NewResolver()
+
+	endpoint, err := resolver.ResolveFS(region.ProviderAzure, "centralus")
+	if err != nil {
+		t.Fatalf("ResolveFS failed for the Filesystem-only placement: %v", err)
+	}
+	if endpoint.BaseURL != "https://azure-centralus.drive9.ai" || endpoint.RegionName != "azure-centralus" {
+		t.Fatalf("unexpected fs endpoint: %#v", endpoint)
+	}
+
+	if _, err := resolver.ResolveStarter(region.ProviderAzure, "centralus"); err == nil {
+		t.Fatal("expected Starter resolution to reject the Filesystem-only placement")
+	} else {
+		if got := apperr.ExitCodeFor(err); got != 2 {
+			t.Fatalf("expected exit code 2, got %d", got)
+		}
+		if message := apperr.MessageFor(err); !strings.Contains(message, "azure-centralus") || !strings.Contains(message, "Filesystem only") {
+			t.Fatalf("unexpected Starter error message %q", message)
+		}
 	}
 }
 

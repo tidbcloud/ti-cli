@@ -133,7 +133,7 @@ func (r Resolver) ResolveIAM() (Endpoint, error) {
 }
 
 func (r Resolver) ResolveFS(provider, regionCode string) (Endpoint, error) {
-	if err := region.Validate(provider, regionCode); err != nil {
+	if err := region.ValidateFilesystem(provider, regionCode); err != nil {
 		return Endpoint{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
 
@@ -246,6 +246,7 @@ func builtInFSRegionManifest() *FSRegionManifest {
 			{RegionCode: "aws-us-west-2", Mode: DefaultFSMode, ServerURL: "https://aws-us-west-2.drive9.ai", CloudProvider: "aws", TiDBRegion: "us-west-2"},
 			{RegionCode: "alicloud-ap-southeast-1", Mode: DefaultFSMode, ServerURL: "https://alicloud-ap-southeast-1.drive9.ai", CloudProvider: "alicloud", TiDBRegion: "ap-southeast-1"},
 			{RegionCode: "gcp-us-east1", Mode: DefaultFSMode, ServerURL: "https://gcp-us-east1.drive9.ai", CloudProvider: "gcp", TiDBRegion: "us-east1"},
+			{RegionCode: "azure-centralus", Mode: DefaultFSMode, ServerURL: "https://azure-centralus.drive9.ai", CloudProvider: "azure", TiDBRegion: "centralus"},
 		},
 	}
 }

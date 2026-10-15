@@ -1077,6 +1077,59 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	}
 }
 
+func TestFilesystemOnlyRegionRoutesFileSystemAndRejectsStarter(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake companion build path is covered by unit tests on Windows")
+	}
+	bin := tiBinary(t)
+	home := t.TempDir()
+	companion := filepath.Join(t.TempDir(), "ti-drive9")
+	build := exec.Command("go", "build", "-o", companion, "./testdata/fake-drive9.go")
+	build.Dir = "."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
+	}
+	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
+	const fileSystemID = "tenant-azure-sandbox"
+	token := drive9TestToken(fileSystemID)
+	env := []string{
+		"HOME=" + home,
+		"TI_PROFILE=default",
+		"TI_REGION_CODE=aws-us-east-1",
+		"TI_DRIVE9_BIN=" + companion,
+		"TI_FS_TOKEN=" + token,
+		"TIDB_CLOUD_PUBLIC_KEY=",
+		"TIDB_CLOUD_PRIVATE_KEY=",
+		"TI_ALLOW_TEST_ENDPOINTS=",
+		"TI_TEST_FS_MANIFEST_URL=http://127.0.0.1:1/must-not-be-used",
+		"FAKE_DRIVE9_RECORD=" + recordPath,
+		"DRIVE9_SERVER=https://wrong.example.test",
+		"DRIVE9_REGION_CODE=aws-us-west-2",
+		"DRIVE9_API_KEY=wrong-credential",
+	}
+	result := runTIWithInput(t, bin, "", env, "--region", "azure-centralus", "fs", "list-files", "--path", "/")
+	result.wantExitCode(0)
+	assertFakeDrive9Call(t, readFakeDrive9Calls(t, recordPath), []string{"fs", "ls"}, token, home, "default", fileSystemID, "https://azure-centralus.drive9.ai", "azure-centralus")
+	for _, name := range []string{"config", "credentials", "fs_credentials"} {
+		if _, err := os.Stat(filepath.Join(home, ".ti", name)); !os.IsNotExist(err) {
+			t.Fatalf("token-only access persisted %s: %v", name, err)
+		}
+	}
+
+	starterEnv := []string{
+		"HOME=" + t.TempDir(),
+		"TI_REGION_CODE=",
+		"TIDB_CLOUD_PUBLIC_KEY=test-public",
+		"TIDB_CLOUD_PRIVATE_KEY=test-private",
+	}
+	starter := runTIWithInput(t, bin, "", starterEnv,
+		"--region", "azure-centralus",
+		"db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "ti-e2e-azure", "--dry-run",
+	)
+	starter.wantExitCode(2)
+	starter.wantStderrContains("Filesystem only")
+}
+
 func TestFSConfigurationFreeAccess(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake companion build path is covered by unit tests on Windows")

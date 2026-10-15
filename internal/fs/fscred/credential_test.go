@@ -53,6 +53,28 @@ func TestCredentialStoreAndResolveByID(t *testing.T) {
 	}
 }
 
+func TestCredentialPreservesFilesystemOnlyRegionAcrossProfilePlacements(t *testing.T) {
+	home := t.TempDir()
+	profile := credentialTestProfile()
+	const fileSystemID = "tenant-azure-region"
+	if _, err := StoreCredential(home, profile, fileSystemID, "azure-centralus", wrappedToken(t, fileSystemID), false); err != nil {
+		t.Fatal(err)
+	}
+
+	selected, credential, err := ResolveCredential(home, profile, ResolveCredentialOptions{
+		FileSystemID: fileSystemID, FileSystemIDExplicit: true, TokenRequired: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if credential.RegionCode != "azure-centralus" || selected.FSPlacementRegionCode != "azure-centralus" || selected.FSCloudProvider != "azure" || selected.FSRegionCode != "centralus" {
+		t.Fatalf("stored region = %q, selected region = %q, provider = %q", credential.RegionCode, selected.FSPlacementRegionCode, selected.FSCloudProvider)
+	}
+	if profile.CloudProvider != "aws" || profile.PlacementRegionCode != "aws-us-east-1" {
+		t.Fatal("resolving the resource changed the profile placement")
+	}
+}
+
 func TestCredentialOptionalTokenMetadataAndExactDelete(t *testing.T) {
 	home := t.TempDir()
 	profile := credentialTestProfile()

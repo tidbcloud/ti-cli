@@ -1001,11 +1001,21 @@ Supported MVP placement values:
 | `aws-ap-southeast-1` | AWS | Singapore |
 | `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
 | `gcp-us-east1` | Google Cloud | South Carolina |
+| `azure-centralus` | Microsoft Azure | Central US |
 
 The prefix before the first `-` is the cloud provider selector. `aws` maps to
 internal provider `aws`; `alicloud` maps to internal provider
-`alibaba_cloud`; `gcp` maps to internal provider `gcp`. Keep this mapping
-centralized in `internal/config/region`.
+`alibaba_cloud`; `gcp` maps to internal provider `gcp`; `azure` maps to
+internal provider `azure`. Keep this mapping centralized in
+`internal/config/region`.
+
+Filesystem-only placements are marked in
+`internal/config/region.filesystemOnly`. `azure-centralus` is the current
+Filesystem-only placement: `region.ValidateFilesystem` accepts it for
+`ti fs`, while `region.Validate` keeps it out of TiDB Cloud Starter placement
+validation so `ti db` commands fail locally with an explicit Filesystem-only
+error. The built-in Filesystem endpoint mapping remains the authority on which
+placements have a Filesystem endpoint.
 
 Do not store secrets in logs, telemetry, generated docs examples, or test
 fixtures.

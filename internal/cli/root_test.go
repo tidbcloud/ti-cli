@@ -1147,6 +1147,35 @@ func TestRegionOverrideAllowsEnvironmentCredentialsWithoutEnvRegion(t *testing.T
 	}
 }
 
+func TestFilesystemOnlyRegionRejectedForStarter(t *testing.T) {
+	withConfigEnv(t)
+
+	_, _, err := executeForTest("--region", "azure-centralus", "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "demo-cluster", "--dry-run")
+	if err == nil {
+		t.Fatal("expected the Filesystem-only placement to fail for TiDB Cloud Starter")
+	}
+	if got := apperr.ExitCodeFor(err); got != 2 {
+		t.Fatalf("expected exit code 2, got %d", got)
+	}
+	if got := apperr.MessageFor(err); !strings.Contains(got, "azure-centralus") || !strings.Contains(got, "Filesystem only") {
+		t.Fatalf("unexpected error message %q", got)
+	}
+}
+
+func TestFilesystemOnlyRegionAcceptedForFileSystem(t *testing.T) {
+	withConfigEnv(t)
+
+	stdout, _, err := executeForTest("--region", "azure-centralus", "fs", "create-file-system", "--dry-run")
+	if err != nil {
+		t.Fatalf("expected Azure file system dry-run to succeed: %v", err)
+	}
+	for _, want := range []string{"azure centralus", "/v1/admin/tenants"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("Azure dry-run missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
 func TestCreateClusterOmitsProjectSelection(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
