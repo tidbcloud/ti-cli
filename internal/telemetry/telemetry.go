@@ -468,7 +468,7 @@ func normalizedInstallSource(value string) string {
 
 func normalizedProvider(value string) string {
 	switch value {
-	case "aws", "alibaba_cloud", "gcp":
+	case "aws", "alibaba_cloud", "gcp", "azure":
 		return value
 	case "":
 		return ""

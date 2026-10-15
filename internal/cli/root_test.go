@@ -1133,6 +1133,39 @@ func TestRegionOverrideWinsOverEnvironmentCredentials(t *testing.T) {
 	}
 }
 
+func TestAzureFileSystemRegionOverride(t *testing.T) {
+	withConfigEnv(t)
+
+	stdout, _, err := executeForTest("--region", "azure-centralus", "fs", "create-file-system", "--dry-run")
+	if err != nil {
+		t.Fatalf("expected Azure file system dry-run to succeed: %v", err)
+	}
+	for _, want := range []string{"azure centralus", "/v1/admin/tenants"} {
+		if !strings.Contains(stdout, want) {
+			t.Fatalf("Azure dry-run missing %q:\n%s", want, stdout)
+		}
+	}
+}
+
+func TestFilesystemOnlyRegionsRejectedForStarter(t *testing.T) {
+	withConfigEnv(t)
+
+	for _, regionCode := range []string{"gcp-us-east1", "azure-centralus"} {
+		t.Run(regionCode, func(t *testing.T) {
+			_, _, err := executeForTest("--region", regionCode, "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "demo-cluster", "--dry-run")
+			if err == nil {
+				t.Fatal("expected the Filesystem-only placement to fail for TiDB Cloud Starter")
+			}
+			if got := apperr.ExitCodeFor(err); got != 2 {
+				t.Fatalf("expected exit code 2, got %d", got)
+			}
+			if got := apperr.MessageFor(err); !strings.Contains(got, regionCode) || !strings.Contains(got, "Filesystem only") {
+				t.Fatalf("unexpected error message %q", got)
+			}
+		})
+	}
+}
+
 func TestRegionOverrideAllowsEnvironmentCredentialsWithoutEnvRegion(t *testing.T) {
 	t.Setenv("TI_REGION_CODE", "")
 	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "test-public")
