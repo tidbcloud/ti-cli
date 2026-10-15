@@ -190,15 +190,29 @@ func TestResolveStarterRejectsFilesystemOnlyPlacement(t *testing.T) {
 		t.Fatalf("unexpected fs endpoint: %#v", endpoint)
 	}
 
-	if _, err := resolver.ResolveStarter(region.ProviderAzure, "centralus"); err == nil {
-		t.Fatal("expected Starter resolution to reject the Filesystem-only placement")
-	} else {
-		if got := apperr.ExitCodeFor(err); got != 2 {
-			t.Fatalf("expected exit code 2, got %d", got)
-		}
-		if message := apperr.MessageFor(err); !strings.Contains(message, "azure-centralus") || !strings.Contains(message, "Filesystem only") {
-			t.Fatalf("unexpected Starter error message %q", message)
-		}
+	for _, test := range []struct {
+		provider  string
+		region    string
+		canonical string
+	}{
+		{provider: region.ProviderGCP, region: "us-east1", canonical: "gcp-us-east1"},
+		{provider: region.ProviderAzure, region: "centralus", canonical: "azure-centralus"},
+	} {
+		t.Run(test.canonical, func(t *testing.T) {
+			if _, err := resolver.ResolveFS(test.provider, test.region); err != nil {
+				t.Fatalf("ResolveFS failed for the Filesystem-only placement: %v", err)
+			}
+			if _, err := resolver.ResolveStarter(test.provider, test.region); err == nil {
+				t.Fatal("expected Starter resolution to reject the Filesystem-only placement")
+			} else {
+				if got := apperr.ExitCodeFor(err); got != 2 {
+					t.Fatalf("expected exit code 2, got %d", got)
+				}
+				if message := apperr.MessageFor(err); !strings.Contains(message, test.canonical) || !strings.Contains(message, "Filesystem only") {
+					t.Fatalf("unexpected Starter error message %q", message)
+				}
+			}
+		})
 	}
 }
 

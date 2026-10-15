@@ -1010,9 +1010,9 @@ internal provider `azure`. Keep this mapping centralized in
 `internal/config/region`.
 
 Filesystem-only placements are marked in
-`internal/config/region.filesystemOnly`. `azure-centralus` is the current
-Filesystem-only placement: `region.ValidateFilesystem` accepts it for
-`ti fs`, while `region.Validate` keeps it out of TiDB Cloud Starter placement
+`internal/config/region.filesystemOnly`. `gcp-us-east1` and `azure-centralus`
+are the Filesystem-only placements: `region.ValidateFilesystem` accepts them for
+`ti fs`, while `region.Validate` keeps them out of TiDB Cloud Starter placement
 validation so `ti db` commands fail locally with an explicit Filesystem-only
 error. The built-in Filesystem endpoint mapping remains the authority on which
 placements have a Filesystem endpoint.

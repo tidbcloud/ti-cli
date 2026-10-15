@@ -58,6 +58,7 @@ var supported = map[string][]Region{
 // ValidateFilesystem; the built-in Filesystem endpoint mapping remains the
 // authority on whether a Filesystem endpoint exists for a placement.
 var filesystemOnly = map[string]struct{}{
+	placementKey(ProviderGCP, "us-east1"):    {},
 	placementKey(ProviderAzure, "centralus"): {},
 }
 

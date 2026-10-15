@@ -16,7 +16,6 @@ func TestValidateSupportedProviderRegions(t *testing.T) {
 		{ProviderAWS, "ap-northeast-1"},
 		{ProviderAWS, "ap-southeast-1"},
 		{ProviderAlibabaCloud, "ap-southeast-1"},
-		{ProviderGCP, "us-east1"},
 	}
 
 	for _, tt := range tests {
@@ -85,12 +84,23 @@ func TestValidateFilesystemAcceptsFilesystemPlacements(t *testing.T) {
 }
 
 func TestValidateRejectsFilesystemOnlyPlacementForStarter(t *testing.T) {
-	err := Validate(ProviderAzure, "centralus")
-	if err == nil {
-		t.Fatal("expected the Filesystem-only placement to be rejected for Starter")
-	}
-	if got := err.Error(); !strings.Contains(got, "azure-centralus") || !strings.Contains(got, "Filesystem only") {
-		t.Fatalf("unexpected Filesystem-only error %q", got)
+	for _, test := range []struct {
+		provider  string
+		region    string
+		canonical string
+	}{
+		{provider: ProviderGCP, region: "us-east1", canonical: "gcp-us-east1"},
+		{provider: ProviderAzure, region: "centralus", canonical: "azure-centralus"},
+	} {
+		t.Run(test.canonical, func(t *testing.T) {
+			err := Validate(test.provider, test.region)
+			if err == nil {
+				t.Fatal("expected the Filesystem-only placement to be rejected for Starter")
+			}
+			if got := err.Error(); !strings.Contains(got, test.canonical) || !strings.Contains(got, "Filesystem only") {
+				t.Fatalf("unexpected Filesystem-only error %q", got)
+			}
+		})
 	}
 }
 

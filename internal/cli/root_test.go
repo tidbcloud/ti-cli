@@ -1147,18 +1147,22 @@ func TestAzureFileSystemRegionOverride(t *testing.T) {
 	}
 }
 
-func TestAzureFilesystemOnlyRegionRejectedForStarter(t *testing.T) {
+func TestFilesystemOnlyRegionsRejectedForStarter(t *testing.T) {
 	withConfigEnv(t)
 
-	_, _, err := executeForTest("--region", "azure-centralus", "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "demo-cluster", "--dry-run")
-	if err == nil {
-		t.Fatal("expected the Filesystem-only placement to fail for TiDB Cloud Starter")
-	}
-	if got := apperr.ExitCodeFor(err); got != 2 {
-		t.Fatalf("expected exit code 2, got %d", got)
-	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "azure-centralus") || !strings.Contains(got, "Filesystem only") {
-		t.Fatalf("unexpected error message %q", got)
+	for _, regionCode := range []string{"gcp-us-east1", "azure-centralus"} {
+		t.Run(regionCode, func(t *testing.T) {
+			_, _, err := executeForTest("--region", regionCode, "db", "create-db-cluster", "--db-cluster-type", "starter", "--db-cluster-name", "demo-cluster", "--dry-run")
+			if err == nil {
+				t.Fatal("expected the Filesystem-only placement to fail for TiDB Cloud Starter")
+			}
+			if got := apperr.ExitCodeFor(err); got != 2 {
+				t.Fatalf("expected exit code 2, got %d", got)
+			}
+			if got := apperr.MessageFor(err); !strings.Contains(got, regionCode) || !strings.Contains(got, "Filesystem only") {
+				t.Fatalf("unexpected error message %q", got)
+			}
+		})
 	}
 }
 
