@@ -52,6 +52,19 @@ var supported = map[string][]Region{
 	},
 }
 
+// filesystemOnly marks placements that serve TiDB Cloud Filesystem without a
+// TiDB Cloud Starter placement. TiDB Cloud Starter resolution rejects them
+// through Validate, while Filesystem resolution accepts them through
+// ValidateFilesystem; the built-in Filesystem endpoint mapping remains the
+// authority on whether a Filesystem endpoint exists for a placement.
+var filesystemOnly = map[string]struct{}{
+	placementKey(ProviderAzure, "centralus"): {},
+}
+
+func placementKey(provider, regionCode string) string {
+	return provider + "\x00" + regionCode
+}
+
 var providerPrefixes = map[string]string{
 	ProviderPrefixAWS:                ProviderAWS,
 	ProviderPrefixAlibabaCloud:       ProviderAlibabaCloud,
@@ -116,8 +129,11 @@ func DefaultRegion(provider string) (string, error) {
 	return regions[0].Code, nil
 }
 
+// CanonicalCode returns the canonical placement code for an accepted
+// provider/region pair. It accepts every placement ti can address, including
+// Filesystem-only placements such as azure-centralus.
 func CanonicalCode(provider, nativeCode string) (string, error) {
-	if err := Validate(provider, nativeCode); err != nil {
+	if err := validatePlacement(provider, nativeCode); err != nil {
 		return "", err
 	}
 	prefix, ok := providerToPrefix[provider]
@@ -137,7 +153,7 @@ func ParsePlacementCode(code string) (Placement, error) {
 	if !ok {
 		return Placement{}, fmt.Errorf("unsupported cloud provider prefix %q in region code %q; supported prefixes: %s", prefix, code, joinProviderPrefixes())
 	}
-	if err := Validate(provider, nativeCode); err != nil {
+	if err := validatePlacement(provider, nativeCode); err != nil {
 		return Placement{}, err
 	}
 	regionLabel := ""
@@ -158,7 +174,28 @@ func ParsePlacementCode(code string) (Placement, error) {
 	}, nil
 }
 
+// Validate reports whether provider/regionCode is a supported TiDB Cloud
+// Starter placement. A placement that only serves TiDB Cloud Filesystem is
+// rejected with an explicit Filesystem-only error instead of being reported as
+// unknown.
 func Validate(provider, regionCode string) error {
+	if err := validatePlacement(provider, regionCode); err != nil {
+		return err
+	}
+	if _, ok := filesystemOnly[placementKey(provider, regionCode)]; ok {
+		return fmt.Errorf("placement %q serves TiDB Cloud Filesystem only, not TiDB Cloud Starter", providerToPrefix[provider]+"-"+regionCode)
+	}
+	return nil
+}
+
+// ValidateFilesystem reports whether provider/regionCode can be routed to a
+// TiDB Cloud Filesystem endpoint. Whether an endpoint exists for the placement
+// is decided by the built-in Filesystem region mapping.
+func ValidateFilesystem(provider, regionCode string) error {
+	return validatePlacement(provider, regionCode)
+}
+
+func validatePlacement(provider, regionCode string) error {
 	regions, ok := supported[provider]
 	if !ok {
 		return fmt.Errorf("unsupported cloud provider %q; supported providers: %s", provider, joinProviders())

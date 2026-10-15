@@ -133,7 +133,7 @@ func (r Resolver) ResolveIAM() (Endpoint, error) {
 }
 
 func (r Resolver) ResolveFS(provider, regionCode string) (Endpoint, error) {
-	if err := region.Validate(provider, regionCode); err != nil {
+	if err := region.ValidateFilesystem(provider, regionCode); err != nil {
 		return Endpoint{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
 

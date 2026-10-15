@@ -1009,6 +1009,14 @@ internal provider `aws`; `alicloud` maps to internal provider
 internal provider `azure`. Keep this mapping centralized in
 `internal/config/region`.
 
+Filesystem-only placements are marked in
+`internal/config/region.filesystemOnly`. `azure-centralus` is the current
+Filesystem-only placement: `region.ValidateFilesystem` accepts it for
+`ti fs`, while `region.Validate` keeps it out of TiDB Cloud Starter placement
+validation so `ti db` commands fail locally with an explicit Filesystem-only
+error. The built-in Filesystem endpoint mapping remains the authority on which
+placements have a Filesystem endpoint.
+
 Do not store secrets in logs, telemetry, generated docs examples, or test
 fixtures.
 

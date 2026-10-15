@@ -179,6 +179,29 @@ func TestResolveFSUsesBuiltInRegionMapping(t *testing.T) {
 	}
 }
 
+func TestResolveStarterRejectsFilesystemOnlyPlacement(t *testing.T) {
+	resolver := NewResolver()
+
+	endpoint, err := resolver.ResolveFS(region.ProviderAzure, "centralus")
+	if err != nil {
+		t.Fatalf("ResolveFS failed for the Filesystem-only placement: %v", err)
+	}
+	if endpoint.BaseURL != "https://azure-centralus.drive9.ai" || endpoint.RegionName != "azure-centralus" {
+		t.Fatalf("unexpected fs endpoint: %#v", endpoint)
+	}
+
+	if _, err := resolver.ResolveStarter(region.ProviderAzure, "centralus"); err == nil {
+		t.Fatal("expected Starter resolution to reject the Filesystem-only placement")
+	} else {
+		if got := apperr.ExitCodeFor(err); got != 2 {
+			t.Fatalf("expected exit code 2, got %d", got)
+		}
+		if message := apperr.MessageFor(err); !strings.Contains(message, "azure-centralus") || !strings.Contains(message, "Filesystem only") {
+			t.Fatalf("unexpected Starter error message %q", message)
+		}
+	}
+}
+
 func TestResolveFSUnsupportedManifestRegion(t *testing.T) {
 	resolver := Resolver{
 		FSManifest: &FSRegionManifest{
