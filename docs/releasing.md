@@ -6,7 +6,7 @@ The tag supplies the binary version through GoReleaser build flags. There is no 
 
 ## When Drive9 publishes a new CLI
 
-The ti archives contain `ti` and the README. The installers and updater download the `ti-drive9` companion separately, verify its SHA-256 checksum, and check required layer commands and mount flags before installation.
+The ti archives contain `ti` and the README. The installers and updater download the `ti-drive9` companion separately, verify its SHA-256 checksum, and check required layer commands, mount flags, and the Runtime exec command before installation.
 
 | Consumer | Companion binary source | Checksum file |
 | --- | --- | --- |
@@ -23,7 +23,7 @@ Do not claim that a ti rollback also rolls back Drive9. Windows users must rerun
 ## Prepare the release PR
 
 1. Check the latest published ti release and changes since that tag. Use the next patch version for a companion refresh with no ti interface change. Include only merged changes in the release notes.
-2. Check the Drive9 `version` file and checksum manifest at each source above. Confirm that they agree and contain all five ti targets: Darwin and Linux on amd64/arm64, and Windows on amd64. Download and verify the companion on the validation host, then inspect `ti-drive9 version`, `ti-drive9 fs layer help`, and `ti-drive9 mount --help`. The required capabilities include layer `fork`, `chain`, `delete` and mount `--layer`, `--checkpoint`.
+2. Check the Drive9 `version` file and checksum manifest at each source above. Confirm that they agree and contain all five ti targets: Darwin and Linux on amd64/arm64, and Windows on amd64. Download and verify the companion on the validation host, then inspect `ti-drive9 version`, `ti-drive9 fs layer help`, and `ti-drive9 mount --help`, and require `ti-drive9 exec --help` to exit zero. Do not parse Runtime help prose as an API. The required capabilities include layer `fork`, `chain`, `delete`, mount `--layer`, `--checkpoint`, and the Runtime command from Drive9 #1022. Record the exact Drive9 version, full Git hash, and each artifact checksum in the release evidence. Publish the Drive9 artifact before the ti release.
 3. Add `docs/release-notes/<tag>.md`, following recent notes. For a companion refresh, identify the tested Drive9 build, link the relevant upstream fixes, explain the mutable download source, and include upgrade and reinstall commands. Pass the ti version explicitly to the installer: downloading an installer from a tagged URL alone still defaults to installing the latest ti release.
 4. Validate the candidate with the repository commands:
 
@@ -41,7 +41,7 @@ Do not claim that a ti rollback also rolls back Drive9. Windows users must rerun
    make live-e2e
    ```
 
-   The default profile is `live-e2e`; use `LIVE_E2E_PROFILE=<profile>` to override it. These tests create and clean up temporary cloud resources. Check the output for skips caused by unavailable credentials, quota, or mount prerequisites. Ordinary unit/e2e tests use a fake companion and do not prove live Drive9 compatibility. Focused `make live-e2e-fs`, `make live-e2e-fs-git`, `make live-e2e-fs-journal`, and `make live-e2e-fs-vault` targets help investigate failures but do not replace the full release suite.
+   The default profile is `live-e2e`; use `LIVE_E2E_PROFILE=<profile>` to override it. These tests create and clean up temporary cloud resources. The selected Filesystem must have Runtime enabled. Check the output for skips caused by unavailable credentials, quota, or mount prerequisites. Ordinary unit/e2e tests use a fake companion and do not prove live Drive9 compatibility. A skipped `make live-e2e-runtime` is a failed Runtime release gate, not a pass. Focused `make live-e2e-fs`, `make live-e2e-fs-git`, `make live-e2e-fs-journal`, `make live-e2e-fs-vault`, and `make live-e2e-runtime` targets help investigate failures but do not replace the full release suite.
 6. Open a release PR and record the tested companion version, checksums, successful checks, and any validation still required. Merge after review and required checks pass.
 
 ## Publish after merge

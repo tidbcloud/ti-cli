@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/signal"
 	"sort"
 	"strings"
 )
@@ -51,6 +52,37 @@ func main() {
 		_ = file.Close()
 	}
 	args := os.Args[1:]
+	if hasPrefix(args, "exec", "--help") {
+		if os.Getenv("FAKE_DRIVE9_EXEC_MODE") == "incompatible" {
+			fmt.Fprintln(os.Stderr, "drive9: unknown command exec")
+			os.Exit(2)
+		}
+		fmt.Fprintln(os.Stderr, "usage: drive9 exec [flags] [--] command [arg...]")
+		return
+	}
+	if len(args) > 0 && args[0] == "exec" {
+		fmt.Fprintln(os.Stdout, "runtime stdout")
+		fmt.Fprintln(os.Stderr, "runtime stderr")
+		switch os.Getenv("FAKE_DRIVE9_EXEC_MODE") {
+		case "wait-for-signal":
+			signals := make(chan os.Signal, 1)
+			signal.Notify(signals, os.Interrupt)
+			defer signal.Stop(signals)
+			fmt.Fprintln(os.Stdout, "runtime ready")
+			<-signals
+			fmt.Fprintln(os.Stderr, "runtime canceled")
+			os.Exit(130)
+		case "nonzero":
+			os.Exit(23)
+		case "timeout":
+			os.Exit(124)
+		case "canceled":
+			os.Exit(130)
+		case "unknown":
+			os.Exit(255)
+		}
+		return
+	}
 	if hasPrefix(args, "fs", "layer", "help") {
 		fmt.Println("usage: drive9 fs layer <create|list|status|diff|checkpoint|rollback|commit|fork|chain|delete>")
 		return

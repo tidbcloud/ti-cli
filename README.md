@@ -179,6 +179,24 @@ Automatic mounting uses FUSE on Linux and WebDAV on macOS and Windows. macOS use
 
 Mount commands start the companion runtime in the background, wait until the mount is ready, and then return a structured result. Use `ti fs unmount-file-system` or `ti fs-vault unmount-vault` to end a mount. The public CLI does not expose a foreground mount mode.
 
+Run a command remotely without creating or cleaning up a sandbox yourself:
+
+```shell
+ti exec -w repo npm test
+ti exec -w repo 'npm ci && npm test'
+ti exec -w repo -e CI=1 -e GITHUB_TOKEN -t 20m -- make -j8 test
+```
+
+`ti exec` requires a `ti-drive9` companion that contains the Runtime command
+from Drive9 #1022. The installer and updater reject older companions before
+installing either binary. A published ti release must record the exact Drive9
+build and checksums and pass the real `make live-e2e-runtime` release gate;
+fake-companion tests or a skipped live test are not release evidence.
+
+`ti exec` mounts the selected Filesystem at `/workspace`, streams stdout and stderr live, and exits with the remote command's status. It uses the same `--file-system-id` / `TI_FS_FILE_SYSTEM_ID`, `--fs-token` / `TI_FS_TOKEN`, profile, and region resolution as other data-plane commands. Inside a matching ti-created FUSE mount, omit `-w`: pending local changes are drained first and the command runs in the corresponding directory. WebDAV mounts are not inferred, so macOS and Windows users normally pass `-w`.
+
+The Runtime flags intentionally match `drive9 exec`: `-w/--workspace`, `-C/--cwd`, repeatable `-e/--env`, `-t/--timeout`, `--fresh`, `--layer`, `--read-only`, and `-v/--verbose`. Flag parsing stops at the remote command; use `--` when the command itself starts with a dash. `--output`, `--query`, and `--dry-run` are not supported because output is a pair of live byte streams. Timeout exits `124`, Ctrl-C cancellation exits `130`, and an unknown outcome exits `255`. Executions are never retried: after `255`, inspect the workspace before deciding whether to run the command again.
+
 Mount readiness means the mounted path is readable: `ti fs mount-file-system` and `ti fs-vault mount-vault` keep polling the mount path until directory listing succeeds, bounded by `--ready-timeout` (default `30s`). If the mount path never becomes readable in time, the command fails with `fs.mount_ready_timeout`, the background mount is left running, and the mount locator is preserved so the matching unmount command can stop it.
 
 Filesystem layers can fork copy-on-write child timelines without copying a workspace. Layer and checkpoint mounts require FUSE; checkpoint mounts are always read-only. Drive9 does not support combining recursive copy with a layer, so seed a directory tree through a writable layer mount, drain it, and then create the checkpoint:
@@ -310,6 +328,7 @@ Structured commands output JSON by default. Use `--output text` for command-spec
 ```text
 ti configure
 ti update
+ti exec [flags] [--] command [arg...]
 
 ti db create-db-cluster --db-cluster-type starter
 ti db list-db-clusters --db-cluster-type starter
@@ -461,6 +480,7 @@ make live-e2e-fs
 make live-e2e-fs-git
 make live-e2e-fs-journal
 make live-e2e-fs-vault
+make live-e2e-runtime
 ```
 
 Run the complete live suite in one test process:
@@ -469,4 +489,4 @@ Run the complete live suite in one test process:
 make live-e2e
 ```
 
-Set `LIVE_E2E_PROFILE=<profile>` to use a profile other than `live-e2e`. The DB and FS suites perform real cloud mutations and clean up only resources created by the test run.
+Set `LIVE_E2E_PROFILE=<profile>` to use a profile other than `live-e2e`. The DB and FS suites perform real cloud mutations and clean up only resources created by the test run. `make live-e2e-runtime` and the complete `make live-e2e` suite require Runtime to be enabled for the selected Filesystem; they run harmless commands, verify separate stdout and stderr plus exact non-zero exit propagation, and fail instead of treating a disabled Runtime as proof of compatibility.

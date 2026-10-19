@@ -88,6 +88,7 @@ Implemented:
 - `ti configure`
 - `ti update --check`
 - `ti update`
+- `ti exec`
 - `ti db create-db-cluster`
 - `ti db list-db-clusters`
 - `ti db describe-db-cluster`
@@ -240,6 +241,7 @@ make live-e2e-fs
 make live-e2e-fs-git
 make live-e2e-fs-journal
 make live-e2e-fs-vault
+make live-e2e-runtime
 make live-e2e
 make release-snapshot
 make clean
@@ -263,7 +265,7 @@ delivery path before dropping only that temporary database. It must not run as
 part of `make test`, `make e2e`, or any live-e2e target.
 The `make live-e2e-<family>` targets build `bin/ti` and run only the selected
 top-level command family against the `live-e2e` profile by default. Keep
-configure, db, fs, fs-git, fs-journal, and fs-vault tests
+configure, db, fs, fs-git, fs-journal, fs-vault, and exec tests
 independently selectable. Do not make a focused family target run tests from a
 different family, and do not add separate mutating/non-mutating variants.
 `make live-e2e` runs every live family together in one test process and remains
@@ -368,6 +370,7 @@ internal/fs/tokenmgmt/      Filesystem token lifecycle and local rotation safety
 internal/oplog/             local JSONL operation log writer
 internal/output/            structured JSON/text/raw rendering
 internal/query/             JMESPath query application
+internal/runtimeexec/       one-shot Drive9 Runtime command adapter
 internal/secretinput/       no-echo secret input helper
 internal/settings/          global settings parsing and legacy logging migration
 internal/telemetry/         CLI eligibility, identity, event, and delivery path
@@ -392,12 +395,14 @@ without underscores.
 Follow these rules unless `docs/priciples.md` is updated:
 
 - The command tree is at most two levels: `ti <command> [subcommand]`.
-- `ti configure` and `ti update` are the only intentional top-level verb
-  exceptions. `ti configure` is the only interactive command.
+- `ti configure`, `ti update`, and `ti exec` are the only intentional top-level
+  verb exceptions. `ti exec` stays top-level to match the public Drive9
+  Runtime interaction. `ti configure` is the only interactive command.
 - Other top-level commands are nouns such as `db` and `fs`.
-- Use long flags only, for example `--profile` and `--db-cluster-name`.
-- Do not add short flags or one-letter aliases. The current CLI rejects short
-  flags before invoking Cobra.
+- Use long flags except for the exact `ti exec` compatibility aliases `-w`,
+  `-C`, `-e`, `-t`, and `-v`.
+- Do not add any other short flags or one-letter aliases. The CLI rejects short
+  flags outside `ti exec` before invoking Cobra.
 - `ti fs` Unix-style aliases are command-name aliases only. They must keep the
   same long flags, output modes, auth, permissions, dry-run behavior, and command
   handlers as their canonical commands.
@@ -1061,11 +1066,12 @@ Generated `ti fs` resource API keys live only in the ID-keyed credentials
 files under `~/.ti/fs_credentials/`. User-facing docs and commands must call
 these `ti fs` API keys or resource credentials, never reference implementation
 API keys. Filesystem data-plane
-commands route through the installer-managed Drive9 companion binary named
+commands and `ti exec` route through the installer-managed Drive9 companion binary named
 `ti-drive9`. ti owns profile loading, region resolution, credential storage,
 preflight errors, output/query handling, and command naming; Drive9 owns the
 filesystem runtime semantics for data-plane file operations, FUSE/WebDAV mount,
-FUSE mount drain, layer behavior, pack/unpack, Git workflows, journal, and vault.
+FUSE mount drain, layer behavior, pack/unpack, Git workflows, journal, vault,
+and Runtime execution/streaming/cancellation.
 Do not reintroduce a runtime fallback to ti-native fs behavior. Public fs
 service methods must route through the Drive9 companion path unconditionally;
 do not add switches such as `UseDrive9Companion` or hidden environment flags

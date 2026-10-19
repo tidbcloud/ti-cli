@@ -25,7 +25,7 @@ ifneq ($(strip $(TELEMETRY_ENDPOINT)),)
 LDFLAGS += -X $(MODULE)/internal/version.telemetryEndpoint=$(TELEMETRY_ENDPOINT)
 endif
 
-.PHONY: all build build-telemetry-backend build-telemetry-migrator test e2e telemetry-e2e live-e2e live-e2e-configure live-e2e-db live-e2e-fs live-e2e-fs-git live-e2e-fs-journal live-e2e-fs-vault release-snapshot clean
+.PHONY: all build build-telemetry-backend build-telemetry-migrator test e2e telemetry-e2e live-e2e live-e2e-configure live-e2e-db live-e2e-fs live-e2e-fs-git live-e2e-fs-journal live-e2e-fs-vault live-e2e-runtime release-snapshot clean
 
 all: build
 
@@ -55,7 +55,7 @@ telemetry-e2e: build build-telemetry-backend build-telemetry-migrator
 		TI_TEST_TELEMETRY_TIDB_DSN="$$TI_TEST_TELEMETRY_TIDB_DSN" TI_E2E_BIN="$(abspath $(TI_BIN))" TI_TELEMETRY_BACKEND_E2E_BIN="$(abspath $(TELEMETRY_BACKEND_BIN))" TI_TELEMETRY_MIGRATOR_E2E_BIN="$(abspath $(TELEMETRY_MIGRATOR_BIN))" TI_TELEMETRY_E2E=1 $(GO) test ./e2e -count=1 -v -run '^TestTelemetryDeliveryToTiDB$$'
 
 live-e2e: build
-	$(LIVE_E2E_RUN) -run '^TestLive'
+	TI_LIVE_RUNTIME=1 $(LIVE_E2E_RUN) -run '^TestLive'
 
 live-e2e-configure: build
 	$(LIVE_E2E_RUN) -run '^TestLive(ProfileConfigured|CLICommandSurface)$$'
@@ -74,6 +74,9 @@ live-e2e-fs-journal: build
 
 live-e2e-fs-vault: build
 	$(LIVE_E2E_RUN) -run '^TestLiveFSVault'
+
+live-e2e-runtime: build
+	TI_LIVE_RUNTIME=1 $(LIVE_E2E_RUN) -run '^TestLiveRuntimeExec$$'
 
 release-snapshot:
 	$(GORELEASER) release --snapshot --clean

@@ -1,5 +1,10 @@
 # CLI Foundation
 
+> **Runtime exception:** `0036-runtime-exec.md` adds top-level `ti exec` and
+> its exact `-w`, `-C`, `-e`, `-t`, and `-v` Drive9 compatibility flags. The
+> noun-first and long-only rules below remain authoritative for every other
+> command.
+
 ## Goal
 
 Establish the tdc CLI executable, command tree, global flags, help behavior,

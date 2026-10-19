@@ -745,8 +745,8 @@ func TestNoCommandDefinesShortFlags(t *testing.T) {
 		cmd.InitDefaultHelpFlag()
 		cmd.InitDefaultVersionFlag()
 	})
-	if HasShorthand(root) {
-		t.Fatal("expected command tree to avoid short flags")
+	if HasNonExecShorthand(root) {
+		t.Fatal("expected every command except ti exec to avoid short flags")
 	}
 }
 

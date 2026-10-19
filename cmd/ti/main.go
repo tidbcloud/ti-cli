@@ -24,7 +24,9 @@ func main() {
 	info := version.Current()
 	root := cli.NewRootCommand(info)
 	if err := cli.Execute(ctx, root, info, os.Args[1:], os.Stdout, os.Stderr, cli.WithHomeMigration()); err != nil {
-		fmt.Fprintf(os.Stderr, "\nti [ERROR]: %s\n", apperr.MessageFor(err))
+		if !apperr.IsSilent(err) {
+			fmt.Fprintf(os.Stderr, "\nti [ERROR]: %s\n", apperr.MessageFor(err))
+		}
 		os.Exit(apperr.ExitCodeFor(err))
 	}
 }

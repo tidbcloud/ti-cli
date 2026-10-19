@@ -34,6 +34,7 @@ const usageRequiredFlagAnnotation = "ti_usage_required"
 func init() {
 	cobra.AddTemplateFunc("usageSynopsis", usageSynopsis)
 	cobra.AddTemplateFunc("formattedFlagUsages", formattedFlagUsages)
+	cobra.AddTemplateFunc("formattedFlagUsagesFor", formattedFlagUsagesFor)
 }
 
 type Options struct {
@@ -88,6 +89,7 @@ func NewRootCommand(info version.Info) *cobra.Command {
 
 	root.AddCommand(newConfigureCommand(info))
 	root.AddCommand(newUpdateCommand(info))
+	root.AddCommand(newExecCommand(info))
 	root.AddCommand(newDBCommand(info))
 	root.AddCommand(newFSCommand(info))
 	root.AddCommand(newFSGitCommand(info))
@@ -201,6 +203,7 @@ func hasBusinessSubcommands(cmd *cobra.Command) bool {
 }
 
 func hasTelemetryExclusionFlag(args []string) bool {
+	args = execMetadataArgs(args)
 	for _, arg := range args {
 		if arg == "--" {
 			return false
@@ -335,6 +338,7 @@ func isUpdateInvocation(args []string) bool {
 }
 
 func debugRequested(args []string) bool {
+	args = execMetadataArgs(args)
 	for _, arg := range args {
 		if arg == "--debug" || strings.EqualFold(arg, "--debug=true") {
 			return true
@@ -348,6 +352,9 @@ func commandEvent(root, cmd *cobra.Command, err error, duration time.Duration) o
 		cmd = root
 	}
 	profileName, regionCode := commandProfileSummary(cmd)
+	if cmd != nil && cmd.Name() == "exec" {
+		profileName = ""
+	}
 	return oplog.Event{
 		Type:                           "command",
 		Version:                        rootAnnotation(root, "ti.version"),
@@ -423,6 +430,9 @@ func commandProfileSummary(cmd *cobra.Command) (string, string) {
 }
 
 func rejectShortFlags(args []string) error {
+	if isExecInvocation(args) {
+		return nil
+	}
 	for _, arg := range args {
 		if arg == "--" {
 			return nil
@@ -818,9 +828,12 @@ func normalizeError(err error) error {
 	}
 }
 
-func HasShorthand(cmd *cobra.Command) bool {
+func HasNonExecShorthand(cmd *cobra.Command) bool {
 	found := false
 	visitCommands(cmd, func(current *cobra.Command) {
+		if current.Name() == "exec" {
+			return
+		}
 		for _, set := range []*pflag.FlagSet{
 			current.Flags(),
 			current.PersistentFlags(),
@@ -890,13 +903,16 @@ func usageSynopsis(cmd *cobra.Command) string {
 		return ""
 	}
 	lines := []string{"  " + usageCommandLine(cmd)}
-	lines = append(lines, usageFlagLines(cmd.LocalFlags())...)
-	lines = append(lines, usageFlagLines(cmd.InheritedFlags())...)
+	lines = append(lines, usageFlagLinesFor(cmd, cmd.LocalFlags())...)
+	lines = append(lines, usageFlagLinesFor(cmd, cmd.InheritedFlags())...)
 	return strings.Join(lines, "\n")
 }
 
 func usageCommandLine(cmd *cobra.Command) string {
 	line := cmd.CommandPath()
+	if cmd.Name() == "exec" {
+		return line + " [flags] [--] command [arg...]"
+	}
 	if cmd.HasAvailableSubCommands() {
 		return line + " [command]"
 	}
@@ -904,13 +920,17 @@ func usageCommandLine(cmd *cobra.Command) string {
 }
 
 func usageFlagLines(flags *pflag.FlagSet) []string {
+	return usageFlagLinesFor(nil, flags)
+}
+
+func usageFlagLinesFor(cmd *cobra.Command, flags *pflag.FlagSet) []string {
 	if flags == nil {
 		return nil
 	}
 	required := make([]string, 0)
 	optional := make([]string, 0)
 	flags.VisitAll(func(flag *pflag.Flag) {
-		if flag == nil || flag.Hidden {
+		if !usageFlagVisible(cmd, flag) {
 			return
 		}
 		line := "    " + usageFlagSegment(flag)
@@ -933,6 +953,9 @@ func usageFlagRequired(flag *pflag.Flag) bool {
 
 func usageFlagSegment(flag *pflag.Flag) string {
 	segment := "--" + flag.Name
+	if flag.Shorthand != "" {
+		segment = "-" + flag.Shorthand + ", " + segment
+	}
 	if flag.NoOptDefVal != "" {
 		return segment
 	}
@@ -961,6 +984,10 @@ func usageFlagValueType(flag *pflag.Flag) string {
 }
 
 func formattedFlagUsages(flags *pflag.FlagSet) string {
+	return formattedFlagUsagesFor(nil, flags)
+}
+
+func formattedFlagUsagesFor(cmd *cobra.Command, flags *pflag.FlagSet) string {
 	if flags == nil {
 		return ""
 	}
@@ -971,7 +998,7 @@ func formattedFlagUsages(flags *pflag.FlagSet) string {
 	lines := make([]flagUsage, 0)
 	maxLabelLength := 0
 	flags.VisitAll(func(flag *pflag.Flag) {
-		if flag == nil || flag.Hidden {
+		if !usageFlagVisible(cmd, flag) {
 			return
 		}
 		label := "      " + usageFlagSegment(flag)
@@ -994,6 +1021,13 @@ func formattedFlagUsages(flags *pflag.FlagSet) string {
 		fmt.Fprintf(&result, "%-*s   %s\n", maxLabelLength, line.label, line.description)
 	}
 	return result.String()
+}
+
+func usageFlagVisible(cmd *cobra.Command, flag *pflag.Flag) bool {
+	if flag == nil || flag.Hidden {
+		return false
+	}
+	return cmd == nil || cmd.Name() != "exec" || (flag.Name != "output" && flag.Name != "query")
 }
 
 func formattedFlagDefault(flag *pflag.Flag) string {
@@ -1042,10 +1076,10 @@ Commands:
 {{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
 
 Flags:
-{{formattedFlagUsages .LocalFlags | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
+{{formattedFlagUsagesFor . .LocalFlags | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
 
 Global Flags:
-{{formattedFlagUsages .InheritedFlags | trimTrailingWhitespaces}}{{end}}
+{{formattedFlagUsagesFor . .InheritedFlags | trimTrailingWhitespaces}}{{end}}
 `
 
 const usageTemplate = `Usage:
@@ -1053,8 +1087,8 @@ const usageTemplate = `Usage:
   {{.CommandPath}} help [command]{{end}}{{if .HasAvailableLocalFlags}}
 
 Flags:
-{{formattedFlagUsages .LocalFlags | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
+{{formattedFlagUsagesFor . .LocalFlags | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
 
 Global Flags:
-{{formattedFlagUsages .InheritedFlags | trimTrailingWhitespaces}}{{end}}
+{{formattedFlagUsagesFor . .InheritedFlags | trimTrailingWhitespaces}}{{end}}
 `

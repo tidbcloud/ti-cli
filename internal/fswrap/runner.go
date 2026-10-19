@@ -108,6 +108,56 @@ func (r Runner) Run(ctx context.Context, opts RunOptions) (Result, error) {
 	return Result{CompanionPath: path, Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, nil
 }
 
+// RunStreaming starts one companion command with direct stdin/stdout/stderr
+// wiring. It deliberately does not bind the process lifetime to ctx: the
+// Runtime companion owns the first-interrupt cancel-and-drain protocol and a
+// second interrupt detaches. The parent and child receive terminal signals in
+// the same foreground process group, so killing the child on ctx cancellation
+// would turn the first Ctrl-C into an unsafe detach.
+func (r Runner) RunStreaming(ctx context.Context, opts RunOptions) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	default:
+	}
+
+	path, err := r.locateCompanion()
+	if err != nil {
+		return err
+	}
+	homeDir, err := r.homeDir(opts)
+	if err != nil {
+		return err
+	}
+	if err := prepareHome(homeDir); err != nil {
+		return err
+	}
+	env, err := r.drive9Env(homeDir, opts)
+	if err != nil {
+		return err
+	}
+
+	cmd := exec.Command(path, opts.Args...)
+	cmd.Env = env
+	cmd.Stdin = r.Stdin
+	cmd.Stdout = r.Stdout
+	cmd.Stderr = r.Stderr
+	if r.Debug && r.DebugWriter != nil {
+		_, _ = fmt.Fprintln(r.DebugWriter, "ti [DEBUG]: starting Runtime companion")
+	}
+	if err := cmd.Start(); err != nil {
+		return apperr.Wrap("runtime.companion_failed", "runtime", 1, "cannot start the Runtime companion; reinstall ti or set TI_DRIVE9_BIN to a compatible drive9 binary", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
+			return apperr.SilentExit("runtime.exec_exit", exitErr.ExitCode())
+		}
+		return apperr.New("runtime.outcome_unknown", "runtime", 255, "the Runtime companion ended without a confirmed result; the command may have run, so inspect the workspace before retrying")
+	}
+	return nil
+}
+
 func (r Runner) CompanionInfo(ctx context.Context, profile *config.Profile) (CompanionInfo, error) {
 	result, err := r.Run(ctx, RunOptions{
 		Profile:         profile,
@@ -207,7 +257,7 @@ func (r Runner) locateCompanion() (string, error) {
 			return resolved, nil
 		}
 	}
-	return "", apperr.New("fs.companion_missing", "runtime", 1, "ti fs requires the Drive9 companion binary; reinstall ti or set TI_DRIVE9_BIN to a compatible drive9 binary")
+	return "", apperr.New("fs.companion_missing", "runtime", 1, "ti requires the Drive9 companion binary; reinstall ti or set TI_DRIVE9_BIN to a compatible drive9 binary")
 }
 
 func (r Runner) homeDir(opts RunOptions) (string, error) {

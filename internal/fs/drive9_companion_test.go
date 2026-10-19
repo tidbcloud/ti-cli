@@ -568,7 +568,7 @@ func TestDrive9MissingCompanionIsActionable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected missing companion error")
 	}
-	if message := apperr.MessageFor(err); !strings.Contains(message, "ti fs requires the Drive9 companion binary") {
+	if message := apperr.MessageFor(err); !strings.Contains(message, "ti requires the Drive9 companion binary") {
 		t.Fatalf("unexpected error: %q", message)
 	}
 }
