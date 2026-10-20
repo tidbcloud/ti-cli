@@ -520,6 +520,8 @@ Follow these rules unless `docs/priciples.md` is updated:
 
 Implemented command behavior:
 
+- `ti exec [flags] [--] command [arg...]`: streamed remote stdout/stderr, exact exit status, explicit Filesystem selection, and no retries; see `docs/spec/0036-runtime-exec.md` for the pending release gate
+
 - `ti` without a command returns `cli.missing_command` with exit code `2` and
   an AWS-style compact two-level usage synopsis on stderr
 - `ti configure`
@@ -673,6 +675,8 @@ Implemented command behavior:
 - `ti fs-git remove-git-worktree --worktree-path ./workspace/tidb-feature --force`
 
 Registered command surface:
+
+- `ti exec [flags] [--] command [arg...]`
 
 - `ti update --check`
 - `ti update`

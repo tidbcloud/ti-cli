@@ -291,7 +291,7 @@ func TestIsUpdateInvocation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := isUpdateInvocation(test.args); got != test.want {
+			if got := inspectInvocation(NewRootCommand(version.Info{}), test.args).update; got != test.want {
 				t.Fatalf("isUpdateInvocation(%q) = %t, want %t", test.args, got, test.want)
 			}
 		})

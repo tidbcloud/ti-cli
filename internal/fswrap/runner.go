@@ -16,6 +16,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/interrupt"
 )
 
 const (
@@ -108,12 +109,44 @@ func (r Runner) Run(ctx context.Context, opts RunOptions) (Result, error) {
 	return Result{CompanionPath: path, Stdout: stdout.Bytes(), Stderr: stderr.Bytes()}, nil
 }
 
-// RunStreaming starts one companion command with direct stdin/stdout/stderr
-// wiring. It deliberately does not bind the process lifetime to ctx: the
-// Runtime companion owns the first-interrupt cancel-and-drain protocol and a
-// second interrupt detaches. The parent and child receive terminal signals in
-// the same foreground process group, so killing the child on ctx cancellation
-// would turn the first Ctrl-C into an unsafe detach.
+// Probe runs a local capability check without credentials, stdin, or persistent
+// companion state. The caller supplies a bounded context.
+func (r Runner) Probe(ctx context.Context, args ...string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path, err := r.locateCompanion()
+	if err != nil {
+		return err
+	}
+	home, err := os.MkdirTemp("", "ti-companion-probe-")
+	if err != nil {
+		return apperr.Wrap("runtime.probe_failed", "runtime", 1, "cannot prepare the local Runtime capability check", err)
+	}
+	defer os.RemoveAll(home)
+	env, err := r.drive9Env(home, RunOptions{})
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, path, args...)
+	isolateProcess(cmd)
+	cmd.Env = env
+	err = cmd.Run()
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if err == nil {
+		return nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
+		return apperr.Wrap("runtime.companion_incompatible", "runtime", 1, "the installed Runtime companion does not support `ti exec`; update or reinstall ti", err)
+	}
+	return apperr.Wrap("runtime.companion_failed", "runtime", 1, "cannot run the Runtime companion; update or reinstall ti", err)
+}
+
+// RunStreaming forwards output and signals without killing the companion on
+// cancellation. The companion owns cancel-and-drain and second-signal detach.
 func (r Runner) RunStreaming(ctx context.Context, opts RunOptions) error {
 	select {
 	case <-ctx.Done():
@@ -139,16 +172,20 @@ func (r Runner) RunStreaming(ctx context.Context, opts RunOptions) error {
 
 	cmd := exec.Command(path, opts.Args...)
 	cmd.Env = env
+	isolateProcess(cmd)
 	cmd.Stdin = r.Stdin
 	cmd.Stdout = r.Stdout
 	cmd.Stderr = r.Stderr
 	if r.Debug && r.DebugWriter != nil {
 		_, _ = fmt.Fprintln(r.DebugWriter, "ti [DEBUG]: starting Runtime companion")
 	}
-	if err := cmd.Start(); err != nil {
-		return apperr.Wrap("runtime.companion_failed", "runtime", 1, "cannot start the Runtime companion; reinstall ti or set TI_DRIVE9_BIN to a compatible drive9 binary", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	if err := cmd.Wait(); err != nil {
+	if err := cmd.Start(); err != nil {
+		return apperr.Wrap("runtime.companion_failed", "runtime", 1, "cannot start the Runtime companion; update or reinstall ti", err)
+	}
+	if err := waitStreaming(ctx, cmd); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
 			return apperr.SilentExit("runtime.exec_exit", exitErr.ExitCode())
@@ -156,6 +193,35 @@ func (r Runner) RunStreaming(ctx context.Context, opts RunOptions) error {
 		return apperr.New("runtime.outcome_unknown", "runtime", 255, "the Runtime companion ended without a confirmed result; the command may have run, so inspect the workspace before retrying")
 	}
 	return nil
+}
+
+func waitStreaming(ctx context.Context, cmd *exec.Cmd) error {
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	signals, canceled := interrupt.Signals(ctx), ctx.Done()
+	for {
+		var sig os.Signal
+		select {
+		case err := <-done:
+			return err
+		case sig = <-signals:
+		case <-canceled:
+			canceled = nil
+			if interrupt.FromSignal(ctx) {
+				continue
+			}
+			sig = os.Interrupt
+		}
+		if err := interruptProcess(cmd.Process, sig); err != nil {
+			if errors.Is(err, os.ErrProcessDone) {
+				return <-done
+			}
+			// Losing local observation cannot establish that remote work stopped.
+			_ = cmd.Process.Kill()
+			<-done
+			return err
+		}
+	}
 }
 
 func (r Runner) CompanionInfo(ctx context.Context, profile *config.Profile) (CompanionInfo, error) {
@@ -257,7 +323,7 @@ func (r Runner) locateCompanion() (string, error) {
 			return resolved, nil
 		}
 	}
-	return "", apperr.New("fs.companion_missing", "runtime", 1, "ti requires the Drive9 companion binary; reinstall ti or set TI_DRIVE9_BIN to a compatible drive9 binary")
+	return "", apperr.New("fs.companion_missing", "runtime", 1, "ti requires the Drive9 companion binary; update or reinstall ti")
 }
 
 func (r Runner) homeDir(opts RunOptions) (string, error) {

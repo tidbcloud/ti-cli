@@ -2,9 +2,9 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
+
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/runtimeexec"
 	"github.com/tidbcloud/ti-cli/internal/version"
@@ -25,13 +25,25 @@ func newExecCommand(info version.Info) *cobra.Command {
 	flags := &execFlags{}
 	cmd := newCommand(commandSpec{
 		Use:   "exec [flags] [--] command [arg...]",
-		Short: "Run a command in a sandbox with the selected Filesystem at /workspace.",
-		Long: `Run one command in a remote sandbox with the selected TiDB Cloud Filesystem at /workspace.
+		Short: "Run a command in a remote sandbox.",
+		Long: `Run a command in a remote sandbox.
 
-Output streams live and the remote command's exit status is preserved. Inside
-a matching local FUSE mount, ti uploads pending changes and runs in the same
-directory. Elsewhere, use -w to select a remote workspace directory. Runtime
-executions are never retried because a lost response may mean the command ran.`,
+The selected Filesystem is available at /workspace. Standard output and
+standard error stream live. Only files under /workspace persist.
+
+Select a Filesystem with --file-system-id, TI_FS_FILE_SYSTEM_ID, or an explicit
+FS token. After selecting it, use -w to choose a Filesystem directory. Inside
+a matching local FUSE mount, omit -w to drain pending writes and follow the
+local directory. Explicit -w does not drain local writes. WebDAV mounts need -w.
+
+Examples:
+  ti exec --file-system-id <id> -w repo npm test
+  ti exec -w repo 'npm ci && npm test'
+  ti exec -w repo -e CI=1 -t 20m -- make -j8 test
+
+The last two examples assume a Filesystem is selected through the environment.
+Remote stdin and interactive terminals are not supported. Executions are never
+retried: a lost response may mean the command ran.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return apperr.New("runtime.missing_command", "usage", 2, "missing command; see `ti exec --help`")
@@ -81,12 +93,13 @@ executions are never retried because a lost response may mean the command ran.`,
 			})
 		},
 	}, info)
+	cmd.Annotations = map[string]string{execCommandAnnotation: "true"}
 	cmd.Args = func(_ *cobra.Command, _ []string) error { return nil }
-	cmd.Flags().StringVarP(&flags.workspace, "workspace", "w", "", "Drive9 directory to run in; default: the matching local FUSE mount directory, otherwise the drive root.")
+	cmd.Flags().StringVarP(&flags.workspace, "workspace", "w", "", "Filesystem directory to run in; defaults to the matching FUSE directory or the Filesystem root.")
 	cmd.Flags().StringVarP(&flags.cwd, "cwd", "C", "", "Subdirectory of the selected workspace to run in.")
 	cmd.Flags().StringArrayVarP(&flags.environment, "env", "e", nil, "Set KEY=VALUE remotely, or copy a local KEY; repeatable.")
 	cmd.Flags().StringVarP(&flags.timeout, "timeout", "t", "", "Stop the command after this duration; the server may use a shorter limit.")
-	cmd.Flags().BoolVar(&flags.fresh, "fresh", false, "Start in a new sandbox instead of reusing a warm sandbox.")
+	cmd.Flags().BoolVar(&flags.fresh, "fresh", false, "Start a new sandbox; persisted Filesystem data is kept.")
 	cmd.Flags().StringVar(&flags.layer, "layer", "", "Use a LayerFS layer ID, name, or tag:key=value reference.")
 	cmd.Flags().BoolVar(&flags.readOnly, "read-only", false, "Mount the workspace read-only.")
 	cmd.Flags().BoolVarP(&flags.verbose, "verbose", "v", false, "Show the sandbox, working directory, and duration.")
@@ -94,60 +107,4 @@ executions are never retried because a lost response may mean the command ran.`,
 	cmd.Flags().String("fs-token", "", "File system token. Prefer TI_FS_TOKEN so the secret does not enter process arguments.")
 	cmd.Flags().SetInterspersed(false)
 	return cmd
-}
-
-func isExecInvocation(args []string) bool {
-	_, command := invocationCommandIndex(args)
-	return command == "exec"
-}
-
-func invocationCommandIndex(args []string) (int, string) {
-	valueFlags := map[string]struct{}{
-		"profile": {}, "region": {}, "output": {}, "query": {},
-	}
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		if arg == "--" {
-			return -1, ""
-		}
-		if strings.HasPrefix(arg, "--") {
-			name, _, hasValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
-			if _, ok := valueFlags[name]; ok && !hasValue && index+1 < len(args) {
-				index++
-			}
-			continue
-		}
-		if strings.HasPrefix(arg, "-") {
-			return -1, ""
-		}
-		return index, arg
-	}
-	return -1, ""
-}
-
-func execMetadataArgs(args []string) []string {
-	execIndex, command := invocationCommandIndex(args)
-	if command != "exec" {
-		return args
-	}
-	valueFlags := map[string]struct{}{
-		"w": {}, "workspace": {}, "C": {}, "cwd": {}, "e": {}, "env": {},
-		"t": {}, "timeout": {}, "layer": {}, "file-system-id": {}, "fs-token": {},
-		"profile": {}, "region": {}, "output": {}, "query": {},
-	}
-	for index := execIndex + 1; index < len(args); index++ {
-		arg := args[index]
-		if arg == "--" {
-			return args[:index]
-		}
-		if !strings.HasPrefix(arg, "-") || arg == "-" {
-			return args[:index]
-		}
-		name := strings.TrimLeft(arg, "-")
-		name, _, hasValue := strings.Cut(name, "=")
-		if _, ok := valueFlags[name]; ok && !hasValue && index+1 < len(args) {
-			index++
-		}
-	}
-	return args
 }

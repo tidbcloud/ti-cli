@@ -1320,7 +1320,7 @@ func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {
 
 	incompatible := runTIWithInput(t, bin, "", append(baseEnv, "FAKE_DRIVE9_EXEC_MODE=incompatible"), "exec", "must-not-run")
 	incompatible.wantExitCode(1)
-	incompatible.wantStderrContains("installed ti-drive9 companion does not support `ti exec`")
+	incompatible.wantStderrContains("installed Runtime companion does not support `ti exec`")
 	incompatible.wantStdoutNotContains("runtime stdout")
 
 	incompatibleWithoutSelectionRecord := filepath.Join(t.TempDir(), "incompatible-without-selection.jsonl")
@@ -1329,7 +1329,7 @@ func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {
 		"FAKE_DRIVE9_EXEC_MODE=incompatible", "TI_REGION_CODE=aws-us-east-1",
 	}, "exec", "must-not-resolve")
 	incompatibleWithoutSelection.wantExitCode(1)
-	incompatibleWithoutSelection.wantStderrContains("installed ti-drive9 companion does not support `ti exec`")
+	incompatibleWithoutSelection.wantStderrContains("installed Runtime companion does not support `ti exec`")
 	incompatibleWithoutSelection.wantStderrNotContains("file system ID is required")
 	incompatibleWithoutSelectionCalls := readFakeDrive9Calls(t, incompatibleWithoutSelectionRecord)
 	if len(incompatibleWithoutSelectionCalls) != 1 || strings.Join(incompatibleWithoutSelectionCalls[0].Args, "\x00") != "exec\x00--help" {

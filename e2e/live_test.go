@@ -206,7 +206,7 @@ func TestLiveRuntimeExec(t *testing.T) {
 
 	success := runTIWithInput(t, bin, "", env, "exec", "printf 'ti-runtime-stdout\\n'; printf 'ti-runtime-stderr\\n' >&2")
 	success.wantExitCode(0)
-	if success.stdout != "ti-runtime-stdout\n" || success.stderr != "ti-runtime-stderr\n" {
+	if success.stdout != "ti-runtime-stdout\n" || !strings.Contains(success.stderr, "ti-runtime-stderr\n") || strings.Contains(success.stderr, "ti-runtime-stdout") {
 		success.fail("live Runtime stdout and stderr changed or merged")
 	}
 

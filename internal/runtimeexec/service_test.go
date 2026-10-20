@@ -12,11 +12,13 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/fswrap"
 )
 
 func TestCompanionArgsPreserveRuntimeContract(t *testing.T) {
@@ -305,6 +307,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+ "io"
+ "time"
 )
 
 type record struct {
@@ -329,6 +333,8 @@ func main() {
 	}
 	mode := os.Getenv("TI_TEST_RUNTIME_MODE")
 	if kind == "help" {
+        if mode == "slow-help" { time.Sleep(time.Minute) }
+        if mode == "read-help" { if data, _ := io.ReadAll(os.Stdin); len(data) != 0 { os.Exit(9) } }
 		if mode == "incompatible" { fmt.Fprintln(os.Stderr, "drive9: unknown command exec"); os.Exit(2) }
 		if mode == "alternate-help" { fmt.Fprintln(os.Stderr, "human help may change"); return }
 		fmt.Fprintln(os.Stderr, "usage: drive9 exec [flags] [--] command [arg...]")
@@ -345,3 +351,64 @@ func main() {
 	}
 }
 `
+
+func TestPreflightIsDisposableAndDoesNotReadInput(t *testing.T) {
+	companion, record := buildRuntimeCompanion(t)
+	home := t.TempDir()
+	t.Setenv("TI_TEST_RUNTIME_RECORD", record)
+	t.Setenv("TI_TEST_RUNTIME_MODE", "read-help")
+	input := strings.NewReader("input must not reach capability check")
+	service := testService(home, companion, &bytes.Buffer{}, &bytes.Buffer{})
+	service.Stdin = input
+	if _, err := service.Preflight(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if input.Len() == 0 {
+		t.Fatal("preflight consumed user input")
+	}
+	calls := readRuntimeRecords(t, record)
+	if len(calls) != 1 {
+		t.Fatalf("calls=%d", len(calls))
+	}
+	if _, err := os.Stat(calls[0].Home); !os.IsNotExist(err) {
+		t.Fatalf("probe home still exists: %v", err)
+	}
+	entries, err := os.ReadDir(home)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("persistent home changed: entries=%v err=%v", entries, err)
+	}
+}
+
+func TestPreflightCancellationAndDeadline(t *testing.T) {
+	companion, record := buildRuntimeCompanion(t)
+	t.Setenv("TI_TEST_RUNTIME_RECORD", record)
+	t.Setenv("TI_TEST_RUNTIME_MODE", "slow-help")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := (Service{CompanionPath: companion}).Preflight(ctx); done <- err }()
+	deadline := time.After(10 * time.Second)
+	for {
+		if _, err := os.Stat(record); err == nil {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("probe never started")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancellation=%v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("probe did not cancel")
+	}
+	err := requireExecCapability(context.Background(), fswrap.Runner{CompanionPath: companion}, 100*time.Millisecond)
+	if apperr.CodeFor(err) != "runtime.capability_timeout" {
+		t.Fatalf("timeout=%v", err)
+	}
+}

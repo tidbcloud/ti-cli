@@ -77,3 +77,18 @@ gh release view v0.2.8 --repo tidbcloud/ti-cli --json assets --jq '.assets[].nam
 Expect five ti archives (`ti_darwin_amd64.tar.gz`, `ti_darwin_arm64.tar.gz`, `ti_linux_amd64.tar.gz`, `ti_linux_arm64.tar.gz`, `ti_windows_amd64.zip`), `ti_checksums.txt`, `install.sh`, and `install.ps1`. Check that the release notes match the committed file and the stable release is marked latest.
 
 Use the new release notes' version-specific installer commands in a disposable environment, and exercise `ti update --target-version v0.2.8` from the previous release in a separate ti-owned installation. Verify both `ti --version` and the sibling `ti-drive9 version`; a successful ti version check alone does not identify the installed companion.
+
+## Runtime validation status
+
+The Runtime source integration and local regression tests do not establish
+compatibility with a distributed companion. Spec
+[0036-runtime-exec.md](spec/0036-runtime-exec.md) remains pending until the
+artifact identity, checksums, and successful live release gates are recorded.
+Cancellation and unknown-outcome tests using a controlled companion validate
+local signal forwarding and status propagation only. Verify real timeout,
+cancellation/drain, and interrupted-response behavior against the Runtime
+service before marking that release gate complete.
+
+Keep Runtime in the aggregate `make live-e2e` gate. Use the focused family
+targets for unrelated development; do not turn a skipped Runtime run into a
+successful release check.

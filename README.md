@@ -179,23 +179,24 @@ Automatic mounting uses FUSE on Linux and WebDAV on macOS and Windows. macOS use
 
 Mount commands start the companion runtime in the background, wait until the mount is ready, and then return a structured result. Use `ti fs unmount-file-system` or `ti fs-vault unmount-vault` to end a mount. The public CLI does not expose a foreground mount mode.
 
-Run a command remotely without creating or cleaning up a sandbox yourself:
+Run a command in a remote sandbox:
 
 ```shell
-ti exec -w repo npm test
+ti exec --file-system-id <file-system-id> -w repo npm test
+# With TI_FS_FILE_SYSTEM_ID or TI_FS_TOKEN already set:
 ti exec -w repo 'npm ci && npm test'
 ti exec -w repo -e CI=1 -e GITHUB_TOKEN -t 20m -- make -j8 test
 ```
 
-`ti exec` requires a `ti-drive9` companion that contains the Runtime command
-from Drive9 #1022. The installer and updater reject older companions before
-installing either binary. A published ti release must record the exact Drive9
-build and checksums and pass the real `make live-e2e-runtime` release gate;
-fake-companion tests or a skipped live test are not release evidence.
+The selected Filesystem is available at `/workspace`. Standard output and standard error stream live, and the remote command's exact exit status is preserved. Only files under `/workspace` persist; `--fresh` starts a new sandbox without erasing those files. Remote stdin and interactive terminals are not supported.
 
-`ti exec` mounts the selected Filesystem at `/workspace`, streams stdout and stderr live, and exits with the remote command's status. It uses the same `--file-system-id` / `TI_FS_FILE_SYSTEM_ID`, `--fs-token` / `TI_FS_TOKEN`, profile, and region resolution as other data-plane commands. Inside a matching ti-created FUSE mount, omit `-w`: pending local changes are drained first and the command runs in the corresponding directory. WebDAV mounts are not inferred, so macOS and Windows users normally pass `-w`.
+Select the Filesystem with `--file-system-id` / `TI_FS_FILE_SYSTEM_ID` or an explicit `--fs-token` / `TI_FS_TOKEN`, using the same profile and region resolution as other data-plane commands. `-w` selects a working directory within the Filesystem, not an isolation boundary. Inside a matching ti-created FUSE mount, omit `-w` to drain pending local writes and run in the corresponding directory. Explicit `-w` does not drain local writes. WebDAV mounts are not inferred; use `-w` there.
 
-The Runtime flags intentionally match `drive9 exec`: `-w/--workspace`, `-C/--cwd`, repeatable `-e/--env`, `-t/--timeout`, `--fresh`, `--layer`, `--read-only`, and `-v/--verbose`. Flag parsing stops at the remote command; use `--` when the command itself starts with a dash. `--output`, `--query`, and `--dry-run` are not supported because output is a pair of live byte streams. Timeout exits `124`, Ctrl-C cancellation exits `130`, and an unknown outcome exits `255`. Executions are never retried: after `255`, inspect the workspace before deciding whether to run the command again.
+Execution flags are `-w/--workspace`, `-C/--cwd`, repeatable `-e/--env`, `-t/--timeout`, `--fresh`, `--layer`, `--read-only`, and `-v/--verbose`. Put them before the remote command. `ti exec help` and `ti exec --help` show local help; `ti exec -w repo help` and `ti exec -- help` run a remote command named `help`. Arguments after the remote command, including `--help`, are passed unchanged. `--output`, `--query`, and `--dry-run` are not supported.
+
+The first Ctrl-C or SIGTERM requests cancellation and waits for workspace drain. A second interruption detaches; the remote command may still be running. Timeout uses status `124`, cancellation `130`, and an unknown outcome `255`. A remote command can also return any of these statuses, or ti's own error statuses such as `2`, `3`, `4`, and `5`; the exit code alone cannot identify the source. Executions are never retried. After an unknown outcome, inspect the workspace before deciding whether to run the command again.
+
+Use `ti update` or reinstall ti if the local capability check reports an incompatible companion. Release validation is described in [Releasing](docs/releasing.md).
 
 Mount readiness means the mounted path is readable: `ti fs mount-file-system` and `ti fs-vault mount-vault` keep polling the mount path until directory listing succeeds, bounded by `--ready-timeout` (default `30s`). If the mount path never becomes readable in time, the command fails with `fs.mount_ready_timeout`, the background mount is left running, and the mount locator is preserved so the matching unmount command can stop it.
 

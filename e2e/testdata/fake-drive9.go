@@ -8,6 +8,8 @@ import (
 	"os/signal"
 	"sort"
 	"strings"
+	"syscall"
+	"time"
 )
 
 type call struct {
@@ -53,6 +55,9 @@ func main() {
 	}
 	args := os.Args[1:]
 	if hasPrefix(args, "exec", "--help") {
+		if os.Getenv("FAKE_DRIVE9_EXEC_MODE") == "slow-help" {
+			time.Sleep(15 * time.Second)
+		}
 		if os.Getenv("FAKE_DRIVE9_EXEC_MODE") == "incompatible" {
 			fmt.Fprintln(os.Stderr, "drive9: unknown command exec")
 			os.Exit(2)
@@ -64,12 +69,25 @@ func main() {
 		fmt.Fprintln(os.Stdout, "runtime stdout")
 		fmt.Fprintln(os.Stderr, "runtime stderr")
 		switch os.Getenv("FAKE_DRIVE9_EXEC_MODE") {
-		case "wait-for-signal":
-			signals := make(chan os.Signal, 1)
-			signal.Notify(signals, os.Interrupt)
+		case "wait-for-signal", "wait-for-second-signal":
+			signals := make(chan os.Signal, 2)
+			signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
 			defer signal.Stop(signals)
+			fmt.Fprintf(os.Stdout, "runtime pid %d\n", os.Getpid())
 			fmt.Fprintln(os.Stdout, "runtime ready")
 			<-signals
+			if os.Getenv("FAKE_DRIVE9_EXEC_MODE") == "wait-for-second-signal" {
+				fmt.Fprintln(os.Stdout, "runtime canceling")
+				<-signals
+				fmt.Fprintln(os.Stderr, "runtime detached")
+				os.Exit(130)
+			}
+			select {
+			case <-signals:
+				fmt.Fprintln(os.Stderr, "duplicate interrupt")
+				os.Exit(99)
+			case <-time.After(200 * time.Millisecond):
+			}
 			fmt.Fprintln(os.Stderr, "runtime canceled")
 			os.Exit(130)
 		case "nonzero":

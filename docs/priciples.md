@@ -30,7 +30,7 @@ ti <command> [subcommand]
 - Required flags appear before optional flags in help output.
 - `ti fs` Unix-style aliases shorten only the command name. Their flags stay long and match the canonical command.
 - Only `ti configure` may prompt.
-- Help works through `ti help`, `ti <command> help`, and `ti <command> <subcommand> help`.
+- Help works through `ti help`, `ti <command> help`, and `ti <command> <subcommand> help`. For `ti exec`, only the exact bare `help` alias is local; `ti exec -w repo help` and `ti exec -- help` run a remote command named `help`.
 - `--version` remains available at every command level.
 - A command does not infer access mode, resource selection, or mutation intent from SQL or other user content.
 
@@ -185,9 +185,9 @@ Each resource runs the companion with isolated state under:
 
 ti supplies a sanitized companion environment containing the resolved server, canonical region, and resource owner token. Inherited `DRIVE9_*` values must not override ti's selection. Users do not edit `~/.drive9` for ti workflows.
 
-`ti exec [flags] [--] command [arg...]` mirrors Drive9 Runtime flags exactly: `-w/--workspace`, `-C/--cwd`, repeatable `-e/--env`, `-t/--timeout`, `--fresh`, `--layer`, `--read-only`, and `-v/--verbose`. Flag parsing stops at the remote command boundary. Runtime stdout and stderr are never buffered or rendered as structured output, executions are never retried, and exit statuses `124`, `130`, and `255` retain timeout, cancellation, and unknown-outcome meanings.
+`ti exec [flags] [--] command [arg...]` mirrors Drive9 Runtime flags exactly: `-w/--workspace`, `-C/--cwd`, repeatable `-e/--env`, `-t/--timeout`, `--fresh`, `--layer`, `--read-only`, and `-v/--verbose`. Flag parsing stops at the remote command boundary. Runtime stdout and stderr are never buffered or rendered as structured output, executions are never retried, and Runtime uses exit statuses `124`, `130`, and `255` for timeout, cancellation, and unknown outcomes. Remote command statuses are passed through exactly and can overlap these or ti errors; the status alone does not identify its source. Remote stdin and interactive terminals are not supported.
 
-`ti exec` first runs a credential-free local `ti-drive9 exec --help` capability gate and accepts only exit status zero; human help text is not an API. Only after that gate succeeds may ti load the selected profile, resolve a File System credential, or start a credential-bearing companion command. Installers and the updater enforce the same command gate before replacing installed binaries.
+`ti exec` first runs a credential-free local `ti-drive9 exec --help` capability gate and accepts only exit status zero; human help text is not an API. The gate has a ten-second deadline, no stdin or visible output, and a disposable HOME. Cancellation is distinct from incompatibility. Only after that gate succeeds may ti load the selected profile, resolve a File System credential, or start a credential-bearing companion command. Installers and the updater enforce the same command gate before replacing installed binaries.
 
 Filesystem resource selection is:
 

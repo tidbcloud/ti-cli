@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"time"
 
 	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
@@ -61,17 +62,8 @@ func (s Service) Exec(ctx context.Context, opts Options) error {
 // intentionally supplies no profile, endpoint, or credential and accepts the
 // command's exit status as the contract instead of parsing human help text.
 func (s Service) Preflight(ctx context.Context) (ReadyService, error) {
-	runner := fswrap.Runner{
-		HomeDir:       s.HomeDir,
-		CompanionPath: s.CompanionPath,
-		Resolver:      s.Resolver,
-		Stdin:         s.Stdin,
-		Stdout:        s.Stdout,
-		Stderr:        s.Stderr,
-		Debug:         s.Debug,
-		DebugWriter:   s.DebugWriter,
-	}
-	if err := requireExecCapability(ctx, runner); err != nil {
+	runner := fswrap.Runner{CompanionPath: s.CompanionPath}
+	if err := requireExecCapability(ctx, runner, 10*time.Second); err != nil {
 		return ReadyService{}, err
 	}
 	return ReadyService{service: s}, nil
@@ -107,24 +99,17 @@ func (r ReadyService) Exec(ctx context.Context, opts Options) error {
 	})
 }
 
-func requireExecCapability(ctx context.Context, runner fswrap.Runner) error {
-	runner.Debug = false
-	runner.DebugWriter = nil
-	_, err := runner.Run(ctx, fswrap.RunOptions{
-		ResourceName:  "runtime-capability",
-		Args:          []string{"exec", "--help"},
-		CaptureStdout: true,
-	})
-	if err == nil {
-		return nil
+func requireExecCapability(ctx context.Context, runner fswrap.Runner, timeout time.Duration) error {
+	probe, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	err := runner.Probe(probe, "exec", "--help")
+	if ctx.Err() != nil {
+		return ctx.Err()
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return err
+	if errors.Is(err, context.DeadlineExceeded) {
+		return apperr.New("runtime.capability_timeout", "runtime", 1, "the local Runtime capability check timed out; update or reinstall ti if this persists")
 	}
-	if err != nil && apperr.CodeFor(err) != "fs.companion_failed" {
-		return err
-	}
-	return apperr.New("runtime.companion_incompatible", "runtime", 1, "the installed ti-drive9 companion does not support `ti exec`; update or reinstall ti after a compatible companion release is available")
+	return err
 }
 
 func companionArgs(opts Options) []string {

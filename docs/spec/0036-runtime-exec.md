@@ -1,5 +1,13 @@
 # Runtime Exec
 
+## Verification Status
+
+Implementation and local regression coverage are complete. Release validation
+is pending: record the distributed companion version and checksums, and pass
+`make live-e2e-runtime` and the aggregate `make live-e2e` with that artifact.
+Fake-companion tests and skipped live tests do not satisfy this gate. Keep this
+spec outside `done/` until the release evidence is recorded.
+
 ## Goal
 
 Expose Drive9 Runtime through one concise top-level command:
@@ -29,7 +37,7 @@ only to `ti exec`.
 
 | Flag | Meaning |
 | --- | --- |
-| `-w`, `--workspace PATH` | Drive9 directory to run in; infer an enclosing matching local FUSE mount when omitted, otherwise use the drive root |
+| `-w`, `--workspace PATH` | Filesystem directory to run in; infer an enclosing matching local FUSE mount when omitted, otherwise use the drive root |
 | `-C`, `--cwd DIR` | Subdirectory of the selected workspace |
 | `-e`, `--env KEY[=VALUE]` | Set a remote variable; a bare key copies the local value; repeatable |
 | `-t`, `--timeout DURATION` | Caller deadline; the server may impose a shorter limit |
@@ -56,7 +64,8 @@ spaces or shell syntax is passed unchanged to Drive9, which runs it through
 `--output`, `--query`, and `--dry-run` are not supported. Runtime output is a
 live byte stream, not a structured ti result. `ti exec help` and `ti exec
 --help` show command help without loading profiles, credentials, settings
-beyond the normal help exclusions, or starting the companion.
+beyond the normal help exclusions, or starting the companion. The bare `help` alias applies only without exec
+flags or `--`; `ti exec -w repo help` and `ti exec -- help` are remote commands.
 
 ## Resource And Credential Resolution
 
@@ -64,7 +73,9 @@ Before loading a profile or resolving any credential, run the local
 `ti-drive9 exec --help` command with a sanitized environment that contains no
 profile, endpoint, placement, or credential. Exit status zero is the command
 capability contract; do not parse human help text. An older companion must
-fail here before any workspace synchronization or remote request.
+fail here before any workspace synchronization or remote request. Use a
+disposable HOME, no stdin, no visible output, and a ten-second deadline.
+Distinguish interruption, timeout, startup failure, and incompatibility.
 
 After the local capability gate, resolve exactly one File System using the
 existing data-plane contract:
@@ -76,8 +87,8 @@ existing data-plane contract:
 
 Resolve the credential from explicit `--fs-token`, then `TI_FS_TOKEN`, then
 the selected resource's local credential. Resolve placement from explicit
-`--region`, `TI_REGION_CODE`, then the selected resource. Runtime requires an
-Drive9 API-key credential. A delegated Vault token cannot run commands;
+`--region`, `TI_REGION_CODE`, then the selected resource. Runtime requires a
+Filesystem API-key credential. A delegated Vault token cannot run commands;
 service authorization remains authoritative for a scoped API key.
 
 Run the companion with the existing resource-scoped HOME:
@@ -120,25 +131,33 @@ mount retains its resolved layer.
 Drive9 refuses unverifiable, cross-account, stale, or non-FUSE mounts. In
 particular, WebDAV is the default on macOS and Windows, so callers there must
 usually pass `-w`. Explicit `-w` selects the remote directory and does not
-upload local changes first.
+upload local changes first. `-w` changes the working directory, not the
+Filesystem isolation boundary. Only `/workspace` persists; `--fresh` replaces
+the sandbox without erasing those files.
 
 ## Streams, Exit Status, And Cancellation
 
-- Connect the user's stdin, stdout, and stderr directly to the companion.
+- Connect stdout and stderr directly to the companion. The upstream protocol
+  has no remote stdin channel or interactive terminal support.
 - Keep stdout and stderr separate and live; do not buffer, combine, decode,
   query, or re-render remote bytes.
 - A completed remote command exits with its exact status. Do not add a
   `ti [ERROR]` line for a nonzero remote status.
 - Timeout exits `124`, first-interrupt cancellation exits `130`, and unknown
   outcome exits `255`, using the companion's actionable stderr message.
-- Missing/not-executable commands keep shell statuses `127`/`126`.
+- Missing/not-executable commands keep shell statuses `127`/`126`. Remote
+  commands can return any status, including ti and Runtime error codes; a
+  numeric status alone cannot distinguish their sources.
 - A busy or not-enabled rejection is a known pre-start failure. Lost,
   malformed, oversized, contradictory, redirected, or interrupted streams
   after possible acceptance are `outcome_unknown` and exit `255`.
 - Never retry or resubmit an execution. The command may already have run.
 - The companion owns the two-stage interrupt protocol: the first Ctrl-C
   requests remote cancellation and waits for workspace drain; the second
-  detaches. The ti parent must not kill the companion on the first interrupt.
+  detaches. Isolate the companion process group and forward signals exactly
+  once, including parent-only SIGINT and SIGTERM. A programmatic context
+  cancellation forwards one interrupt. The ti parent must not kill the
+  companion on the first interrupt.
 
 ## Privacy And Observability
 
