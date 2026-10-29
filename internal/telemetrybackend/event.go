@@ -69,6 +69,7 @@ var allowedRegions = map[string]struct{}{
 	"aws-eu-central-1":        {},
 	"aws-ap-northeast-1":      {},
 	"aws-ap-southeast-1":      {},
+	"aws-sa-east-1":           {},
 	"ali-ap-southeast-1":      {},
 	"alicloud-ap-southeast-1": {},
 	"gcp-us-east1":            {},

@@ -15,6 +15,7 @@ func TestValidateSupportedProviderRegions(t *testing.T) {
 		{ProviderAWS, "eu-central-1"},
 		{ProviderAWS, "ap-northeast-1"},
 		{ProviderAWS, "ap-southeast-1"},
+		{ProviderAWS, "sa-east-1"},
 		{ProviderAlibabaCloud, "ap-southeast-1"},
 	}
 
