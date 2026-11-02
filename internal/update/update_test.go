@@ -28,14 +28,12 @@ func TestCheckReportsAvailableRelease(t *testing.T) {
 			"ti_darwin_arm64.tar.gz": []byte("not downloaded by check"),
 		},
 	})
-	t.Setenv("TI_RELEASE_API_BASE_URL", server.URL)
-
 	result, err := Check(context.Background(), version.Info{
 		Version:       "0.1.0",
 		OS:            "darwin",
 		Arch:          "arm64",
 		InstallSource: "archive",
-	}, CheckOptions{})
+	}, CheckOptions{ReleaseAPIBaseURL: server.URL})
 	if err != nil {
 		t.Fatalf("Check failed: %v", err)
 	}
@@ -427,4 +425,44 @@ func artifactForRuntime(t *testing.T) string {
 		t.Skip(err)
 	}
 	return name
+}
+
+func TestReleaseAPIBaseURLOverrideNeedsLocalBuildAndOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		installSource string
+		allow         string
+		override      string
+		want          string
+	}{
+		{"nothing set", "archive", "", "", DefaultReleaseAPIBaseURL},
+		{"archive ignores override", "archive", "1", "https://releases.example.com", DefaultReleaseAPIBaseURL},
+		{"script ignores override", "script", "1", "https://releases.example.com", DefaultReleaseAPIBaseURL},
+		{"unknown ignores override", "unknown", "1", "https://releases.example.com", DefaultReleaseAPIBaseURL},
+		{"local without opt-in ignores override", "local", "", "https://releases.example.com", DefaultReleaseAPIBaseURL},
+		{"local with opt-in uses https", "local", "1", "https://releases.example.com/", "https://releases.example.com"},
+		{"local with opt-in uses loopback http", "local", "1", "http://127.0.0.1:8080", "http://127.0.0.1:8080"},
+		{"local with opt-in uses localhost http", "local", "1", "http://localhost:8080", "http://localhost:8080"},
+		{"local rejects plain http to a remote host", "local", "1", "http://releases.example.com", DefaultReleaseAPIBaseURL},
+		{"local rejects other schemes", "local", "1", "ftp://releases.example.com", DefaultReleaseAPIBaseURL},
+		{"local rejects a value with no host", "local", "1", "https://", DefaultReleaseAPIBaseURL},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("TI_ALLOW_TEST_ENDPOINTS", tc.allow)
+			t.Setenv("TI_RELEASE_API_BASE_URL", tc.override)
+			c := newClient(version.Info{InstallSource: tc.installSource}, "", nil)
+			if c.baseURL != tc.want {
+				t.Fatalf("base URL = %q, want %q", c.baseURL, tc.want)
+			}
+		})
+	}
+}
+
+func TestReleaseAPIBaseURLOptionTakesPrecedence(t *testing.T) {
+	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "1")
+	t.Setenv("TI_RELEASE_API_BASE_URL", "https://env.example.com")
+	c := newClient(version.Info{InstallSource: "local"}, "https://option.example.com/", nil)
+	if c.baseURL != "https://option.example.com" {
+		t.Fatalf("base URL = %q", c.baseURL)
+	}
 }

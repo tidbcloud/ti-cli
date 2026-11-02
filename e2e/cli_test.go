@@ -233,7 +233,7 @@ func TestErrorsAreRenderedAtCLIBoundary(t *testing.T) {
 	}))
 	defer releaseServer.Close()
 
-	checkUpdate := runTIWithInput(t, bin, "", []string{"TI_RELEASE_API_BASE_URL=" + releaseServer.URL}, "update", "--check", "--query", "latest_version")
+	checkUpdate := runTIWithInput(t, bin, "", []string{"TI_ALLOW_TEST_ENDPOINTS=1", "TI_RELEASE_API_BASE_URL=" + releaseServer.URL}, "update", "--check", "--query", "latest_version")
 	checkUpdate.wantExitCode(0)
 	checkUpdate.wantStdoutContains(`"99.0.0"`)
 
@@ -2078,6 +2078,7 @@ func TestUpdateAndReservedProfileGlobalSettingsBoundaries(t *testing.T) {
 		result := runTIUsingLoggingSettings(t, bin, []string{
 			"HOME=" + home,
 			"TI_LOGGING=on",
+			"TI_ALLOW_TEST_ENDPOINTS=1",
 			"TI_RELEASE_API_BASE_URL=" + server.URL,
 		}, "--debug", "update", "--check")
 		result.wantExitCode(0)

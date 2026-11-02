@@ -322,6 +322,7 @@ func TestUpdateInvocationsDoNotReadOrWriteTIHome(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("TI_RELEASE_API_BASE_URL", server.URL)
+	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "1")
 
 	for _, args := range [][]string{
 		{"update", "--check", "--debug"},
@@ -378,9 +379,10 @@ func TestTelemetryExclusionsDoNotReadStateOrSend(t *testing.T) {
 	}))
 	defer releaseServer.Close()
 	t.Setenv("TI_RELEASE_API_BASE_URL", releaseServer.URL)
+	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "1")
 	info := testVersion()
 	info.Version = "0.2.0"
-	info.InstallSource = "archive"
+	info.InstallSource = "local"
 	info.TelemetryEndpoint = server.URL
 
 	invocations := [][]string{
@@ -968,6 +970,7 @@ func TestUpdateCheckUsesReleaseMetadata(t *testing.T) {
 	}))
 	defer server.Close()
 	t.Setenv("TI_RELEASE_API_BASE_URL", server.URL)
+	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "1")
 
 	stdout, _, err := executeForTest("update", "--check", "--query", "latest_version")
 	if err != nil {

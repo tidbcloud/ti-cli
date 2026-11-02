@@ -912,7 +912,10 @@ manifest dependency.
 Tests may override the IAM base URL with `TI_TEST_IAM_BASE_URL` and the fs
 manifest URL with `TI_TEST_FS_MANIFEST_URL`, only when
 `TI_ALLOW_TEST_ENDPOINTS=1`; these are hidden test controls, not supported
-user configuration.
+user configuration. The release metadata origin used by `ti update` can be
+overridden with `TI_RELEASE_API_BASE_URL` only by a local build
+(`installSource=local`) with `TI_ALLOW_TEST_ENDPOINTS=1`, and only to an https
+URL or plain http to localhost; every other build uses the GitHub release API.
 
 Local profile namespace lookup order for authenticated commands:
 
