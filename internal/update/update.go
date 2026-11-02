@@ -12,7 +12,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,7 +142,7 @@ type client struct {
 }
 
 func Check(ctx context.Context, info version.Info, opts CheckOptions) (CheckResult, error) {
-	c := newClient(opts.ReleaseAPIBaseURL, opts.HTTPClient)
+	c := newClient(info, opts.ReleaseAPIBaseURL, opts.HTTPClient)
 	rel, err := c.fetchRelease(ctx, "latest")
 	if err != nil {
 		return CheckResult{}, err
@@ -200,7 +202,7 @@ func Apply(ctx context.Context, info version.Info, opts ApplyOptions) (ApplyResu
 		)
 	}
 
-	c := newClient(opts.ReleaseAPIBaseURL, opts.HTTPClient)
+	c := newClient(info, opts.ReleaseAPIBaseURL, opts.HTTPClient)
 	targetVersion := strings.TrimSpace(opts.Version)
 	if targetVersion == "" {
 		targetVersion = "latest"
@@ -316,9 +318,9 @@ func Apply(ctx context.Context, info version.Info, opts ApplyOptions) (ApplyResu
 	return result, nil
 }
 
-func newClient(baseURL string, httpClient *http.Client) client {
+func newClient(info version.Info, baseURL string, httpClient *http.Client) client {
 	if strings.TrimSpace(baseURL) == "" {
-		baseURL = strings.TrimRight(os.Getenv("TI_RELEASE_API_BASE_URL"), "/")
+		baseURL = testReleaseAPIBaseURL(info)
 	}
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = DefaultReleaseAPIBaseURL
@@ -330,6 +332,37 @@ func newClient(baseURL string, httpClient *http.Client) client {
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		httpClient: httpClient,
 	}
+}
+
+// testReleaseAPIBaseURL returns the TI_RELEASE_API_BASE_URL override only for
+// local builds that opt in with TI_ALLOW_TEST_ENDPOINTS=1, the same gate as the
+// test telemetry endpoint. The release origin also serves the checksums, so it
+// decides which binary ti installs and runs; other builds always use
+// DefaultReleaseAPIBaseURL. The override must be https, or http to localhost.
+func testReleaseAPIBaseURL(info version.Info) string {
+	if info.InstallSource != "local" || os.Getenv("TI_ALLOW_TEST_ENDPOINTS") != "1" {
+		return ""
+	}
+	value := strings.TrimRight(strings.TrimSpace(os.Getenv("TI_RELEASE_API_BASE_URL")), "/")
+	if value == "" {
+		return ""
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Host == "" {
+		return ""
+	}
+	if parsed.Scheme == "https" || (parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())) {
+		return value
+	}
+	return ""
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (c client) fetchRelease(ctx context.Context, target string) (release, error) {
