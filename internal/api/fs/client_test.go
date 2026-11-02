@@ -410,6 +410,44 @@ func TestReadFileRangeRedirectPreservesRangeWithoutBearer(t *testing.T) {
 	}
 }
 
+func TestReadFileFollowsCrossHostPresignedRedirectWithoutBearer(t *testing.T) {
+	storage := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("presigned download should not receive ti auth, got %q", got)
+		}
+		if r.Header.Get("Range") == "bytes=2-5" {
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write([]byte("cdef"))
+			return
+		}
+		_, _ = w.Write([]byte("large bytes"))
+	}))
+	defer storage.Close()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer fs-secret" {
+			t.Errorf("Authorization = %q", got)
+		}
+		http.Redirect(w, r, storage.URL+"/signed/large.bin", http.StatusFound)
+	}))
+	defer server.Close()
+
+	client := testBearerClient(t, server.URL)
+	data, err := client.ReadFile(context.Background(), "/workspace/large.bin")
+	if err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
+	}
+	if string(data) != "large bytes" {
+		t.Fatalf("unexpected redirected data %q", data)
+	}
+	data, err = client.ReadFileRange(context.Background(), "/workspace/large.bin", 2, 4)
+	if err != nil {
+		t.Fatalf("ReadFileRange failed: %v", err)
+	}
+	if string(data) != "cdef" {
+		t.Fatalf("unexpected redirected range data %q", data)
+	}
+}
+
 func testClient(t *testing.T, baseURL string) *Client {
 	t.Helper()
 	client, err := api.New(api.Options{
