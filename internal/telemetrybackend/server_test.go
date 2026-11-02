@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -268,11 +269,145 @@ func TestRateLimiterBoundsDistinctIPBuckets(t *testing.T) {
 	if !limiter.Allow("192.0.2.1") {
 		t.Fatal("first IP was rejected")
 	}
-	if limiter.Allow("192.0.2.2") {
-		t.Fatal("new IP was accepted after bucket registry reached its limit")
+	if !limiter.Allow("192.0.2.2") {
+		t.Fatal("new IP was rejected because the bucket registry was full")
 	}
 	if len(limiter.buckets) != 1 {
 		t.Fatalf("bucket count = %d, want 1", len(limiter.buckets))
+	}
+}
+
+func TestRateLimiterStaysBoundedUnderKeyFlood(t *testing.T) {
+	limiter := newIPRateLimiter(60, 1)
+	limiter.maxBuckets = 1_000
+	for i := 0; i < 20_000; i++ {
+		if !limiter.Allow(fmt.Sprintf("flood-%d", i)) {
+			t.Fatalf("new key %d was rejected", i)
+		}
+	}
+	if len(limiter.buckets) > limiter.maxBuckets {
+		t.Fatalf("bucket count = %d, want at most %d", len(limiter.buckets), limiter.maxBuckets)
+	}
+	if !limiter.Allow("192.0.2.1") {
+		t.Fatal("a legitimate client was rejected after the flood")
+	}
+}
+
+func TestRateLimiterSweepsIdleBucketsAtMostOncePerInterval(t *testing.T) {
+	now := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
+	limiter := newIPRateLimiter(60, 1)
+	limiter.now = func() time.Time { return now }
+	limiter.Allow("192.0.2.1")
+
+	now = now.Add(bucketIdleTTL + time.Second)
+	limiter.Allow("192.0.2.2")
+	if _, ok := limiter.buckets["192.0.2.1"]; ok {
+		t.Fatal("idle bucket survived the sweep")
+	}
+
+	limiter.buckets["192.0.2.3"] = rateBucket{tokens: 1, lastSeen: now.Add(-2 * bucketIdleTTL)}
+	now = now.Add(sweepInterval / 2)
+	limiter.Allow("192.0.2.2")
+	if _, ok := limiter.buckets["192.0.2.3"]; !ok {
+		t.Fatal("sweep ran again before sweepInterval passed")
+	}
+	now = now.Add(sweepInterval)
+	limiter.Allow("192.0.2.2")
+	if _, ok := limiter.buckets["192.0.2.3"]; ok {
+		t.Fatal("idle bucket survived the next sweep")
+	}
+}
+
+func TestClientIPUsesRightMostUntrustedForwardedAddress(t *testing.T) {
+	trusted, _ := parseTrustedProxyCIDRs("192.0.2.0/24,10.0.0.0/8")
+	for _, tc := range []struct {
+		name    string
+		headers []string
+		want    string
+	}{
+		{"single entry", []string{"203.0.113.20"}, "203.0.113.20"},
+		{"forged left-most entry", []string{"6.6.6.6, 203.0.113.20"}, "203.0.113.20"},
+		{"trusted hops on the right", []string{"6.6.6.6, 203.0.113.20, 10.1.2.3, 192.0.2.7"}, "203.0.113.20"},
+		{"two header lines", []string{"6.6.6.6", "203.0.113.20"}, "203.0.113.20"},
+		{"IPv4-mapped IPv6", []string{"::ffff:203.0.113.20"}, "203.0.113.20"},
+		{"all trusted falls back to peer", []string{"10.1.2.3, 192.0.2.7"}, "192.0.2.10"},
+		{"unparseable entry falls back to peer", []string{"203.0.113.20, garbage"}, "192.0.2.10"},
+		{"no header uses peer", nil, "192.0.2.10"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodPost, "/", nil)
+			request.RemoteAddr = "192.0.2.10:1234"
+			for _, value := range tc.headers {
+				request.Header.Add("X-Forwarded-For", value)
+			}
+			if got := clientIP(request, trusted); got != tc.want {
+				t.Fatalf("clientIP = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRateLimitKeyGroupsIPv6By64(t *testing.T) {
+	for _, tc := range []struct {
+		ip   string
+		want string
+	}{
+		{"203.0.113.20", "203.0.113.20"},
+		{"2001:db8:1:2::1", "2001:db8:1:2::/64"},
+		{"2001:db8:1:2:ffff:ffff:ffff:ffff", "2001:db8:1:2::/64"},
+		{"2001:db8:1:3::1", "2001:db8:1:3::/64"},
+		{"fe80::1%eth0", "fe80::/64"},
+		{"::ffff:203.0.113.20", "203.0.113.20"},
+		{"unknown", "unknown"},
+	} {
+		if got := rateLimitKey(tc.ip); got != tc.want {
+			t.Fatalf("rateLimitKey(%q) = %q, want %q", tc.ip, got, tc.want)
+		}
+	}
+}
+
+func TestServerRateLimitsIPv6ClientsBy64(t *testing.T) {
+	cfg := testConfig()
+	cfg.RateLimitPerMinute = 1
+	cfg.RateLimitBurst = 1
+	batcher := NewBatcher(cfg, nil, discardLogger(), nil)
+	server := NewServer(cfg, batcher, readinessStub{}, discardLogger(), nil)
+
+	request := newBatchRequest(validRequestBody())
+	request.RemoteAddr = "[2001:db8:1:2::1]:1234"
+	first := httptest.NewRecorder()
+	server.Handler().ServeHTTP(first, request)
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first status = %d", first.Code)
+	}
+
+	request = newBatchRequest(validRequestBody())
+	request.RemoteAddr = "[2001:db8:1:2::2]:1234"
+	second := httptest.NewRecorder()
+	server.Handler().ServeHTTP(second, request)
+	if second.Code != http.StatusTooManyRequests {
+		t.Fatalf("second status = %d, want 429 for another address in the same /64", second.Code)
+	}
+}
+
+// The cost of a new key on a full registry should not grow with its size.
+func BenchmarkRateLimiterAllowNewKeyOnFullRegistry(b *testing.B) {
+	for _, size := range []int{1_000, 10_000, 100_000} {
+		b.Run(fmt.Sprintf("buckets=%d", size), func(b *testing.B) {
+			limiter := newIPRateLimiter(60, 1)
+			limiter.maxBuckets = size
+			for i := 0; i < size; i++ {
+				limiter.Allow(fmt.Sprintf("seed-%d", i))
+			}
+			keys := make([]string, b.N)
+			for i := range keys {
+				keys[i] = fmt.Sprintf("new-%d", i)
+			}
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				limiter.Allow(keys[i])
+			}
+		})
 	}
 }
 
