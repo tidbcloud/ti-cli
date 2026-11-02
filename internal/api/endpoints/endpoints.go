@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -389,5 +390,17 @@ func validateBaseURL(value string) error {
 	if parsed.Scheme != "https" && parsed.Scheme != "http" {
 		return apperr.New("api.invalid_endpoint", "config", 2, fmt.Sprintf("invalid internal endpoint %q: scheme must be https or http", value))
 	}
+	if parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		return apperr.New("api.invalid_endpoint", "config", 2, fmt.Sprintf("invalid internal endpoint %q: plain http is allowed only for localhost", value))
+	}
 	return nil
+}
+
+// isLoopbackHost reports whether host is localhost or a loopback IP address.
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
