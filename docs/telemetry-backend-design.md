@@ -281,8 +281,8 @@ The same deployment identity runs the one-shot migrations and the API, so it nee
 
 The endpoint is public because the CLI cannot safely hold a secret. Protect it with cheap server-side controls:
 
-- Per-IP token bucket, default 60 requests/minute with burst 120.
-- Bounded rate-limit bucket registry; reject new source buckets when the registry is full until stale buckets expire.
+- Per-IP token bucket, default 60 requests/minute with burst 120. IPv6 clients share one bucket per /64.
+- Bounded rate-limit bucket registry. When it is full, a new source evicts one existing bucket instead of being rejected, so filling the registry cannot lock out new clients. Idle buckets are swept at most once a minute.
 - Max body size 64 KiB.
 - Max events per request 20.
 - Bounded in-memory buffer, default 10,000 events.
@@ -291,7 +291,7 @@ The endpoint is public because the CLI cannot safely hold a secret. Protect it w
 - Reject suspicious field names.
 - Optional CDN/WAF rule for obvious non-CLI abuse.
 
-When behind Caddy or another reverse proxy, set `TELEMETRY_TRUSTED_PROXY_CIDRS` to the private network ranges from which the proxy reaches the API. The backend trusts `X-Forwarded-For` only when the direct peer matches one of those CIDRs. The default trusts loopback only. When the peer is not trusted, the backend ignores forwarding headers and rate limits by the direct remote address.
+When behind Caddy or another reverse proxy, set `TELEMETRY_TRUSTED_PROXY_CIDRS` to the private network ranges from which the proxy reaches the API. The backend trusts `X-Forwarded-For` only when the direct peer matches one of those CIDRs, and then uses the right-most address in it that is not a trusted proxy, because entries further left are written by the client. The default trusts loopback only. When the peer is not trusted, the backend ignores forwarding headers and rate limits by the direct remote address.
 
 ## Logging And Metrics
 
