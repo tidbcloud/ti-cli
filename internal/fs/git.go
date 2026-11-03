@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -862,7 +863,17 @@ func restoreGitLayout(ctx context.Context, client *apifs.Client, workspace apifs
 	if err != nil {
 		return "", "", err
 	}
-	gitDir = filepath.Join(commonRoot, ".git", filepath.FromSlash(workspace.GitDirRel))
+	// Security (information protection): gitdir_rel arrives from the remote
+	// workspace metadata and is not trusted. It is resolved, not joined
+	// verbatim, so restore can never create, recursively clear, and overwrite a
+	// directory outside the common .git worktrees subtree.
+	gitDir, err = safeWorktreeGitDirTarget(filepath.Join(commonRoot, ".git"), workspace.GitDirRel)
+	if err != nil {
+		return "", "", err
+	}
+	if err := ensureNoSymlinkGitDirPath(resolved.LocalRoot, gitDir); err != nil {
+		return "", "", err
+	}
 	if err := os.MkdirAll(worktreeRoot, 0o755); err != nil {
 		return "", "", err
 	}
@@ -874,6 +885,84 @@ func restoreGitLayout(ctx context.Context, client *apifs.Client, workspace apifs
 		return "", "", err
 	}
 	return worktreeRoot, gitDir, nil
+}
+
+// safeWorktreeGitDirTarget resolves the remote-supplied gitdir_rel of a linked
+// git workspace into a local directory and confines the result to the common
+// .git/worktrees subtree.
+//
+// Security (information protection): gitdir_rel is controlled by the FS
+// backend, so a value such as "../../../../home/victim/.ssh" must never name a
+// local directory: restore creates that directory, deletes every entry in it
+// except "objects", and extracts the remote git state archive into it as the
+// invoking user. Pinning the target to .git/worktrees also refuses values that
+// stay inside .git but would land on git's own sensitive directories, such as
+// hooks or refs, where the extracted archive could plant executables.
+func safeWorktreeGitDirTarget(commonGitDir, gitDirRel string) (string, error) {
+	rel := strings.TrimSpace(gitDirRel)
+	if rel == "" {
+		return "", apperr.New("git.invalid_gitdir_rel", "runtime", 1, "git workspace metadata gitdir_rel is empty")
+	}
+	if strings.ContainsRune(rel, '\x00') ||
+		strings.ContainsRune(rel, '\\') ||
+		strings.HasPrefix(rel, "/") ||
+		filepath.IsAbs(rel) ||
+		filepath.VolumeName(rel) != "" {
+		return "", apperr.New("git.invalid_gitdir_rel", "runtime", 1, fmt.Sprintf("git workspace metadata gitdir_rel %q must be a relative path", gitDirRel))
+	}
+	base := filepath.Clean(commonGitDir)
+	worktreesRoot := filepath.Join(base, "worktrees")
+	target := filepath.Clean(filepath.Join(base, filepath.FromSlash(rel)))
+	relToWorktrees, err := filepath.Rel(worktreesRoot, target)
+	if err != nil || relToWorktrees == "." || relToWorktrees == ".." || strings.HasPrefix(relToWorktrees, ".."+string(filepath.Separator)) {
+		return "", apperr.New("git.gitdir_rel_escape", "runtime", 1, fmt.Sprintf("git workspace metadata gitdir_rel %q escapes the common .git worktrees directory", gitDirRel))
+	}
+	return target, nil
+}
+
+// ensureNoSymlinkGitDirPath refuses to restore git state through a symlinked
+// path inside the local overlay. Lexical containment alone is not enough: a
+// symlinked component would redirect the restore's recursive delete and
+// archive writes outside the intended directory.
+func ensureNoSymlinkGitDirPath(localRoot, gitDir string) error {
+	localRoot = strings.TrimSpace(localRoot)
+	if localRoot == "" || !filepath.IsAbs(localRoot) {
+		return nil
+	}
+	overlayRoot := filepath.Clean(filepath.Join(localRoot, "overlay"))
+	target := filepath.Clean(gitDir)
+	if target != overlayRoot && !strings.HasPrefix(target, overlayRoot+string(filepath.Separator)) {
+		return apperr.New("git.gitdir_rel_escape", "runtime", 1, fmt.Sprintf("git directory %s is outside local overlay root %s", target, overlayRoot))
+	}
+	rel, err := filepath.Rel(overlayRoot, target)
+	if err != nil {
+		return apperr.Wrap("git.resolve_git_dir", "runtime", 1, "resolve git directory against local overlay root", err)
+	}
+	if rel == "." {
+		return nil
+	}
+	if info, err := os.Lstat(overlayRoot); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return apperr.New("git.unsafe_git_dir_symlink", "runtime", 1, fmt.Sprintf("refusing to restore git state through symlink %s", overlayRoot))
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return apperr.Wrap("git.stat_git_dir", "runtime", 1, fmt.Sprintf("stat local overlay root %s", overlayRoot), err)
+	}
+	current := overlayRoot
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return apperr.Wrap("git.stat_git_dir", "runtime", 1, fmt.Sprintf("stat git directory path %s", current), err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return apperr.New("git.unsafe_git_dir_symlink", "runtime", 1, fmt.Sprintf("refusing to restore git state through symlink %s", current))
+		}
+	}
+	return nil
 }
 
 func restoreGitStateArchive(content []byte, gitDir string) error {
