@@ -851,7 +851,7 @@ func extractPackEntry(localRoot string, hdr *tar.Header, r io.Reader, dirTimes *
 		}
 		_ = os.Chtimes(target, hdr.ModTime, hdr.ModTime)
 	case tar.TypeSymlink:
-		if err := validatePackSymlinkTarget(hdr.Linkname); err != nil {
+		if err := validatePackSymlinkTarget(localRoot, rel, hdr.Linkname); err != nil {
 			return err
 		}
 		if err := ensureNoSymlinkPath(localRoot, filepath.Dir(target), true); err != nil {
@@ -1352,9 +1352,24 @@ func manifestPathRel(archivePath string) (string, error) {
 	return rel, nil
 }
 
-func validatePackSymlinkTarget(linkname string) error {
+// validatePackSymlinkTarget rejects pack symlink targets that could place a link
+// escaping the local overlay. Packs are remote-supplied, so an absolute target
+// or one that resolves outside <local root>/overlay would let the extracted
+// tree plant links to paths outside the workspace, which later local writes
+// could follow. Targets are resolved relative to the link's own directory and
+// only links that stay inside the overlay are accepted.
+func validatePackSymlinkTarget(localRoot, rel, linkname string) error {
 	if linkname == "" || strings.ContainsRune(linkname, '\x00') || strings.Contains(linkname, "\\") {
-		return apperr.New("fs.unsafe_pack_symlink", "runtime", 1, fmt.Sprintf("unsafe pack symlink target %q", linkname))
+		return apperr.New("fs.unsafe_pack_symlink", "runtime", 1, fmt.Sprintf("unsafe pack symlink target %q for %q", linkname, rel))
+	}
+	if strings.HasPrefix(linkname, "/") || filepath.IsAbs(linkname) || filepath.VolumeName(linkname) != "" {
+		return apperr.New("fs.unsafe_pack_symlink", "runtime", 1, fmt.Sprintf("pack symlink target for %q must be relative, got %q", rel, linkname))
+	}
+	overlayRoot := filepath.Clean(filepath.Join(localRoot, "overlay"))
+	linkDir := filepath.Join(overlayRoot, filepath.FromSlash(path.Dir(rel)))
+	resolved := filepath.Clean(filepath.Join(linkDir, filepath.FromSlash(linkname)))
+	if resolved != overlayRoot && !strings.HasPrefix(resolved, overlayRoot+string(filepath.Separator)) {
+		return apperr.New("fs.unsafe_pack_symlink", "runtime", 1, fmt.Sprintf("pack symlink target for %q escapes the local overlay root: %q", rel, linkname))
 	}
 	return nil
 }
