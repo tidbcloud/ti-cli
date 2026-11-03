@@ -13,6 +13,9 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/db/sqlresult"
 )
 
+// Options.Host must come from clusterPublicEndpoint in the Starter service,
+// which checks it with validate.StarterEndpointHost before any credential is
+// sent.
 type Options struct {
 	ClusterID  string
 	AccessMode sqlcred.AccessMode

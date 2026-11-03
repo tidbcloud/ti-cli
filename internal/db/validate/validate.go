@@ -194,3 +194,58 @@ func OptionalNonNegative(flagName string, value int32) error {
 	}
 	return NonNegative(flagName, value)
 }
+
+// starterEndpointHostSuffix is the DNS suffix of every TiDB Cloud Starter
+// endpoint host.
+const starterEndpointHostSuffix = ".tidbcloud.com"
+
+// StarterEndpointHost checks a cluster endpoint host returned by the Starter
+// API before ti sends database credentials to it. The host must be a plain
+// ASCII DNS name under tidbcloud.com; userinfo, a port, a path, an IP address,
+// non-ASCII characters or another domain would let a bad API response send the
+// connection and its password elsewhere. It returns the host lower-cased,
+// without a trailing dot.
+func StarterEndpointHost(host string) (string, error) {
+	trimmed := strings.TrimSpace(host)
+	normalized := strings.TrimSuffix(strings.ToLower(trimmed), ".")
+	if !isASCII(trimmed) || !isDNSName(normalized) || !strings.HasSuffix(normalized, starterEndpointHostSuffix) {
+		shown := host
+		if len(shown) > 255 {
+			shown = shown[:255]
+		}
+		return "", apperr.New(
+			"db.unexpected_endpoint_host",
+			"api",
+			1,
+			fmt.Sprintf("unexpected cluster endpoint host %+q: TiDB Cloud Starter endpoints are under %s; if the cluster is genuine, report this at https://github.com/tidbcloud/ti-cli/issues", shown, strings.TrimPrefix(starterEndpointHostSuffix, ".")),
+		)
+	}
+	return normalized, nil
+}
+
+func isASCII(value string) bool {
+	for i := 0; i < len(value); i++ {
+		if value[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
+}
+
+func isDNSName(host string) bool {
+	if host == "" || len(host) > 253 {
+		return false
+	}
+	for _, label := range strings.Split(host, ".") {
+		if len(label) == 0 || len(label) > 63 || label[0] == '-' || label[len(label)-1] == '-' {
+			return false
+		}
+		for i := 0; i < len(label); i++ {
+			c := label[i]
+			if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}

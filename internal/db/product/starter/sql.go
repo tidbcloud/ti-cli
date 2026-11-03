@@ -260,6 +260,12 @@ func clusterPublicEndpoint(cluster apistarter.Cluster) (string, int32, error) {
 	if host == "" || port <= 0 {
 		return "", 0, apperr.New("db.cluster_public_endpoint_missing", "api", 1, "cluster public endpoint host or port is missing; try again after the Starter cluster becomes ACTIVE")
 	}
+	// Every SQL path (HTTPS, MySQL and connection strings) gets its host here,
+	// so this one check covers all of them.
+	host, err := validate.StarterEndpointHost(host)
+	if err != nil {
+		return "", 0, err
+	}
 	return host, port, nil
 }
 
