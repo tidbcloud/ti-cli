@@ -899,7 +899,9 @@ APIs. SQL HTTPS API execution and ti fs data-plane auth are separate
 authentication schemes. SQL HTTPS API execution uses the prepared DB SQL
 username/password as Basic Auth against
 `https://http-<cluster-host>/v1beta/sql`; TiDB Cloud API keys must not be used
-for SQL execution Basic Auth.
+for SQL execution Basic Auth. The cluster host comes from the Starter API, so it
+must pass `validate.StarterEndpointHost` (in `clusterPublicEndpoint`) before any
+SQL credential is used on the HTTPS, MySQL or connection-string path.
 
 Use `internal/api/endpoints` for Starter, IAM/account, and fs endpoint
 selection. Do not add service URLs to user config. The default Starter host is

@@ -2,12 +2,16 @@ package starter
 
 import (
 	"context"
+	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
@@ -21,7 +25,7 @@ func TestPrepareQueryAccessCreatesAndStoresCredentials(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1":
-			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo","clusterPlan":"STARTER","endpoints":{"public":{"host":"gateway.example.com","port":4000}}}`))
+			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo","clusterPlan":"STARTER","endpoints":{"public":{"host":"gateway01.us-east-1.prod.aws.tidbcloud.com","port":4000}}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1/sqlUsers":
 			_, _ = w.Write([]byte(`{"sqlUsers":[]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1beta1/clusters/cluster-1/sqlUsers":
@@ -127,7 +131,7 @@ func TestCreateConnectionString(t *testing.T) {
 	if result.AccessMode != sqlcred.ReadOnly || result.Username != "prefix.ti_ro" {
 		t.Fatalf("unexpected result: %#v", result)
 	}
-	if !strings.Contains(result.ConnectionString, "jdbc:mysql://gateway.example.com:4000/app?") ||
+	if !strings.Contains(result.ConnectionString, "jdbc:mysql://gateway01.us-east-1.prod.aws.tidbcloud.com:4000/app?") ||
 		!strings.Contains(result.ConnectionString, "user=prefix.ti_ro") {
 		t.Fatalf("unexpected connection string: %s", result.ConnectionString)
 	}
@@ -174,7 +178,7 @@ func TestConnectionAndSQLRejectNonStarterBeforeCredentialOrSQLAccess(t *testing.
 		if r.Method != http.MethodGet || r.URL.Path != "/v1beta1/clusters/cluster-1" {
 			t.Fatalf("unexpected cluster request %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Essential","endpoints":{"public":{"host":"gateway.example.com","port":4000}}}`))
+		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","servicePlan":"Essential","endpoints":{"public":{"host":"gateway01.us-east-1.prod.aws.tidbcloud.com","port":4000}}}`))
 	}))
 	defer clusterServer.Close()
 
@@ -255,6 +259,100 @@ func testSQLService(baseURL, home string) Service {
 	}
 }
 
+func TestSQLPathsRejectUnexpectedEndpointHost(t *testing.T) {
+	for _, host := range []string{"x@evil.example", "evil.example", "gateway01.us-east-1.prod.aws.tidbcloud.com.evil.example"} {
+		t.Run(host, func(t *testing.T) {
+			clusterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, _ := json.Marshal(map[string]any{
+					"clusterId":   "cluster-1",
+					"displayName": "demo",
+					"clusterPlan": "STARTER",
+					"endpoints":   map[string]any{"public": map[string]any{"host": host, "port": 4000}},
+				})
+				_, _ = w.Write(body)
+			}))
+			defer clusterServer.Close()
+			var sqlRequests atomic.Int32
+			sqlServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				sqlRequests.Add(1)
+			}))
+			defer sqlServer.Close()
+
+			home := t.TempDir()
+			writeSQLCreds(t, home, "cluster-1")
+			service := testSQLService(clusterServer.URL, home).withSQLHTTPBaseURL(sqlServer.URL)
+			service.MySQLDriverName = countingMySQLDriverName
+			opensBefore := countingMySQL.opens.Load()
+			for name, run := range map[string]func() error{
+				"connection string": func() error {
+					_, err := service.CreateConnectionString(context.Background(), CreateConnectionStringOptions{Profile: testProfile(), ClusterID: "cluster-1"})
+					return err
+				},
+				"https": func() error {
+					_, err := service.ExecuteSQL(context.Background(), ExecuteSQLOptions{Profile: testProfile(), ClusterID: "cluster-1", SQL: "select 1", Transport: "https"})
+					return err
+				},
+				"mysql": func() error {
+					_, err := service.ExecuteSQL(context.Background(), ExecuteSQLOptions{Profile: testProfile(), ClusterID: "cluster-1", SQL: "select 1", Transport: "mysql"})
+					return err
+				},
+			} {
+				if err := run(); apperr.CodeFor(err) != "db.unexpected_endpoint_host" {
+					t.Fatalf("%s: expected db.unexpected_endpoint_host, got %v", name, err)
+				}
+			}
+			if got := sqlRequests.Load(); got != 0 {
+				t.Fatalf("SQL requests = %d, want 0", got)
+			}
+			if got := countingMySQL.opens.Load() - opensBefore; got != 0 {
+				t.Fatalf("MySQL connections opened = %d, want 0", got)
+			}
+		})
+	}
+}
+
+func TestConnectionStringUsesNormalizedEndpointHost(t *testing.T) {
+	clusterServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo","clusterPlan":"STARTER","endpoints":{"public":{"host":"GATEWAY01.US-EAST-1.PROD.AWS.TIDBCLOUD.COM.","port":4000}}}`))
+	}))
+	defer clusterServer.Close()
+	home := t.TempDir()
+	writeSQLCreds(t, home, "cluster-1")
+
+	result, err := testSQLService(clusterServer.URL, home).CreateConnectionString(context.Background(), CreateConnectionStringOptions{
+		Profile:   testProfile(),
+		ClusterID: "cluster-1",
+		Database:  "app",
+		Format:    connectionstring.FormatJDBC,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		t.Fatalf("CreateConnectionString failed: %v", err)
+	}
+	if !strings.Contains(result.ConnectionString, "jdbc:mysql://gateway01.us-east-1.prod.aws.tidbcloud.com:4000/app?") {
+		t.Fatalf("connection string should use the normalized host: %s", result.ConnectionString)
+	}
+}
+
+const countingMySQLDriverName = "ti_starter_counting_mysql"
+
+// countingMySQL records connection attempts so tests can prove that a
+// rejected endpoint never reaches the MySQL driver.
+var countingMySQL = func() *countingDriver {
+	d := &countingDriver{}
+	sql.Register(countingMySQLDriverName, d)
+	return d
+}()
+
+type countingDriver struct {
+	opens atomic.Int32
+}
+
+func (d *countingDriver) Open(string) (driver.Conn, error) {
+	d.opens.Add(1)
+	return nil, errors.New("counting driver: connections are not supported")
+}
+
 func (s Service) withSQLHTTPBaseURL(baseURL string) Service {
 	s.SQLHTTPBaseURL = baseURL
 	return s
@@ -266,7 +364,7 @@ func clusterEndpointServer(t *testing.T) *httptest.Server {
 		if r.Method != http.MethodGet || r.URL.Path != "/v1beta1/clusters/cluster-1" {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo","clusterPlan":"STARTER","endpoints":{"public":{"host":"gateway.example.com","port":4000}}}`))
+		_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo","clusterPlan":"STARTER","endpoints":{"public":{"host":"gateway01.us-east-1.prod.aws.tidbcloud.com","port":4000}}}`))
 	}))
 }
 
