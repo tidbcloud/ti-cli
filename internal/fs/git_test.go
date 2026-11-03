@@ -69,6 +69,22 @@ func linkedTestTarget(root string) mountedGitTarget {
 	}
 }
 
+// gitDirRelTestName turns a hostile gitdir_rel value into a readable subtest
+// name. Control characters, including the NUL byte used in these cases, would
+// otherwise truncate or garble CI output.
+func gitDirRelTestName(gitDirRel string) string {
+	name := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' {
+			return '_'
+		}
+		return r
+	}, gitDirRel)
+	if name == "" {
+		return "empty"
+	}
+	return name
+}
+
 // TestRestoreGitLayoutRejectsRemoteGitDirRelTraversal covers the reported
 // information-protection finding: gitdir_rel comes from the FS API response and
 // must not name a local directory, because the resolved directory is created,
@@ -93,8 +109,7 @@ func TestRestoreGitLayoutRejectsRemoteGitDirRelTraversal(t *testing.T) {
 	}
 	for _, gitDirRel := range unsafeValues {
 		gitDirRel := gitDirRel
-		name := strings.ReplaceAll(strings.ReplaceAll(gitDirRel, "/", "_"), "\\", "_")
-		t.Run(name, func(t *testing.T) {
+		t.Run(gitDirRelTestName(gitDirRel), func(t *testing.T) {
 			root := t.TempDir()
 			victimDir := filepath.Join(root, "victim")
 			if err := os.MkdirAll(victimDir, 0o755); err != nil {
