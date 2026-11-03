@@ -1040,7 +1040,7 @@ func restoreGitStateArchive(content []byte, gitDir string) error {
 // returns its extraction target plus its archive-relative path.
 func safeGitStateArchiveTarget(gitDir, name string) (target string, rel string, err error) {
 	rel = gitStateEntryRel(name)
-	if rel == "." || rel == "" || rel == "objects" || strings.HasPrefix(rel, "objects/") {
+	if rel == "." || rel == "" || containsGitStateName(rel, "objects") {
 		return "", "", apperr.New("git.invalid_git_state_entry", "runtime", 1, fmt.Sprintf("invalid git state archive entry %q", name))
 	}
 	target = filepath.Join(gitDir, filepath.FromSlash(rel))
@@ -1063,14 +1063,35 @@ func gitStateEntryRel(name string) string {
 func isReservedGitStateEntry(rel string) bool {
 	parts := strings.Split(rel, "/")
 	for i, part := range parts {
-		if part == "hooks" {
+		if gitStateNameEqual(part, "hooks") {
 			return true
 		}
-		if i == len(parts)-1 && (part == "config" || part == "config.worktree") {
+		if i == len(parts)-1 && (gitStateNameEqual(part, "config") || gitStateNameEqual(part, "config.worktree")) {
 			return true
 		}
 	}
 	return false
+}
+
+// containsGitStateName reports whether any component of the archive-relative
+// path names a reserved git directory.
+func containsGitStateName(rel, reserved string) bool {
+	for _, part := range strings.Split(rel, "/") {
+		if gitStateNameEqual(part, reserved) {
+			return true
+		}
+	}
+	return false
+}
+
+// gitStateNameEqual compares a remote-supplied archive entry name with a
+// reserved lowercase name. Case-insensitive comparison plus trailing dot and
+// space trimming matches how the name can resolve on case-insensitive
+// filesystems and on Windows, where "Hooks" or "config." name the same
+// directory as "hooks" and "config". Without the normalization a hostile
+// archive could bypass the reserved-entry check by changing the case.
+func gitStateNameEqual(name, reserved string) bool {
+	return strings.ToLower(strings.TrimRight(name, ". ")) == reserved
 }
 
 // safeGitObjectSHA validates a remote-supplied git object id and returns it in
@@ -1259,19 +1280,18 @@ func archiveGitStateDir(gitDir string) ([]byte, error) {
 
 func skipGitStatePath(rel string, entry fs.DirEntry) bool {
 	clean := pathpkg.Clean(rel)
-	if clean == "objects" || strings.HasPrefix(clean, "objects/") {
+	if clean == "." || clean == "" {
+		return false
+	}
+	// Objects and the reserved config/hooks entries are never restored, so they
+	// are also left out of the uploaded state. Dropping config keeps local git
+	// configuration, which can embed credentials or a core.sshCommand, off the
+	// wire to the FS backend.
+	if containsGitStateName(clean, "objects") || isReservedGitStateEntry(clean) {
 		return true
 	}
 	if strings.HasSuffix(clean, ".lock") {
 		return true
-	}
-	parts := strings.Split(clean, "/")
-	for i, part := range parts {
-		if part == "objects" {
-			if i > 0 && parts[i-1] == "modules" {
-				return true
-			}
-		}
 	}
 	_ = entry
 	return false

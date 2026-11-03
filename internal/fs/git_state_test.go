@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -203,4 +204,143 @@ func TestHydrateGitWorkspaceRejectsInjectedObjectSHA(t *testing.T) {
 	if !strings.Contains(err.Error(), "invalid git object id") {
 		t.Fatalf("error = %v", err)
 	}
+}
+
+// TestGitStateReservedEntryMatchingIsCaseAndSuffixInsensitive pins the
+// normalization that stops a hostile archive from renaming "config" or "hooks"
+// to values that resolve to the same path on case-insensitive filesystems and on
+// Windows.
+func TestGitStateReservedEntryMatchingIsCaseAndSuffixInsensitive(t *testing.T) {
+	reserved := []string{
+		"config",
+		"CONFIG",
+		"Config",
+		"config.",
+		"config ",
+		"config.worktree",
+		"Config.Worktree",
+		"hooks",
+		"Hooks",
+		"hooks/pre-commit",
+		"worktrees/feature-x/Hooks/pre-commit",
+		"worktrees/feature-x/config.worktree",
+		"worktrees/feature-x/CONFIG",
+	}
+	for _, rel := range reserved {
+		if !isReservedGitStateEntry(rel) {
+			t.Fatalf("isReservedGitStateEntry(%q) = false", rel)
+		}
+	}
+	allowed := []string{
+		"HEAD",
+		"index",
+		"logs/HEAD",
+		"refs/heads/main",
+		"worktrees/feature-x/HEAD",
+		"config-value",
+		"hooks.txt",
+	}
+	for _, rel := range allowed {
+		if isReservedGitStateEntry(rel) {
+			t.Fatalf("isReservedGitStateEntry(%q) = true", rel)
+		}
+	}
+	if !containsGitStateName("objects", "objects") || !containsGitStateName("Objects/pack/x", "objects") || !containsGitStateName("modules/sub/objects/info", "objects") {
+		t.Fatal("objects component was not detected")
+	}
+	if containsGitStateName("worktrees/feature-x/HEAD", "objects") {
+		t.Fatal("false positive for a legitimate entry")
+	}
+}
+
+func TestRestoreGitStateArchiveNormalizesCaseAndTrailingDots(t *testing.T) {
+	content := buildGitStateTestArchive(t, []gitStateTestEntry{
+		{name: "HEAD", body: "ref: refs/heads/main\n", mode: 0o644, typeflag: tar.TypeReg},
+		{name: "CONFIG", body: "[core]\n\tfsmonitor = /tmp/ti-evil\n", mode: 0o644, typeflag: tar.TypeReg},
+		{name: "config.", body: "[core]\n\tfsmonitor = /tmp/ti-evil\n", mode: 0o644, typeflag: tar.TypeReg},
+		{name: "Hooks", mode: 0o755, typeflag: tar.TypeDir},
+		{name: "Hooks/pre-commit", body: "#!/bin/sh\nid\n", mode: 0o755, typeflag: tar.TypeReg},
+		{name: "Objects/pack/pack-test.pack", body: "not an object", mode: 0o644, typeflag: tar.TypeReg},
+	})
+	gitDir := filepath.Join(t.TempDir(), ".git")
+	err := restoreGitStateArchive(content, gitDir)
+	if err == nil {
+		t.Fatal("mixed archive with an objects entry was accepted")
+	}
+	if code := apperr.CodeFor(err); code != "git.invalid_git_state_entry" {
+		t.Fatalf("error code = %q: %v", code, err)
+	}
+	for _, rel := range []string{"CONFIG", "config.", "Hooks", "Hooks/pre-commit"} {
+		if _, statErr := os.Lstat(filepath.Join(gitDir, rel)); !os.IsNotExist(statErr) {
+			t.Fatalf("reserved entry %q was restored (err = %v)", rel, err)
+		}
+	}
+}
+
+// TestArchiveGitStateDirDropsReservedEntriesForUpload keeps local git config,
+// which can embed credentials or a core.sshCommand, out of the state that is
+// uploaded to the FS backend, and keeps save/restore symmetric.
+func TestArchiveGitStateDirDropsReservedEntriesForUpload(t *testing.T) {
+	root := t.TempDir()
+	gitDir := filepath.Join(root, ".git")
+	for _, dir := range []string{
+		filepath.Join(gitDir, "hooks"),
+		filepath.Join(gitDir, "objects", "pack"),
+		filepath.Join(gitDir, "logs"),
+		filepath.Join(gitDir, "worktrees", "feature-x"),
+	} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	files := map[string]string{
+		filepath.Join(gitDir, "HEAD"):                                      "ref: refs/heads/main\n",
+		filepath.Join(gitDir, "config"):                                    "[remote \"origin\"]\n\turl = https://user:secret@example.com/repo\n",
+		filepath.Join(gitDir, "hooks", "pre-commit"):                       "#!/bin/sh\nid\n",
+		filepath.Join(gitDir, "objects", "pack", "pack-test.pack"):         "object",
+		filepath.Join(gitDir, "logs", "HEAD"):                              "log\n",
+		filepath.Join(gitDir, "worktrees", "feature-x", "config.worktree"): "[core]\n\tfsmonitor = /tmp/ti-evil\n",
+	}
+	for path, body := range files {
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive, err := archiveGitStateDir(gitDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := readGitStateArchiveNames(t, archive)
+	for _, name := range []string{"HEAD", "logs/HEAD"} {
+		if !names[name] {
+			t.Fatalf("archive is missing %q: %v", name, names)
+		}
+	}
+	for _, name := range []string{"config", "hooks", "hooks/pre-commit", "objects", "objects/pack", "objects/pack/pack-test.pack", "worktrees/feature-x/config.worktree"} {
+		if names[name] {
+			t.Fatalf("archive still contains %q: %v", name, names)
+		}
+	}
+}
+
+func readGitStateArchiveNames(t *testing.T, content []byte) map[string]bool {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer gz.Close()
+	names := map[string]bool{}
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names[hdr.Name] = true
+	}
+	return names
 }
