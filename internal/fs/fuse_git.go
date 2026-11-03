@@ -187,7 +187,13 @@ func (r *remoteFuseRuntime) gitReadFile(ctx context.Context, entry fuseGitEntry)
 	if strings.TrimSpace(entry.clean.ObjectSHA) == "" {
 		return nil, os.ErrNotExist
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "cat-file", "-p", entry.clean.ObjectSHA)
+	// Security (information protection): object_sha comes from the remote tree
+	// entry, so validate it before it becomes a git argument.
+	objectSHA, err := safeGitObjectSHA(entry.clean.ObjectSHA)
+	if err != nil {
+		return nil, os.ErrInvalid
+	}
+	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "cat-file", "-p", objectSHA)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

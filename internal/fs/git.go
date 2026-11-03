@@ -580,7 +580,15 @@ func (s Service) hydrateGitWorkspaceWithClient(ctx context.Context, client *apif
 			result.Skipped++
 			continue
 		}
-		if err := runGit(hydrateCtx, opts.TargetPath, "cat-file", "-e", node.ObjectSHA+"^{object}"); err != nil {
+		// Security (information protection): object_sha is remote-supplied and is
+		// passed to git argv below, so only a hexadecimal object id may reach it.
+		// Otherwise a value such as "--batch" or "-h" would be parsed as a git
+		// option instead of a revision.
+		objectSHA, err := safeGitObjectSHA(node.ObjectSHA)
+		if err != nil {
+			return GitHydrateResult{}, apperr.Wrap("git.hydrate_object", "runtime", 1, fmt.Sprintf("hydrate git object for %s", node.Path), err)
+		}
+		if err := runGit(hydrateCtx, opts.TargetPath, "cat-file", "-e", objectSHA+"^{object}"); err != nil {
 			return GitHydrateResult{}, apperr.Wrap("git.hydrate_object", "runtime", 1, fmt.Sprintf("hydrate git object for %s", node.Path), err)
 		}
 		if node.Kind == "file" {
@@ -900,9 +908,17 @@ func restoreGitStateArchive(content []byte, gitDir string) error {
 		if err != nil {
 			return apperr.Wrap("git.extract_git_state_archive", "runtime", 1, "read git state archive entry", err)
 		}
-		target, err := safeGitStateArchiveTarget(gitDir, hdr.Name)
+		target, rel, err := safeGitStateArchiveTarget(gitDir, hdr.Name)
 		if err != nil {
 			return err
+		}
+		if isReservedGitStateEntry(rel) {
+			// Security (information protection): the git state archive and its
+			// entry names come from the remote FS backend. git config and hooks
+			// are never restored, because a hostile archive could otherwise plant
+			// an executable hook or a config command that git runs on the next
+			// invocation in the restored workspace.
+			continue
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -931,17 +947,58 @@ func restoreGitStateArchive(content []byte, gitDir string) error {
 	return nil
 }
 
-func safeGitStateArchiveTarget(gitDir, name string) (string, error) {
-	clean := pathpkg.Clean(strings.TrimPrefix(filepath.ToSlash(name), "/"))
-	if clean == "." || clean == "" || clean == "objects" || strings.HasPrefix(clean, "objects/") {
-		return "", apperr.New("git.invalid_git_state_entry", "runtime", 1, fmt.Sprintf("invalid git state archive entry %q", name))
+// safeGitStateArchiveTarget validates one remote git state archive entry and
+// returns its extraction target plus its archive-relative path.
+func safeGitStateArchiveTarget(gitDir, name string) (target string, rel string, err error) {
+	rel = gitStateEntryRel(name)
+	if rel == "." || rel == "" || rel == "objects" || strings.HasPrefix(rel, "objects/") {
+		return "", "", apperr.New("git.invalid_git_state_entry", "runtime", 1, fmt.Sprintf("invalid git state archive entry %q", name))
 	}
-	target := filepath.Join(gitDir, filepath.FromSlash(clean))
-	rel, err := filepath.Rel(gitDir, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", apperr.New("git.invalid_git_state_entry", "runtime", 1, fmt.Sprintf("git state archive entry escapes .git: %q", name))
+	target = filepath.Join(gitDir, filepath.FromSlash(rel))
+	relToGitDir, err := filepath.Rel(gitDir, target)
+	if err != nil || relToGitDir == ".." || strings.HasPrefix(relToGitDir, ".."+string(filepath.Separator)) {
+		return "", "", apperr.New("git.invalid_git_state_entry", "runtime", 1, fmt.Sprintf("git state archive entry escapes .git: %q", name))
 	}
-	return target, nil
+	return target, rel, nil
+}
+
+// gitStateEntryRel normalizes a remote git state archive entry name into a
+// clean slash-separated path relative to the git directory.
+func gitStateEntryRel(name string) string {
+	return pathpkg.Clean(strings.TrimPrefix(filepath.ToSlash(name), "/"))
+}
+
+// isReservedGitStateEntry reports whether a remote git state archive entry must
+// not be restored. Git config and hooks are the entries that turn a hostile
+// archive into local code execution, so they are dropped instead of written.
+func isReservedGitStateEntry(rel string) bool {
+	parts := strings.Split(rel, "/")
+	for i, part := range parts {
+		if part == "hooks" {
+			return true
+		}
+		if i == len(parts)-1 && (part == "config" || part == "config.worktree") {
+			return true
+		}
+	}
+	return false
+}
+
+// safeGitObjectSHA validates a remote-supplied git object id and returns it in
+// trimmed form. Object ids are the only remote value passed to `git cat-file`
+// argv, so they must be plain hexadecimal: a value such as "--batch" or "-h"
+// would otherwise be parsed as a git option instead of a revision.
+func safeGitObjectSHA(objectSHA string) (string, error) {
+	value := strings.TrimSpace(objectSHA)
+	if len(value) != 40 && len(value) != 64 {
+		return "", apperr.New("git.invalid_object_sha", "runtime", 1, fmt.Sprintf("invalid git object id %q", objectSHA))
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return "", apperr.New("git.invalid_object_sha", "runtime", 1, fmt.Sprintf("invalid git object id %q", objectSHA))
+		}
+	}
+	return value, nil
 }
 
 func removeGitStateExceptObjects(gitDir string) error {
