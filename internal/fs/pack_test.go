@@ -3,6 +3,7 @@ package fs
 import (
 	"archive/tar"
 	"bytes"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -489,8 +490,9 @@ func TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown(t *test
 		t.Fatal(err)
 	}
 	// The archive installs `repo/s`; combined with the unknown folding rule this
-	// makes the pre-run answer ambiguous while the live resolution escapes.
-	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil {
+	// makes the pre-run answer ambiguous while the live resolution escapes. On a
+	// case-insensitive volume `repo/s` already names `repo/S`, so EEXIST is fine.
+	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil && !errors.Is(err, os.ErrExist) {
 		t.Fatal(err)
 	}
 	previous := overlayCaseFoldingProbe
@@ -530,5 +532,70 @@ func TestAuditUnpackedOverlaySymlinksPreservesKnownPreExistingEscape(t *testing.
 	}
 	if _, statErr := os.Lstat(preexisting); statErr != nil {
 		t.Fatalf("pre-existing link was removed: %v", statErr)
+	}
+}
+
+// TestOverlayLinkGraphCanonicalizesAncestorCaseAliases covers the review finding
+// that a case alias in a regular ancestor component (repo vs Repo) must resolve
+// the way the folding ancestor directory does, not through the final directory's
+// rule.
+func TestOverlayLinkGraphCanonicalizesAncestorCaseAliases(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "Repo")
+	work := filepath.Join(overlayRoot, "A")
+	for _, dir := range []string{filepath.Join(repo, "deep", "dir"), work} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink("..", filepath.Join(work, "t")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("deep/dir", filepath.Join(repo, "S")); err != nil {
+		t.Fatal(err)
+	}
+	target := "t/repo/S/../../../outside"
+	linkA := filepath.Join(work, "a")
+	if err := os.Symlink(target, linkA); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := scanOverlaySymlinks(localRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only the overlay root folds; the subdirectories are case-sensitive.
+	probe := func(dir string) (bool, bool) {
+		return filepath.Clean(dir) == filepath.Clean(overlayRoot), true
+	}
+	graph := newOverlayLinkGraph(snapshot, probe)
+	confined, ambiguous := overlayLinkConfined(localRoot, overlayRoot, graph, linkA, target)
+	if !confined || ambiguous {
+		t.Fatalf("ancestor case alias resolution = (confined=%v ambiguous=%v), want (true, false)", confined, ambiguous)
+	}
+}
+
+// TestOverlayDirCaseFoldingIgnoresHardLinkPairs covers the review finding that a
+// same-inode case-variant pair is not proof of case-insensitive lookup.
+func TestOverlayDirCaseFoldingIgnoresHardLinkPairs(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	lower := filepath.Join(dir, ".aa")
+	upper := filepath.Join(dir, ".AA")
+	if err := os.Link(target, lower); err != nil {
+		t.Skipf("hard links are not supported: %v", err)
+	}
+	if err := os.Link(target, upper); err != nil {
+		t.Skipf("case-insensitive volume: the case variant names the same entry (%v)", err)
+	}
+	folds, known := overlayDirCaseFolding(dir)
+	if !known {
+		t.Fatalf("probe was inconclusive for %q", dir)
+	}
+	if folds {
+		t.Fatal("hard-linked case-variant entries were treated as case folding")
 	}
 }

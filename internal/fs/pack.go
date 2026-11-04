@@ -1510,6 +1510,28 @@ func (g overlayLinkGraph) lookup(dir, name string) (string, linkLookupClass) {
 	}
 }
 
+// canonicalDirEntry returns the stored spelling of name inside dir when the
+// entry exists. It is how a case-insensitive directory aliases a differently
+// cased ancestor segment back to the name the filesystem actually stores.
+func canonicalDirEntry(dir, name string) (string, bool) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return name, false
+	}
+	lowered := strings.ToLower(name)
+	for _, entry := range entries {
+		if entry.Name() == name {
+			return name, true
+		}
+	}
+	for _, entry := range entries {
+		if strings.ToLower(entry.Name()) == lowered {
+			return entry.Name(), true
+		}
+	}
+	return name, false
+}
+
 // overlayDirCaseFolding reports whether dir resolves entry names
 // case-insensitively, and whether that could be determined. It inspects the
 // directory's own entries first, so a read-only directory is still classified,
@@ -1517,18 +1539,25 @@ func (g overlayLinkGraph) lookup(dir, name string) (string, linkLookupClass) {
 func overlayDirCaseFolding(dir string) (folds bool, known bool) {
 	entries, err := os.ReadDir(dir)
 	if err == nil {
+		names := make(map[string]struct{}, len(entries))
+		for _, entry := range entries {
+			names[entry.Name()] = struct{}{}
+		}
 		for _, entry := range entries {
 			name := entry.Name()
 			upper := strings.ToUpper(name)
 			if upper == name {
 				continue
 			}
-			original, err1 := os.Lstat(filepath.Join(dir, name))
-			variant, err2 := os.Lstat(filepath.Join(dir, upper))
-			switch {
-			case err1 == nil && err2 == nil:
-				return os.SameFile(original, variant), true
-			case err1 == nil && errors.Is(err2, os.ErrNotExist):
+			if _, distinct := names[upper]; distinct {
+				// A separately stored case-variant entry proves nothing about
+				// folding: on a case-sensitive volume it can be another entry,
+				// even a hard link to the same inode.
+				continue
+			}
+			if _, err := os.Lstat(filepath.Join(dir, upper)); err == nil {
+				return true, true
+			} else if errors.Is(err, os.ErrNotExist) {
 				return false, true
 			}
 		}
@@ -1540,16 +1569,16 @@ func overlayDirCaseFolding(dir string) (folds bool, known bool) {
 	name := probe.Name()
 	_ = probe.Close()
 	defer os.Remove(name)
-	original, err1 := os.Lstat(name)
-	variant, err2 := os.Lstat(filepath.Join(dir, strings.ToUpper(filepath.Base(name))))
-	switch {
-	case err1 == nil && err2 == nil:
-		return os.SameFile(original, variant), true
-	case errors.Is(err2, os.ErrNotExist):
-		return false, true
-	default:
+	variantName := filepath.Join(dir, strings.ToUpper(filepath.Base(name)))
+	if _, err := os.Lstat(name); err != nil {
 		return false, false
 	}
+	if _, err := os.Lstat(variantName); err == nil {
+		return true, true
+	} else if errors.Is(err, os.ErrNotExist) {
+		return false, true
+	}
+	return false, false
 }
 
 // overlayCaseFoldingProbe is a seam so tests can supply folding answers.
@@ -1579,6 +1608,17 @@ func resolveOverlaySymlinkTarget(graph overlayLinkGraph, linkPath string) (resol
 		case "..":
 			current = filepath.Dir(current)
 			continue
+		}
+		if graph.byPath != nil {
+			// Walk the path the way the kernel does: a directory's own folding
+			// rule decides the stored spelling of the next component, so an
+			// ancestor segment reached through a case alias is canonicalized
+			// before the snapshot is consulted.
+			if folds, known := graph.dirCaseFolding(current); known && folds {
+				if actual, ok := canonicalDirEntry(current, part); ok {
+					part = actual
+				}
+			}
 		}
 		next := filepath.Join(current, part)
 		linkTarget, class := graph.lookup(current, part)
