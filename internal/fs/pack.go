@@ -1503,10 +1503,13 @@ func storedEntryName(parent string, info os.FileInfo) (string, bool) {
 
 // resolveOverlayTargetLive resolves the target of the link at linkPath through
 // the live filesystem, applying ".." to the already resolved prefix the way the
-// kernel does. Names are canonicalized to the stored spelling when the filesystem
-// resolves them differently. tainted reports whether the walk passed through a
-// path this unpack installed, changed, or removed.
-func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}) (resolved string, tainted bool, err error) {
+// kernel does. With canonicalize set, every component is replaced by the name the
+// parent directory actually stores (matched by filesystem identity), so an
+// ancestor reached through an alternate spelling still maps back to the changed
+// entry; containment itself never needs it, because the filesystem resolves the
+// requested path. tainted reports whether the walk passed through a path this
+// unpack installed, changed, or removed.
+func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}, canonicalize bool) (resolved string, tainted bool, err error) {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
 		return "", false, err
@@ -1514,21 +1517,6 @@ func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}) (res
 	current := filepath.Dir(linkPath)
 	pending := strings.Split(filepath.ToSlash(target), "/")
 	hops := 0
-	attribute := func(path string, info os.FileInfo) bool {
-		clean := filepath.Clean(path)
-		if _, ok := changed[clean]; ok {
-			return true
-		}
-		if info == nil {
-			return false
-		}
-		stored, ok := storedEntryName(filepath.Dir(clean), info)
-		if !ok {
-			return false
-		}
-		_, ok = changed[filepath.Join(filepath.Dir(clean), stored)]
-		return ok
-	}
 	for len(pending) > 0 {
 		part := pending[0]
 		pending = pending[1:]
@@ -1541,13 +1529,20 @@ func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}) (res
 		}
 		next := filepath.Join(current, part)
 		info, lstatErr := os.Lstat(next)
+		if lstatErr == nil && canonicalize {
+			if stored, ok := storedEntryName(filepath.Dir(next), info); ok {
+				next = filepath.Join(filepath.Dir(next), stored)
+			}
+		}
+		if lstatErr == nil {
+			if _, ok := changed[filepath.Clean(next)]; ok {
+				tainted = true
+			}
+		}
 		if lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
 			hops++
 			if hops > maxOverlaySymlinkHops {
 				return "", false, fmt.Errorf("too many symlink hops while resolving %q", linkPath)
-			}
-			if attribute(next, info) {
-				tainted = true
 			}
 			linkTarget, readErr := os.Readlink(next)
 			if readErr != nil {
@@ -1557,12 +1552,8 @@ func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}) (res
 				current = string(filepath.Separator)
 			}
 			pending = append(strings.Split(filepath.ToSlash(linkTarget), "/"), pending...)
+			current = filepath.Dir(next)
 			continue
-		}
-		if lstatErr == nil && attribute(next, info) {
-			// A dependency that stopped being a symlink (retyped or replaced) is
-			// still attributable to this run.
-			tainted = true
 		}
 		current = next
 	}
@@ -1603,9 +1594,16 @@ func auditUnpackedOverlaySymlinks(localRoot string, before map[string]overlayEnt
 		escape := validatePackSymlinkTarget(localRoot, filepath.ToSlash(rel), entry.target) != nil
 		tainted := false
 		if !escape {
-			resolved, dependsOnChanged, resolveErr := resolveOverlayTargetLive(linkPath, changed)
+			resolved, dependsOnChanged, resolveErr := resolveOverlayTargetLive(linkPath, changed, false)
 			tainted = dependsOnChanged
 			escape = resolveErr != nil || !overlayPathWithin(overlayRoot, resolved)
+			if escape && !attributable && !tainted {
+				// The requested spelling may not be the stored one for an ancestor,
+				// so re-resolve with every component canonicalized before deciding
+				// that this link is not attributable.
+				_, dependsOnChanged, _ = resolveOverlayTargetLive(linkPath, changed, true)
+				tainted = dependsOnChanged
+			}
 		}
 		if !escape || (!attributable && !tainted) {
 			continue
