@@ -159,6 +159,10 @@ func main() {
 				_ = os.Symlink("..", filepath.Join(overlay, "repo", "s"))
 				_ = os.Symlink("s/../outside", filepath.Join(overlay, "repo", "a"))
 			}
+			if os.Getenv("FAKE_DRIVE9_UNPACK_UNREADABLE") == "1" {
+				_ = os.MkdirAll(filepath.Join(overlay, "z"), 0o755)
+				_ = os.Chmod(filepath.Join(overlay, "z"), 0o000)
+			}
 			if os.Getenv("FAKE_DRIVE9_UNPACK_REPLACE_S") == "1" {
 				// Replace a pre-existing directory dependency with a link, so an
 				// unchanged link that passes through it changes meaning.

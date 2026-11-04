@@ -163,6 +163,26 @@ func TestFSUnpackFileSystemRejectsEscapingSymlinksFromCompanion(t *testing.T) {
 		}
 	})
 
+	t.Run("incomplete-walk-still-cleans", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root bypasses directory permissions")
+		}
+		localRoot := t.TempDir()
+		env := append([]string{}, baseEnv...)
+		env = append(env,
+			"FAKE_DRIVE9_UNPACK_SYMLINK_REL=repo/escape",
+			"FAKE_DRIVE9_UNPACK_SYMLINK_TARGET=/etc/passwd",
+			"FAKE_DRIVE9_UNPACK_UNREADABLE=1",
+		)
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(localRoot, "overlay", "z"), 0o755) })
+		result := runTIWithInput(t, bin, "", env, unpackArgs(localRoot)...)
+		result.wantExitCode(1)
+		result.wantStderrContains("not trusted")
+		if _, err := os.Lstat(filepath.Join(localRoot, "overlay", "repo", "escape")); !os.IsNotExist(err) {
+			t.Fatalf("escape survived an incomplete audit: %v", err)
+		}
+	})
+
 	t.Run("mount-without-local-root-fails-closed", func(t *testing.T) {
 		env := append([]string{}, baseEnv...)
 		result := runTIWithInput(t, bin, "", env, "fs", "unpack-file-system", "--mount-path", filepath.Join(home, "mnt"), "--remote-root", "/workspace")

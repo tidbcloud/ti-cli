@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -269,5 +270,46 @@ func TestAuditUnpackedOverlaySymlinksDoesNotMutateSafeDirectories(t *testing.T) 
 	}
 	if !info.ModTime().Equal(want) {
 		t.Fatalf("audit changed the directory mtime: got %v want %v", info.ModTime(), want)
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksCleansUpBeforeReportingWalkErrors covers the
+// review finding that a traversal failure must not leave a detected escape
+// installed: the collected links are removed even though the walk is incomplete,
+// and the command still fails closed.
+func TestAuditUnpackedOverlaySymlinksCleansUpBeforeReportingWalkErrors(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root bypasses directory permissions, so the traversal failure cannot be exercised")
+	}
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "a")
+	unreadable := filepath.Join(overlayRoot, "z")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(unreadable, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	escape := filepath.Join(repo, "escape")
+	if err := os.Symlink("/etc/passwd", escape); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unreadable, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
+	err := auditUnpackedOverlaySymlinks(localRoot)
+	if err == nil {
+		t.Fatal("incomplete audit was reported as success")
+	}
+	if code := apperr.CodeFor(err); code != "fs.unpack_audit_incomplete" {
+		t.Fatalf("error code = %q: %v", code, err)
+	}
+	if _, statErr := os.Lstat(escape); !os.IsNotExist(statErr) {
+		t.Fatalf("detected escape survived an incomplete walk: %v", statErr)
+	}
+	if !strings.Contains(err.Error(), "removed 1 unsafe symlink") {
+		t.Fatalf("error does not report the cleanup: %v", err)
 	}
 }
