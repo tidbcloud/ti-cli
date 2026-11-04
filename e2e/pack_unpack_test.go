@@ -105,7 +105,7 @@ func TestFSUnpackFileSystemRejectsEscapingSymlinksFromCompanion(t *testing.T) {
 		}
 	})
 
-	t.Run("pre-existing-links-preserved", func(t *testing.T) {
+	t.Run("escalating-preexisting-link-removed", func(t *testing.T) {
 		localRoot := t.TempDir()
 		preexisting := filepath.Join(localRoot, "overlay", "other", "tool")
 		if err := os.MkdirAll(filepath.Dir(preexisting), 0o755); err != nil {
@@ -116,11 +116,12 @@ func TestFSUnpackFileSystemRejectsEscapingSymlinksFromCompanion(t *testing.T) {
 		}
 		env := append([]string{}, baseEnv...)
 		result := runTIWithInput(t, bin, "", env, unpackArgs(localRoot)...)
-		result.wantExitCode(0)
-		result.wantStdoutContains(`"status": "unpacked"`)
-		got, err := os.Readlink(preexisting)
-		if err != nil || got != "/usr/bin/tool" {
-			t.Fatalf("pre-existing link was modified: got=%q err=%v", got, err)
+		// The local overlay is ti-managed state: an escaping link is removed
+		// regardless of which run created it, and the command fails closed.
+		result.wantExitCode(1)
+		result.wantStderrContains("unsafe symlink")
+		if _, err := os.Lstat(preexisting); !os.IsNotExist(err) {
+			t.Fatalf("escaping link was left in the overlay: %v", err)
 		}
 	})
 

@@ -1258,15 +1258,10 @@ func (s Service) drive9PackFileSystem(ctx context.Context, opts PackFileSystemOp
 
 func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSystemOptions) (UnpackFileSystemResult, error) {
 	// Security (information protection): the tar extraction happens inside the
-	// ti-drive9 companion, so resolve the effective local overlay first, snapshot
-	// its symlinks, and audit whatever the companion produced. An unknown overlay
-	// is an error: silently skipping the audit would leave the command
-	// vulnerable.
+	// ti-drive9 companion, so resolve the effective local overlay first and audit
+	// whatever the companion produced. An unknown overlay is an error: silently
+	// skipping the audit would leave the command vulnerable.
 	localRoot, err := s.unpackAuditLocalRoot(opts)
-	if err != nil {
-		return UnpackFileSystemResult{}, err
-	}
-	before, err := scanOverlayTree(localRoot)
 	if err != nil {
 		return UnpackFileSystemResult{}, err
 	}
@@ -1289,7 +1284,7 @@ func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSyst
 	_, runErr := s.drive9Run(ctx, opts.Profile, args, false)
 	// The audit also runs when the companion failed: unpack is not atomic, so a
 	// partial install can already have written an escaping link.
-	auditErr := auditUnpackedOverlaySymlinks(localRoot, before)
+	auditErr := auditUnpackedOverlaySymlinks(localRoot)
 	switch {
 	case runErr != nil && auditErr != nil:
 		return UnpackFileSystemResult{}, apperr.New("fs.unpack_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", runErr, auditErr))
