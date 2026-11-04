@@ -1387,12 +1387,27 @@ func overlayPathWithin(overlayRoot, path string) bool {
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
-// scanOverlaySymlinkTargets records the target of every symlink under
-// <local root>/overlay. It is used to attribute links to one unpack run: a link
-// is attributable when it is new or its stored target changed. Attribution never
-// asks whether a link was already escaping, so no filesystem name-resolution
-// semantics have to be modeled.
-func scanOverlaySymlinkTargets(localRoot string) (map[string]string, []string, error) {
+// overlayEntryKind classifies one path in an overlay snapshot.
+type overlayEntryKind int
+
+const (
+	overlayKindDir overlayEntryKind = iota
+	overlayKindFile
+	overlayKindSymlink
+)
+
+// overlayEntryInfo is one path of an overlay snapshot. Only the kind and the
+// stored symlink target are recorded: attribution compares literal snapshots of
+// the same filesystem and never re-models name equivalence.
+type overlayEntryInfo struct {
+	kind   overlayEntryKind
+	target string
+}
+
+// scanOverlayEntries records every path under <local root>/overlay with its kind
+// and, for links, its stored target. Traversal problems are returned separately
+// so a caller can decide whether a partial scan is acceptable.
+func scanOverlayEntries(localRoot string) (map[string]overlayEntryInfo, []string, error) {
 	localRoot = strings.TrimSpace(localRoot)
 	if localRoot == "" || !filepath.IsAbs(localRoot) {
 		return nil, nil, apperr.New("fs.unpack_unknown_local_root", "runtime", 1, "cannot audit the unpacked overlay without an absolute local root")
@@ -1411,41 +1426,86 @@ func scanOverlaySymlinkTargets(localRoot string) (map[string]string, []string, e
 	if !info.IsDir() {
 		return nil, nil, nil
 	}
-	targets := map[string]string{}
+	entries := map[string]overlayEntryInfo{}
 	var problems []string
-	walkErr := filepath.WalkDir(overlayRoot, func(linkPath string, entry iofs.DirEntry, walkErr error) error {
+	walkErr := filepath.WalkDir(overlayRoot, func(path string, entry iofs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			// Keep walking so an unreadable directory cannot hide links that were
 			// already collected; the caller fails closed afterwards.
-			problems = append(problems, fmt.Sprintf("%s: %v", linkPath, walkErr))
+			problems = append(problems, fmt.Sprintf("%s: %v", path, walkErr))
 			return nil
 		}
-		if entry.IsDir() || entry.Type()&os.ModeSymlink == 0 {
-			return nil
-		}
-		target, readErr := os.Readlink(linkPath)
-		if readErr != nil {
-			if errors.Is(readErr, os.ErrNotExist) {
+		clean := filepath.Clean(path)
+		switch {
+		case entry.IsDir():
+			entries[clean] = overlayEntryInfo{kind: overlayKindDir}
+		case entry.Type()&os.ModeSymlink != 0:
+			target, readErr := os.Readlink(clean)
+			if readErr != nil {
+				if errors.Is(readErr, os.ErrNotExist) {
+					return nil
+				}
+				problems = append(problems, fmt.Sprintf("%s: %v", clean, readErr))
 				return nil
 			}
-			problems = append(problems, fmt.Sprintf("%s: %v", linkPath, readErr))
-			return nil
+			entries[clean] = overlayEntryInfo{kind: overlayKindSymlink, target: target}
+		default:
+			entries[clean] = overlayEntryInfo{kind: overlayKindFile}
 		}
-		targets[filepath.Clean(linkPath)] = target
 		return nil
 	})
 	if walkErr != nil {
 		problems = append(problems, walkErr.Error())
 	}
-	return targets, problems, nil
+	return entries, problems, nil
+}
+
+// changedOverlayPaths returns the paths whose snapshot differs between the two
+// scans, including paths that existed before and no longer exist. Replaced
+// directories, retyped links and removed links are all attributable.
+func changedOverlayPaths(before, after map[string]overlayEntryInfo) map[string]struct{} {
+	changed := make(map[string]struct{}, len(before)+len(after))
+	for path, prev := range before {
+		if current, ok := after[path]; ok && current == prev {
+			continue
+		}
+		changed[path] = struct{}{}
+	}
+	for path := range after {
+		if _, ok := before[path]; ok {
+			continue
+		}
+		changed[path] = struct{}{}
+	}
+	return changed
+}
+
+// storedEntryName returns the spelling the directory actually stores for the
+// entry described by info. Resolution is delegated to the filesystem, which may
+// reach an entry through a different spelling (case-insensitive volumes), so
+// attribution must compare against the stored name, not the requested one.
+func storedEntryName(parent string, info os.FileInfo) (string, bool) {
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return "", false
+	}
+	for _, entry := range entries {
+		entryInfo, err := entry.Info()
+		if err != nil {
+			continue
+		}
+		if os.SameFile(entryInfo, info) {
+			return entry.Name(), true
+		}
+	}
+	return "", false
 }
 
 // resolveOverlayTargetLive resolves the target of the link at linkPath through
 // the live filesystem, applying ".." to the already resolved prefix the way the
-// kernel does. Resolution is delegated to the filesystem: name equivalence (case
-// folding, Unicode folds, canonical decomposition) is the volume's own rule and
-// is never re-modeled here. tainted reports whether the walk passed through a
-// link this unpack installed or changed.
+// kernel does. Names are canonicalized to the stored spelling when the filesystem
+// resolves them differently. tainted reports whether the walk passed through a
+// path this unpack installed, changed, or removed.
 func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}) (resolved string, tainted bool, err error) {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
@@ -1454,6 +1514,21 @@ func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}) (res
 	current := filepath.Dir(linkPath)
 	pending := strings.Split(filepath.ToSlash(target), "/")
 	hops := 0
+	attribute := func(path string, info os.FileInfo) bool {
+		clean := filepath.Clean(path)
+		if _, ok := changed[clean]; ok {
+			return true
+		}
+		if info == nil {
+			return false
+		}
+		stored, ok := storedEntryName(filepath.Dir(clean), info)
+		if !ok {
+			return false
+		}
+		_, ok = changed[filepath.Join(filepath.Dir(clean), stored)]
+		return ok
+	}
 	for len(pending) > 0 {
 		part := pending[0]
 		pending = pending[1:]
@@ -1471,7 +1546,7 @@ func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}) (res
 			if hops > maxOverlaySymlinkHops {
 				return "", false, fmt.Errorf("too many symlink hops while resolving %q", linkPath)
 			}
-			if _, ok := changed[filepath.Clean(next)]; ok {
+			if attribute(next, info) {
 				tainted = true
 			}
 			linkTarget, readErr := os.Readlink(next)
@@ -1484,20 +1559,24 @@ func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}) (res
 			pending = append(strings.Split(filepath.ToSlash(linkTarget), "/"), pending...)
 			continue
 		}
+		if lstatErr == nil && attribute(next, info) {
+			// A dependency that stopped being a symlink (retyped or replaced) is
+			// still attributable to this run.
+			tainted = true
+		}
 		current = next
 	}
 	return filepath.Clean(current), tainted, nil
 }
 
 // auditUnpackedOverlaySymlinks enforces the unpack symlink invariant without
-// touching unrelated local state. A link is attributable to this run when it is
-// new, its stored target changed, or its live resolution passes through a link
-// this run installed or changed — all decided from ti's own pre-run snapshot, so
-// an archive cannot narrow or forge the attribution. Attributable links with an
-// absolute target or a target that resolves outside the overlay are removed and
-// the command fails closed; links this run did not touch are left alone.
-func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) error {
-	after, walkProblems, err := scanOverlaySymlinkTargets(localRoot)
+// touching unrelated local state. A link is attributable to this run when its
+// path is new, its stored target changed, or its live resolution passes through a
+// path this run installed, changed, or removed. Attribution comes from ti's own
+// pre-run snapshot, so an archive cannot narrow or forge it, and the comparison
+// follows the filesystem's own name resolution through stored spellings.
+func auditUnpackedOverlaySymlinks(localRoot string, before map[string]overlayEntryInfo) error {
+	after, walkProblems, err := scanOverlayEntries(localRoot)
 	if err != nil {
 		return err
 	}
@@ -1508,46 +1587,36 @@ func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) er
 		return nil
 	}
 	overlayRoot := filepath.Join(localRoot, "overlay")
-	changed := map[string]struct{}{}
-	for linkPath, target := range after {
-		if previous, ok := before[linkPath]; ok && previous == target {
-			continue
-		}
-		changed[linkPath] = struct{}{}
-	}
+	changed := changedOverlayPaths(before, after)
 	var violations []string
 	var targets []string
-	for linkPath, target := range after {
+	for linkPath, entry := range after {
+		if entry.kind != overlayKindSymlink {
+			continue
+		}
 		rel, relErr := filepath.Rel(overlayRoot, linkPath)
 		if relErr != nil {
-			return apperr.Wrap("fs.unpack_audit_overlay", "runtime", 1, fmt.Sprintf("resolve unpacked path %q", linkPath), relErr)
+			walkProblems = append(walkProblems, fmt.Sprintf("%s: %v", linkPath, relErr))
+			continue
 		}
-		if validatePackSymlinkTarget(localRoot, filepath.ToSlash(rel), target) == nil {
-			resolved, tainted, resolveErr := resolveOverlayTargetLive(linkPath, changed)
-			_, attributable := changed[linkPath]
-			if resolveErr == nil && overlayPathWithin(overlayRoot, resolved) {
-				continue
-			}
-			if !attributable && !tainted {
-				// Escaping, but nothing this run installed made it so: leave the
-				// pre-existing local state alone.
-				continue
-			}
-			if resolveErr != nil && !attributable && !tainted {
-				continue
-			}
-		} else {
-			if _, attributable := changed[linkPath]; !attributable {
-				// Absolute target on a pre-existing link: not this run's doing.
-				continue
-			}
+		_, attributable := changed[linkPath]
+		escape := validatePackSymlinkTarget(localRoot, filepath.ToSlash(rel), entry.target) != nil
+		tainted := false
+		if !escape {
+			resolved, dependsOnChanged, resolveErr := resolveOverlayTargetLive(linkPath, changed)
+			tainted = dependsOnChanged
+			escape = resolveErr != nil || !overlayPathWithin(overlayRoot, resolved)
 		}
-		violations = append(violations, fmt.Sprintf("%s -> %s", rel, target))
+		if !escape || (!attributable && !tainted) {
+			continue
+		}
+		violations = append(violations, fmt.Sprintf("%s -> %s", rel, entry.target))
 		targets = append(targets, linkPath)
 	}
 	sort.Strings(violations)
 	// Decide first, then remove, so one removal cannot change another link's
-	// resolution while it is still being audited.
+	// resolution while it is still being audited. Cleanup always runs before the
+	// audit reports anything.
 	var removeErr error
 	for _, linkPath := range targets {
 		if err := os.Remove(linkPath); err != nil && !errors.Is(err, os.ErrNotExist) && removeErr == nil {

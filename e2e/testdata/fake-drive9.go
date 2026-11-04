@@ -159,6 +159,11 @@ func main() {
 				_ = os.Symlink("..", filepath.Join(overlay, "repo", "s"))
 				_ = os.Symlink("s/../outside", filepath.Join(overlay, "repo", "a"))
 			}
+			if os.Getenv("FAKE_DRIVE9_UNPACK_RETYPE_S") == "1" {
+				// Replace a link dependency with a real directory.
+				_ = os.Remove(filepath.Join(overlay, "s"))
+				_ = os.MkdirAll(filepath.Join(overlay, "s"), 0o755)
+			}
 			if os.Getenv("FAKE_DRIVE9_UNPACK_UNREADABLE") == "1" {
 				_ = os.MkdirAll(filepath.Join(overlay, "z"), 0o755)
 				_ = os.Chmod(filepath.Join(overlay, "z"), 0o000)

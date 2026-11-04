@@ -184,6 +184,35 @@ func TestFSUnpackFileSystemRejectsEscapingSymlinksFromCompanion(t *testing.T) {
 		}
 	})
 
+	t.Run("retyped-dependency-still-attributed", func(t *testing.T) {
+		localRoot := t.TempDir()
+		overlayRoot := filepath.Join(localRoot, "overlay")
+		repo := filepath.Join(overlayRoot, "repo")
+		if err := os.MkdirAll(filepath.Join(overlayRoot, "deep", "dir"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(repo, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("deep/dir", filepath.Join(overlayRoot, "s")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("..", filepath.Join(repo, "t")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("t/s/../../outside", filepath.Join(repo, "a")); err != nil {
+			t.Fatal(err)
+		}
+		env := append([]string{}, baseEnv...)
+		env = append(env, "FAKE_DRIVE9_UNPACK_RETYPE_S=1")
+		result := runTIWithInput(t, bin, "", env, unpackArgs(localRoot)...)
+		result.wantExitCode(1)
+		result.wantStderrContains("unsafe symlink")
+		if _, err := os.Lstat(filepath.Join(repo, "a")); !os.IsNotExist(err) {
+			t.Fatalf("unchanged link escaping through a retyped dependency was left behind: %v", err)
+		}
+	})
+
 	t.Run("mount-without-local-root-fails-closed", func(t *testing.T) {
 		env := append([]string{}, baseEnv...)
 		result := runTIWithInput(t, bin, "", env, "fs", "unpack-file-system", "--mount-path", filepath.Join(home, "mnt"), "--remote-root", "/workspace")

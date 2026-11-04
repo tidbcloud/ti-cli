@@ -1268,7 +1268,7 @@ func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSyst
 	// Snapshot the links this run can be held responsible for. Taking it before
 	// the companion runs is what keeps the audit from deleting unrelated local
 	// state; a snapshot failure aborts before anything is mutated.
-	before, snapshotProblems, err := scanOverlaySymlinkTargets(localRoot)
+	before, snapshotProblems, err := scanOverlayEntries(localRoot)
 	if err != nil {
 		return UnpackFileSystemResult{}, err
 	}

@@ -105,10 +105,10 @@ func TestValidatePackSymlinkTargetAllowsOverlayRootTarget(t *testing.T) {
 	}
 }
 
-// snapshotForTest records the current overlay links as the pre-run snapshot.
-func snapshotForTest(t *testing.T, localRoot string) map[string]string {
+// snapshotForTest records the current overlay tree as the pre-run snapshot.
+func snapshotForTest(t *testing.T, localRoot string) map[string]overlayEntryInfo {
 	t.Helper()
-	before, problems, err := scanOverlaySymlinkTargets(localRoot)
+	before, problems, err := scanOverlayEntries(localRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,5 +349,68 @@ func TestAuditUnpackedOverlaySymlinksCleansUpBeforeReportingWalkErrors(t *testin
 	}
 	if !strings.Contains(err.Error(), "removed 1 unsafe symlink") {
 		t.Fatalf("error does not report the cleanup: %v", err)
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksRejectsRetypedDependency covers the review
+// finding that a dependency which stops being a symlink (replaced by a real
+// directory) must stay attributable: it leaves no symlink entry after the run.
+func TestAuditUnpackedOverlaySymlinksRejectsRetypedDependency(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(filepath.Join(overlayRoot, "deep", "dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("deep/dir", filepath.Join(overlayRoot, "s")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "t")); err != nil {
+		t.Fatal(err)
+	}
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink("t/s/../../outside", linkA); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotForTest(t, localRoot)
+	// The archive replaces the link `s` with a real directory, leaving `a` and
+	// `t` untouched.
+	if err := os.Remove(filepath.Join(overlayRoot, "s")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(overlayRoot, "s"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err == nil {
+		t.Fatal("link that became unsafe through a retyped dependency was accepted")
+	}
+	if _, statErr := os.Lstat(linkA); !os.IsNotExist(statErr) {
+		t.Fatalf("unchanged escaping link %q was left behind: %v", "a", statErr)
+	}
+}
+
+// TestStoredEntryNameUsesFilesystemIdentity covers the attribution lookup that
+// makes a dependency reachable through a different spelling still match: the
+// stored name is found by identity, not by the literal path.
+func TestStoredEntryNameUsesFilesystemIdentity(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target")
+	if err := os.WriteFile(target, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(dir, "alias")
+	if err := os.Link(target, alias); err != nil {
+		t.Skipf("hard links are not supported: %v", err)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name, ok := storedEntryName(dir, info)
+	if !ok || (name != "target" && name != "alias") {
+		t.Fatalf("storedEntryName = %q ok=%v, want one of the stored names", name, ok)
 	}
 }
