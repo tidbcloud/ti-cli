@@ -105,10 +105,20 @@ func TestValidatePackSymlinkTargetAllowsOverlayRootTarget(t *testing.T) {
 	}
 }
 
-// TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks covers the public unpack
-// invariant: after the companion extracts a pack, escaping links are removed and
-// the command fails closed.
-func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
+// snapshotForTest records the current overlay links as the pre-run snapshot.
+func snapshotForTest(t *testing.T, localRoot string) map[string]string {
+	t.Helper()
+	before, problems, err := scanOverlaySymlinkTargets(localRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(problems) > 0 {
+		t.Fatalf("snapshot problems: %v", problems)
+	}
+	return before
+}
+
+func TestAuditUnpackedOverlaySymlinksRemovesInstalledEscapes(t *testing.T) {
 	localRoot := t.TempDir()
 	overlayRoot := filepath.Join(localRoot, "overlay")
 	repo := filepath.Join(overlayRoot, "repo")
@@ -119,6 +129,7 @@ func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
 	if err := os.WriteFile(content, []byte("packed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	before := snapshotForTest(t, localRoot)
 	safeLinks := map[string]string{
 		filepath.Join(repo, "inside"):  "item.txt",
 		filepath.Join(repo, "sibling"): "../sibling.txt",
@@ -137,9 +148,9 @@ func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	err := auditUnpackedOverlaySymlinks(localRoot)
+	err := auditUnpackedOverlaySymlinks(localRoot, before)
 	if err == nil {
-		t.Fatal("escaping symlinks were accepted")
+		t.Fatal("installed escaping symlinks were accepted")
 	}
 	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
 		t.Fatalf("error code = %q: %v", code, err)
@@ -150,8 +161,7 @@ func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
 		}
 	}
 	for path, target := range safeLinks {
-		got, readErr := os.Readlink(path)
-		if readErr != nil || got != target {
+		if got, readErr := os.Readlink(path); readErr != nil || got != target {
 			t.Fatalf("safe symlink %q was removed: got=%q err=%v", path, got, readErr)
 		}
 	}
@@ -160,69 +170,96 @@ func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
 	}
 }
 
-// TestAuditUnpackedOverlaySymlinksCatchesEscapingLinkChain covers a chain where
-// each single target looks lexical-containment-safe but following the links
-// leaves the overlay.
-func TestAuditUnpackedOverlaySymlinksCatchesEscapingLinkChain(t *testing.T) {
+// TestAuditUnpackedOverlaySymlinksPreservesUnrelatedLocalLinks covers the review
+// finding that unrelated pre-existing links must survive, including when the
+// remote operation failed before installing anything.
+func TestAuditUnpackedOverlaySymlinksPreservesUnrelatedLocalLinks(t *testing.T) {
+	localRoot := t.TempDir()
+	other := filepath.Join(localRoot, "overlay", "other")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	preexisting := map[string]string{
+		filepath.Join(other, "tool"):   "/usr/bin/tool",
+		filepath.Join(other, "escape"): "../../../../../../home/victim/.ssh",
+	}
+	for path, target := range preexisting {
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before := snapshotForTest(t, localRoot)
+	// A failed run that installed nothing must not change anything.
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err != nil {
+		t.Fatalf("unrelated pre-existing links rejected: %v", err)
+	}
+	for path, target := range preexisting {
+		got, readErr := os.Readlink(path)
+		if readErr != nil || got != target {
+			t.Fatalf("pre-existing link %q was modified: got=%q err=%v", path, got, readErr)
+		}
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksRejectsEscapeThroughInstalledDependency covers
+// the case where an unchanged link becomes unsafe because this run installed a
+// link it resolves through.
+func TestAuditUnpackedOverlaySymlinksRejectsEscapeThroughInstalledDependency(t *testing.T) {
+	localRoot := t.TempDir()
+	repo := filepath.Join(localRoot, "overlay", "repo")
+	if err := os.MkdirAll(filepath.Join(repo, "s"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink("s/../outside", linkA); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotForTest(t, localRoot)
+	// The archive replaces the directory `s` with a permitted link.
+	if err := os.RemoveAll(filepath.Join(repo, "s")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil {
+		t.Fatal(err)
+	}
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err == nil {
+		t.Fatal("link that became unsafe through an installed dependency was accepted")
+	}
+	if _, statErr := os.Lstat(linkA); !os.IsNotExist(statErr) {
+		t.Fatalf("unchanged escaping link %q was left behind: %v", "a", statErr)
+	}
+}
+
+func TestAuditUnpackedOverlaySymlinksCatchesInstalledChain(t *testing.T) {
 	localRoot := t.TempDir()
 	repo := filepath.Join(localRoot, "overlay", "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	before := snapshotForTest(t, localRoot)
 	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("s/../outside", filepath.Join(repo, "a")); err != nil {
 		t.Fatal(err)
 	}
-	err := auditUnpackedOverlaySymlinks(localRoot)
-	if err == nil {
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err == nil {
 		t.Fatal("escaping symlink chain was accepted")
 	}
 	if _, statErr := os.Lstat(filepath.Join(repo, "a")); !os.IsNotExist(statErr) {
 		t.Fatalf("escaping chain link %q was left behind: %v", "a", statErr)
 	}
-	// The intermediate hop only points at the overlay root, which the policy
-	// keeps; the link that escapes is the only one removed.
 	if _, statErr := os.Lstat(filepath.Join(repo, "s")); statErr != nil {
 		t.Fatalf("in-overlay chain link %q was removed: %v", "s", statErr)
 	}
 }
 
-// TestAuditUnpackedOverlaySymlinksTreatsOverlayAsTiOwned pins the scope decision:
-// the overlay is ti-managed state, so an escaping link is unsafe regardless of
-// which run created it, and the audit does not try to reconstruct history.
-func TestAuditUnpackedOverlaySymlinksTreatsOverlayAsTiOwned(t *testing.T) {
-	localRoot := t.TempDir()
-	other := filepath.Join(localRoot, "overlay", "other")
-	if err := os.MkdirAll(other, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	preexisting := filepath.Join(other, "tool")
-	if err := os.Symlink("/usr/bin/tool", preexisting); err != nil {
-		t.Fatal(err)
-	}
-	err := auditUnpackedOverlaySymlinks(localRoot)
-	if err == nil {
-		t.Fatal("pre-existing escaping link was accepted")
-	}
-	if _, statErr := os.Lstat(preexisting); !os.IsNotExist(statErr) {
-		t.Fatalf("escaping link was left in the ti-managed overlay: %v", statErr)
-	}
-	if err := os.Symlink("target", filepath.Join(other, "relative")); err != nil {
-		t.Fatal(err)
-	}
-	if err := auditUnpackedOverlaySymlinks(localRoot); err != nil {
-		t.Fatalf("in-overlay link rejected: %v", err)
-	}
-}
-
 func TestAuditUnpackedOverlaySymlinksAcceptsSafeAndAbsentOverlays(t *testing.T) {
-	if err := auditUnpackedOverlaySymlinks(""); err == nil {
+	if err := auditUnpackedOverlaySymlinks("", nil); err == nil {
 		t.Fatal("empty local root silently disabled the audit")
 	}
 	missing := filepath.Join(t.TempDir(), "no-overlay")
-	if err := auditUnpackedOverlaySymlinks(missing); err != nil {
+	if err := auditUnpackedOverlaySymlinks(missing, nil); err != nil {
 		t.Fatalf("missing overlay rejected: %v", err)
 	}
 	localRoot := t.TempDir()
@@ -236,21 +273,21 @@ func TestAuditUnpackedOverlaySymlinksAcceptsSafeAndAbsentOverlays(t *testing.T) 
 	if err := os.Symlink("item.txt", filepath.Join(repo, "inside")); err != nil {
 		t.Fatal(err)
 	}
-	if err := auditUnpackedOverlaySymlinks(localRoot); err != nil {
+	if err := auditUnpackedOverlaySymlinks(localRoot, nil); err != nil {
 		t.Fatalf("safe overlay rejected: %v", err)
 	}
 	symlinkedOverlay := t.TempDir()
 	if err := os.Symlink(t.TempDir(), filepath.Join(symlinkedOverlay, "overlay")); err != nil {
 		t.Skipf("symlinks are not supported: %v", err)
 	}
-	if err := auditUnpackedOverlaySymlinks(symlinkedOverlay); err == nil {
+	if err := auditUnpackedOverlaySymlinks(symlinkedOverlay, nil); err == nil {
 		t.Fatal("symlinked overlay accepted")
 	}
 }
 
 // TestAuditUnpackedOverlaySymlinksDoesNotMutateSafeDirectories covers the mtime
 // contract: auditing a symlink-free overlay must not create, delete, or touch
-// anything, so an empty directory keeps its archived timestamp.
+// anything.
 func TestAuditUnpackedOverlaySymlinksDoesNotMutateSafeDirectories(t *testing.T) {
 	localRoot := t.TempDir()
 	empty := filepath.Join(localRoot, "overlay", "empty")
@@ -261,7 +298,8 @@ func TestAuditUnpackedOverlaySymlinksDoesNotMutateSafeDirectories(t *testing.T) 
 	if err := os.Chtimes(empty, want, want); err != nil {
 		t.Fatal(err)
 	}
-	if err := auditUnpackedOverlaySymlinks(localRoot); err != nil {
+	before := snapshotForTest(t, localRoot)
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err != nil {
 		t.Fatalf("audit of a symlink-free overlay failed: %v", err)
 	}
 	info, err := os.Stat(empty)
@@ -274,32 +312,32 @@ func TestAuditUnpackedOverlaySymlinksDoesNotMutateSafeDirectories(t *testing.T) 
 }
 
 // TestAuditUnpackedOverlaySymlinksCleansUpBeforeReportingWalkErrors covers the
-// review finding that a traversal failure must not leave a detected escape
-// installed: the collected links are removed even though the walk is incomplete,
-// and the command still fails closed.
+// review finding that a traversal failure must not leave a detected,
+// attributable escape installed.
 func TestAuditUnpackedOverlaySymlinksCleansUpBeforeReportingWalkErrors(t *testing.T) {
 	if os.Geteuid() == 0 {
-		t.Skip("root bypasses directory permissions, so the traversal failure cannot be exercised")
+		t.Skip("root bypasses directory permissions")
 	}
 	localRoot := t.TempDir()
 	overlayRoot := filepath.Join(localRoot, "overlay")
 	repo := filepath.Join(overlayRoot, "a")
-	unreadable := filepath.Join(overlayRoot, "z")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(unreadable, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	before := snapshotForTest(t, localRoot)
 	escape := filepath.Join(repo, "escape")
 	if err := os.Symlink("/etc/passwd", escape); err != nil {
+		t.Fatal(err)
+	}
+	unreadable := filepath.Join(overlayRoot, "z")
+	if err := os.MkdirAll(unreadable, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Chmod(unreadable, 0o000); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(unreadable, 0o755) })
-	err := auditUnpackedOverlaySymlinks(localRoot)
+	err := auditUnpackedOverlaySymlinks(localRoot, before)
 	if err == nil {
 		t.Fatal("incomplete audit was reported as success")
 	}

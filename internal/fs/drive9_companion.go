@@ -1265,6 +1265,17 @@ func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSyst
 	if err != nil {
 		return UnpackFileSystemResult{}, err
 	}
+	// Snapshot the links this run can be held responsible for. Taking it before
+	// the companion runs is what keeps the audit from deleting unrelated local
+	// state; a snapshot failure aborts before anything is mutated.
+	before, snapshotProblems, err := scanOverlaySymlinkTargets(localRoot)
+	if err != nil {
+		return UnpackFileSystemResult{}, err
+	}
+	if len(snapshotProblems) > 0 {
+		// Refuse to start rather than mutate state we cannot attribute later.
+		return UnpackFileSystemResult{}, apperr.New("fs.unpack_audit_incomplete", "runtime", 1, fmt.Sprintf("cannot snapshot the overlay under %q before unpacking: %s", localRoot, strings.Join(snapshotProblems, "; ")))
+	}
 	args := []string{"unpack"}
 	appendFlagValue(&args, "--local-root", localRoot)
 	appendFlagValue(&args, "--remote-root", opts.RemoteRoot)
@@ -1284,7 +1295,7 @@ func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSyst
 	_, runErr := s.drive9Run(ctx, opts.Profile, args, false)
 	// The audit also runs when the companion failed: unpack is not atomic, so a
 	// partial install can already have written an escaping link.
-	auditErr := auditUnpackedOverlaySymlinks(localRoot)
+	auditErr := auditUnpackedOverlaySymlinks(localRoot, before)
 	switch {
 	case runErr != nil && auditErr != nil:
 		return UnpackFileSystemResult{}, apperr.New("fs.unpack_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", runErr, auditErr))
