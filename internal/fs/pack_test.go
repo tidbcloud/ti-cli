@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
@@ -368,19 +367,19 @@ func TestAuditUnpackedOverlaySymlinksMatchesFilesystemCaseFolding(t *testing.T) 
 	}
 }
 
-// TestOverlayLinkGraphFoldsSnapshotNames covers the review finding that the
-// pre-unpack snapshot used case-sensitive map keys while live resolution used
-// the volume: on a case-insensitive volume both must agree. The snapshot graph is
-// built synthetically so the difference is visible on any filesystem.
-func TestOverlayLinkGraphFoldsSnapshotNames(t *testing.T) {
+// TestOverlayLinkGraphFoldsSnapshotNamesPerDirectory covers the review finding
+// that snapshot lookups must follow each directory's own folding rule: the
+// overlay root can fold names while its parent does not, and an entry can be
+// reached through a different spelling than the one the archive installed.
+func TestOverlayLinkGraphFoldsSnapshotNamesPerDirectory(t *testing.T) {
 	localRoot := t.TempDir()
 	overlayRoot := filepath.Join(localRoot, "overlay")
 	repo := filepath.Join(overlayRoot, "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The pre-run state, as the snapshot recorded it: `repo/t -> ..` and
-	// `S -> deep/dir`, referenced through the lower-case spelling used by `a`.
+	// Pre-run graph: `repo/t -> ..` and the overlay root contains `S`; the
+	// overlay root folds names, `repo` does not.
 	snapshot := map[string]string{
 		filepath.Clean(filepath.Join(repo, "t")):        "..",
 		filepath.Clean(filepath.Join(overlayRoot, "S")): "deep/dir",
@@ -389,49 +388,127 @@ func TestOverlayLinkGraphFoldsSnapshotNames(t *testing.T) {
 	if err := os.Symlink("t/s/../../outside", linkA); err != nil {
 		t.Fatal(err)
 	}
-	folded := newOverlayLinkGraph(snapshot, true)
-	if !overlayLinkConfined(localRoot, overlayRoot, folded, linkA, "t/s/../../outside") {
-		t.Fatal("case-folded snapshot resolution reported a confined pre-run link as escaping")
+	probe := func(dir string) (bool, bool) {
+		if filepath.Clean(dir) == filepath.Clean(overlayRoot) {
+			return true, true
+		}
+		return false, true
 	}
-	exact := newOverlayLinkGraph(snapshot, false)
-	if overlayLinkConfined(localRoot, overlayRoot, exact, linkA, "t/s/../../outside") {
-		t.Fatal("exact-case snapshot resolution followed the case-variant link")
+	graph := newOverlayLinkGraph(snapshot, probe)
+	confined, ambiguous := overlayLinkConfined(localRoot, overlayRoot, graph, linkA, "t/s/../../outside")
+	if !confined || ambiguous {
+		t.Fatalf("folded snapshot resolution = (confined=%v ambiguous=%v), want (true, false)", confined, ambiguous)
+	}
+	sensitive := newOverlayLinkGraph(snapshot, func(string) (bool, bool) { return false, true })
+	confined, ambiguous = overlayLinkConfined(localRoot, overlayRoot, sensitive, linkA, "t/s/../../outside")
+	if confined || ambiguous {
+		t.Fatalf("case-sensitive snapshot resolution = (confined=%v ambiguous=%v), want (false, false)", confined, ambiguous)
 	}
 }
 
-// TestOverlayCaseFoldingProbesWithoutWriting keeps the case-detection helper
-// honest and read-only: it must agree with the filesystem it probes, and it must
-// not need write access to the overlay (review finding: a 0555 overlay still has
-// to be classified, not silently treated as case-sensitive).
-func TestOverlayCaseFoldingProbesWithoutWriting(t *testing.T) {
+// TestOverlayLinkConfinedFlagsAmbiguousCaseMatches pins the fail-closed signal:
+// when a case variant matches but the directory's folding rule is unknown, the
+// answer must be reported as ambiguous instead of silently deciding.
+func TestOverlayLinkConfinedFlagsAmbiguousCaseMatches(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := map[string]string{filepath.Clean(filepath.Join(repo, "S")): ".."}
+	target := "s/x/../../../outside"
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink(target, linkA); err != nil {
+		t.Fatal(err)
+	}
+	unknown := newOverlayLinkGraph(snapshot, func(string) (bool, bool) { return false, false })
+	if _, ambiguous := overlayLinkConfined(localRoot, overlayRoot, unknown, linkA, target); !ambiguous {
+		t.Fatal("unknown directory folding did not mark a case-variant match as ambiguous")
+	}
+	known := newOverlayLinkGraph(snapshot, func(string) (bool, bool) { return false, true })
+	if _, ambiguous := overlayLinkConfined(localRoot, overlayRoot, known, linkA, target); ambiguous {
+		t.Fatal("known case-sensitive directory reported an ambiguous authoritative match")
+	}
+}
+
+// TestOverlayDirCaseFoldingProbesInsideTheDirectory keeps the detection helper
+// honest and read-only: it inspects the directory's own entries, so it needs no
+// write access, and it reports unknown instead of guessing.
+func TestOverlayDirCaseFoldingProbesInsideTheDirectory(t *testing.T) {
 	parent := t.TempDir()
-	overlayRoot := filepath.Join(parent, "overlay")
-	if err := os.MkdirAll(overlayRoot, 0o755); err != nil {
+	dir := filepath.Join(parent, "overlay")
+	if err := os.MkdirAll(filepath.Join(dir, "repo"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, statErr := os.Lstat(filepath.Join(parent, strings.ToUpper("overlay")))
+	_, statErr := os.Lstat(filepath.Join(dir, "REPO"))
 	wantFolds := statErr == nil
-	folds, known := overlayCaseFolding(overlayRoot)
-	if !known {
-		t.Fatalf("case folding probe was inconclusive for %q", overlayRoot)
+	folds, known := overlayDirCaseFolding(dir)
+	if !known || folds != wantFolds {
+		t.Fatalf("probe = (folds=%v known=%v), want (folds=%v known=true)", folds, known, wantFolds)
 	}
-	if folds != wantFolds {
-		t.Fatalf("folds = %v, want %v", folds, wantFolds)
-	}
-	if err := os.Chmod(overlayRoot, 0o555); err != nil {
+	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(overlayRoot, 0o755) })
-	folds, known = overlayCaseFolding(overlayRoot)
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	folds, known = overlayDirCaseFolding(dir)
 	if !known || folds != wantFolds {
-		t.Fatalf("read-only overlay probe = (%v, %v), want (%v, true)", folds, known, wantFolds)
+		t.Fatalf("read-only probe = (folds=%v known=%v), want (folds=%v known=true)", folds, known, wantFolds)
+	}
+	empty := filepath.Join(parent, "empty")
+	if err := os.MkdirAll(empty, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(empty, 0o755) })
+	if os.Geteuid() == 0 {
+		t.Skip("root can always create the probe file, so the unknown path cannot be exercised")
+	}
+	if _, known := overlayDirCaseFolding(empty); known {
+		t.Fatal("unwritable empty directory was classified instead of reported unknown")
 	}
 }
 
 // TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown pins the
-// review finding: an inconclusive probe must not reinstate the exemption for an
-// unchanged link that is unconfined now.
+// review finding: an inconclusive folding answer must not exempt an unchanged
+// link whose pre-run resolution is ambiguous.
 func TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown(t *testing.T) {
+	localRoot := t.TempDir()
+	repo := filepath.Join(localRoot, "overlay", "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "S")); err != nil {
+		t.Fatal(err)
+	}
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink("s/x/../../../outside", linkA); err != nil {
+		t.Fatal(err)
+	}
+	before, err := scanOverlaySymlinks(localRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The archive installs `repo/s`; combined with the unknown folding rule this
+	// makes the pre-run answer ambiguous while the live resolution escapes.
+	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil {
+		t.Fatal(err)
+	}
+	previous := overlayCaseFoldingProbe
+	overlayCaseFoldingProbe = func(string) (bool, bool) { return false, false }
+	t.Cleanup(func() { overlayCaseFoldingProbe = previous })
+	err = auditUnpackedOverlaySymlinks(localRoot, before)
+	if err == nil {
+		t.Fatal("unknown folding exempted an unchanged link with an ambiguous pre-run resolution")
+	}
+	if _, statErr := os.Lstat(linkA); !os.IsNotExist(statErr) {
+		t.Fatalf("ambiguous unchanged link was left installed: %v", statErr)
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksPreservesKnownPreExistingEscape keeps the
+// preservation guarantee for a link that is definitively unconfined before and
+// after the run.
+func TestAuditUnpackedOverlaySymlinksPreservesKnownPreExistingEscape(t *testing.T) {
 	localRoot := t.TempDir()
 	repo := filepath.Join(localRoot, "overlay", "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
@@ -446,26 +523,10 @@ func TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown(t *test
 		t.Fatal(err)
 	}
 	previous := overlayCaseFoldingProbe
-	overlayCaseFoldingProbe = func(string) (bool, bool) { return false, false }
-	t.Cleanup(func() { overlayCaseFoldingProbe = previous })
-	err = auditUnpackedOverlaySymlinks(localRoot, before)
-	if err == nil {
-		t.Fatal("unknown case folding still exempted an unconfined unchanged link")
-	}
-	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
-		t.Fatalf("error code = %q: %v", code, err)
-	}
-	if _, statErr := os.Lstat(preexisting); !os.IsNotExist(statErr) {
-		t.Fatalf("unconfined unchanged link was left installed: %v", statErr)
-	}
-	// With a known case-sensitive volume the same link is pre-existing local
-	// state and must be preserved.
-	if err := os.Symlink("/etc/passwd", preexisting); err != nil {
-		t.Fatal(err)
-	}
 	overlayCaseFoldingProbe = func(string) (bool, bool) { return false, true }
+	t.Cleanup(func() { overlayCaseFoldingProbe = previous })
 	if err := auditUnpackedOverlaySymlinks(localRoot, before); err != nil {
-		t.Fatalf("pre-existing unconfined link was not preserved on a known volume: %v", err)
+		t.Fatalf("pre-existing unconfined link was not preserved: %v", err)
 	}
 	if _, statErr := os.Lstat(preexisting); statErr != nil {
 		t.Fatalf("pre-existing link was removed: %v", statErr)

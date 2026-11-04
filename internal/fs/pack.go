@@ -1425,85 +1425,147 @@ func scanOverlaySymlinks(localRoot string) (map[string]string, error) {
 }
 
 // overlayLinkGraph is the pre-unpack symlink snapshot used to reconstruct the
-// state before a companion run. Lookups follow the same name equality as the
-// volume that holds the overlay: a case-insensitive volume folds names, so a
-// snapshot must not assume two spellings always name two entries.
+// state before a companion run. Name lookups inside a directory follow that
+// directory's own case-folding semantics: case folding is a per-directory
+// property, so the semantics of the overlay's parent say nothing about the
+// overlay itself.
 type overlayLinkGraph struct {
 	byPath map[string]string
 	byFold map[string]string
+	probe  func(dir string) (folds bool, known bool)
+	cache  map[string]dirCaseFolding
 }
 
-// newOverlayLinkGraph builds a snapshot graph. foldCase must match the volume,
-// because only then may `s` and `S` be treated as the same entry.
-func newOverlayLinkGraph(links map[string]string, foldCase bool) overlayLinkGraph {
-	graph := overlayLinkGraph{byPath: links}
-	if links == nil || !foldCase {
+type dirCaseFolding struct {
+	folds bool
+	known bool
+}
+
+// newOverlayLinkGraph builds a snapshot graph. probe reports whether a directory
+// resolves entry names case-insensitively; it may return known=false when that
+// cannot be determined.
+func newOverlayLinkGraph(links map[string]string, probe func(string) (bool, bool)) overlayLinkGraph {
+	graph := overlayLinkGraph{byPath: links, probe: probe}
+	if links == nil {
 		return graph
 	}
 	graph.byFold = make(map[string]string, len(links))
 	for path, target := range links {
 		graph.byFold[strings.ToLower(path)] = target
 	}
+	graph.cache = map[string]dirCaseFolding{}
 	return graph
 }
 
-// lookup returns the snapshot link at path, or ok=false when the snapshot has no
-// link there. A zero graph means the caller wants the live filesystem.
-func (g overlayLinkGraph) lookup(path string) (string, bool) {
-	if g.byPath == nil {
-		return "", false
+// dirCaseFolding reports the folding rule of dir, caching the probe.
+func (g overlayLinkGraph) dirCaseFolding(dir string) (bool, bool) {
+	if cached, ok := g.cache[dir]; ok {
+		return cached.folds, cached.known
 	}
-	clean := filepath.Clean(path)
-	if target, ok := g.byPath[clean]; ok {
-		return target, true
-	}
-	if g.byFold != nil {
-		target, ok := g.byFold[strings.ToLower(clean)]
-		return target, ok
-	}
-	return "", false
-}
-
-// overlayCaseFolding reports whether the volume holding overlayRoot resolves
-// names case-insensitively, and whether that could be determined at all. It
-// stats a case variant of the existing overlay directory and compares identity,
-// so it needs no write access and works on a read-only overlay. Unknown must not
-// be treated as case-sensitive: the caller has to fail closed instead.
-func overlayCaseFolding(overlayRoot string) (folds bool, known bool) {
-	clean := filepath.Clean(overlayRoot)
-	base := filepath.Base(clean)
-	upper := strings.ToUpper(base)
-	if upper == base {
+	if g.probe == nil {
 		return false, false
 	}
-	original, err := os.Lstat(clean)
+	folds, known := g.probe(dir)
+	if g.cache != nil {
+		g.cache[dir] = dirCaseFolding{folds: folds, known: known}
+	}
+	return folds, known
+}
+
+// linkLookupClass describes how a snapshot lookup resolved.
+type linkLookupClass int
+
+const (
+	linkAbsent linkLookupClass = iota
+	linkFound
+	// linkAmbiguous means a case-variant entry matched but the directory's
+	// folding rule is unknown, so the match may or may not apply.
+	linkAmbiguous
+)
+
+// lookup returns the snapshot link for name inside dir.
+func (g overlayLinkGraph) lookup(dir, name string) (string, linkLookupClass) {
+	if g.byPath == nil {
+		return "", linkAbsent
+	}
+	exact := filepath.Clean(filepath.Join(dir, name))
+	if target, ok := g.byPath[exact]; ok {
+		return target, linkFound
+	}
+	if g.byFold == nil {
+		return "", linkAbsent
+	}
+	folded, ok := g.byFold[strings.ToLower(exact)]
+	if !ok {
+		return "", linkAbsent
+	}
+	folds, known := g.dirCaseFolding(dir)
+	switch {
+	case known && folds:
+		return folded, linkFound
+	case known:
+		return "", linkAbsent
+	default:
+		return folded, linkAmbiguous
+	}
+}
+
+// overlayDirCaseFolding reports whether dir resolves entry names
+// case-insensitively, and whether that could be determined. It inspects the
+// directory's own entries first, so a read-only directory is still classified,
+// and only falls back to creating a probe file inside it.
+func overlayDirCaseFolding(dir string) (folds bool, known bool) {
+	entries, err := os.ReadDir(dir)
+	if err == nil {
+		for _, entry := range entries {
+			name := entry.Name()
+			upper := strings.ToUpper(name)
+			if upper == name {
+				continue
+			}
+			original, err1 := os.Lstat(filepath.Join(dir, name))
+			variant, err2 := os.Lstat(filepath.Join(dir, upper))
+			switch {
+			case err1 == nil && err2 == nil:
+				return os.SameFile(original, variant), true
+			case err1 == nil && errors.Is(err2, os.ErrNotExist):
+				return false, true
+			}
+		}
+	}
+	probe, err := os.CreateTemp(dir, ".ti-casefold-")
 	if err != nil {
 		return false, false
 	}
-	variant, err := os.Lstat(filepath.Join(filepath.Dir(clean), upper))
+	name := probe.Name()
+	_ = probe.Close()
+	defer os.Remove(name)
+	original, err1 := os.Lstat(name)
+	variant, err2 := os.Lstat(filepath.Join(dir, strings.ToUpper(filepath.Base(name))))
 	switch {
-	case err == nil:
+	case err1 == nil && err2 == nil:
 		return os.SameFile(original, variant), true
-	case errors.Is(err, os.ErrNotExist):
+	case errors.Is(err2, os.ErrNotExist):
 		return false, true
 	default:
 		return false, false
 	}
 }
 
-// overlayCaseFoldingProbe is a seam so tests can exercise the unknown case.
-var overlayCaseFoldingProbe = overlayCaseFolding
+// overlayCaseFoldingProbe is a seam so tests can supply folding answers.
+var overlayCaseFoldingProbe = overlayDirCaseFolding
 
 // resolveOverlaySymlinkTarget resolves the target of the link at linkPath, applying
 // ".." to the already resolved prefix the way the kernel does. A zero graph makes
-// the live filesystem decide, so resolution agrees with the volume's own name
-// resolution. A snapshot graph reconstructs the pre-run state with the same name
-// equality rule. Non-existent tail components are kept lexically so dangling
-// links still resolve.
-func resolveOverlaySymlinkTarget(graph overlayLinkGraph, linkPath string) (string, error) {
+// the live filesystem decide, so resolution agrees with each directory's own name
+// resolution. A snapshot graph reconstructs the pre-run state; ambiguous is set
+// when a component matched only through a case variant whose applicability is
+// unknown. Non-existent tail components are kept lexically so dangling links still
+// resolve.
+func resolveOverlaySymlinkTarget(graph overlayLinkGraph, linkPath string) (resolved string, ambiguous bool, err error) {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	current := filepath.Dir(linkPath)
 	pending := strings.Split(filepath.ToSlash(target), "/")
@@ -1519,16 +1581,21 @@ func resolveOverlaySymlinkTarget(graph overlayLinkGraph, linkPath string) (strin
 			continue
 		}
 		next := filepath.Join(current, part)
-		linkTarget, isLink := graph.lookup(next)
-		if !isLink && graph.byPath == nil {
+		linkTarget, class := graph.lookup(current, part)
+		if class == linkAbsent && graph.byPath == nil {
 			if info, lstatErr := os.Lstat(next); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
-				linkTarget, isLink = linkTargetOf(next)
+				if liveTarget, ok := linkTargetOf(next); ok {
+					linkTarget, class = liveTarget, linkFound
+				}
 			}
 		}
-		if isLink {
+		if class == linkAmbiguous {
+			ambiguous = true
+		}
+		if class != linkAbsent {
 			hops++
 			if hops > maxOverlaySymlinkHops {
-				return "", fmt.Errorf("too many symlink hops while resolving %q", linkPath)
+				return "", false, fmt.Errorf("too many symlink hops while resolving %q", linkPath)
 			}
 			if filepath.IsAbs(linkTarget) {
 				current = string(filepath.Separator)
@@ -1538,7 +1605,7 @@ func resolveOverlaySymlinkTarget(graph overlayLinkGraph, linkPath string) (strin
 		}
 		current = next
 	}
-	return filepath.Clean(current), nil
+	return filepath.Clean(current), ambiguous, nil
 }
 
 // linkTargetOf reads one symlink target, returning ok=false when the link is gone.
@@ -1551,21 +1618,23 @@ func linkTargetOf(linkPath string) (string, bool) {
 }
 
 // overlayLinkConfined reports whether the link at linkPath stays inside the
-// overlay. A zero graph resolves against the live filesystem; a snapshot graph
-// resolves against the pre-run state.
-func overlayLinkConfined(localRoot, overlayRoot string, graph overlayLinkGraph, linkPath, target string) bool {
+// overlay, and whether that answer is uncertain because a name could only be
+// matched through a case variant of unknown applicability. A zero graph resolves
+// against the live filesystem; a snapshot graph resolves against the pre-run
+// state.
+func overlayLinkConfined(localRoot, overlayRoot string, graph overlayLinkGraph, linkPath, target string) (confined bool, ambiguous bool) {
 	rel, err := filepath.Rel(overlayRoot, linkPath)
 	if err != nil {
-		return false
+		return false, false
 	}
 	if err := validatePackSymlinkTarget(localRoot, filepath.ToSlash(rel), target); err != nil {
-		return false
+		return false, false
 	}
-	resolved, err := resolveOverlaySymlinkTarget(graph, linkPath)
+	resolved, ambiguous, err := resolveOverlaySymlinkTarget(graph, linkPath)
 	if err != nil {
-		return false
+		return false, false
 	}
-	return overlayPathWithin(overlayRoot, resolved)
+	return overlayPathWithin(overlayRoot, resolved), ambiguous
 }
 
 // overlayPathWithin reports whether path stays inside overlayRoot.
@@ -1605,8 +1674,7 @@ func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) er
 	// otherwise the before/after comparison disagrees on case-insensitive
 	// volumes. When that cannot be determined, the exemption is dropped: a link
 	// that is unconfined now is treated as newly unsafe rather than pre-existing.
-	caseFolds, caseKnown := overlayCaseFoldingProbe(overlayRoot)
-	beforeGraph := newOverlayLinkGraph(before, caseFolds)
+	beforeGraph := newOverlayLinkGraph(before, overlayCaseFoldingProbe)
 	type violation struct {
 		path   string
 		target string
@@ -1618,22 +1686,18 @@ func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) er
 		if relErr != nil {
 			return apperr.Wrap("fs.unpack_audit_overlay", "runtime", 1, fmt.Sprintf("resolve unpacked path %q", linkPath), relErr)
 		}
-		confinedNow := overlayLinkConfined(localRoot, overlayRoot, overlayLinkGraph{}, linkPath, target)
+		confinedNow, _ := overlayLinkConfined(localRoot, overlayRoot, overlayLinkGraph{}, linkPath, target)
 		if previous, ok := before[linkPath]; ok && previous == target {
-			if !caseKnown {
-				// Unknown name semantics cannot prove the link was safe before
-				// this unpack, so it is not exempt.
-				if confinedNow {
-					continue
-				}
+			if confinedNow {
+				continue
+			}
+			// The exemption only applies to a link that was definitely already
+			// unconfined before this run. An uncertain pre-run answer (unknown
+			// directory folding) is not enough, so it fails closed.
+			confinedBefore, ambiguousBefore := overlayLinkConfined(localRoot, overlayRoot, beforeGraph, linkPath, target)
+			if ambiguousBefore || confinedBefore {
 				violations = append(violations, violation{path: linkPath, target: target, rel: rel})
-				continue
 			}
-			confinedBefore := overlayLinkConfined(localRoot, overlayRoot, beforeGraph, linkPath, target)
-			if !confinedBefore || confinedNow {
-				continue
-			}
-			violations = append(violations, violation{path: linkPath, target: target, rel: rel})
 			continue
 		}
 		if confinedNow {
