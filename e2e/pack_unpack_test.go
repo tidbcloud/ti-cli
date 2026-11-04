@@ -124,6 +124,28 @@ func TestFSUnpackFileSystemRejectsEscapingSymlinksFromCompanion(t *testing.T) {
 		}
 	})
 
+	t.Run("unchanged-link-with-installed-dependency", func(t *testing.T) {
+		localRoot := t.TempDir()
+		repo := filepath.Join(localRoot, "overlay", "repo")
+		if err := os.MkdirAll(filepath.Join(repo, "s"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("s/../outside", filepath.Join(repo, "a")); err != nil {
+			t.Fatal(err)
+		}
+		env := append([]string{}, baseEnv...)
+		env = append(env, "FAKE_DRIVE9_UNPACK_REPLACE_S=1")
+		result := runTIWithInput(t, bin, "", env, unpackArgs(localRoot)...)
+		result.wantExitCode(1)
+		result.wantStderrContains("unsafe symlink")
+		if _, err := os.Lstat(filepath.Join(repo, "a")); !os.IsNotExist(err) {
+			t.Fatalf("unchanged escaping link was left behind: %v", err)
+		}
+		if info, err := os.Lstat(filepath.Join(repo, "s")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("confined dependency link was not installed: info=%v err=%v", info, err)
+		}
+	})
+
 	t.Run("safe-relative-link-still-unpacks", func(t *testing.T) {
 		localRoot := t.TempDir()
 		env := append([]string{}, baseEnv...)

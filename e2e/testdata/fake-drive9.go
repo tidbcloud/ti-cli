@@ -159,6 +159,12 @@ func main() {
 				_ = os.Symlink("..", filepath.Join(overlay, "repo", "s"))
 				_ = os.Symlink("s/../outside", filepath.Join(overlay, "repo", "a"))
 			}
+			if os.Getenv("FAKE_DRIVE9_UNPACK_REPLACE_S") == "1" {
+				// Replace a pre-existing directory dependency with a link, so an
+				// unchanged link that passes through it changes meaning.
+				_ = os.RemoveAll(filepath.Join(overlay, "repo", "s"))
+				_ = os.Symlink("..", filepath.Join(overlay, "repo", "s"))
+			}
 		}
 		if os.Getenv("FAKE_DRIVE9_UNPACK_FAIL") == "1" {
 			fmt.Fprintln(os.Stderr, "drive9: unpack failed after partial install")

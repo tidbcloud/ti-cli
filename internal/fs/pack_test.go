@@ -290,3 +290,79 @@ func TestAuditUnpackedOverlaySymlinksPreservesUnchangedPreExistingLinks(t *testi
 		}
 	}
 }
+
+// TestAuditUnpackedOverlaySymlinksRejectsUnchangedLinkWhoseDependencyMoved
+// covers the review finding that comparing the target text is not enough: an
+// unchanged `a -> s/../outside` was confined while `s` was a directory, and the
+// archive turns `s` into a permitted link, so `a` now escapes.
+func TestAuditUnpackedOverlaySymlinksRejectsUnchangedLinkWhoseDependencyMoved(t *testing.T) {
+	localRoot := t.TempDir()
+	repo := filepath.Join(localRoot, "overlay", "repo")
+	if err := os.MkdirAll(filepath.Join(repo, "s"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("s/../outside", filepath.Join(repo, "a")); err != nil {
+		t.Fatal(err)
+	}
+	before, err := scanOverlaySymlinks(localRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != 1 {
+		t.Fatalf("snapshot = %#v", before)
+	}
+	// The archive replaces the directory `s` with a link to the overlay root.
+	if err := os.RemoveAll(filepath.Join(repo, "s")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil {
+		t.Fatal(err)
+	}
+	err = auditUnpackedOverlaySymlinks(localRoot, before)
+	if err == nil {
+		t.Fatal("link that became unsafe through an installed dependency was accepted")
+	}
+	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
+		t.Fatalf("error code = %q: %v", code, err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, "a")); !os.IsNotExist(statErr) {
+		t.Fatalf("unchanged escaping link %q was left behind: %v", "a", statErr)
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, "s")); statErr != nil {
+		t.Fatalf("confined link %q was removed: %v", "s", statErr)
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksMatchesFilesystemCaseFolding covers the review
+// finding that map-key lookups do not follow a case-insensitive volume, where an
+// archive can install `S -> ..` and reach it as `s`.
+func TestAuditUnpackedOverlaySymlinksMatchesFilesystemCaseFolding(t *testing.T) {
+	localRoot := t.TempDir()
+	repo := filepath.Join(localRoot, "overlay", "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	probe := filepath.Join(repo, "case-probe")
+	if err := os.WriteFile(probe, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(repo, "CASE-PROBE")); err != nil {
+		t.Skip("filesystem is case-sensitive; case folding cannot be exercised here")
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "S")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("s/../outside", filepath.Join(repo, "a")); err != nil {
+		t.Fatal(err)
+	}
+	err := auditUnpackedOverlaySymlinks(localRoot, nil)
+	if err == nil {
+		t.Fatal("case-variant chain was accepted")
+	}
+	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
+		t.Fatalf("error code = %q: %v", code, err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, "a")); !os.IsNotExist(statErr) {
+		t.Fatalf("case-variant escaping link %q was left behind: %v", "a", statErr)
+	}
+}

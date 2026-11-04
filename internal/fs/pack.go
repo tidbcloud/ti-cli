@@ -1424,10 +1424,13 @@ func scanOverlaySymlinks(localRoot string) (map[string]string, error) {
 	return links, nil
 }
 
-// resolveOverlaySymlinkTarget resolves the target of the link at linkPath
-// through the installed link graph, applying ".." to the already resolved
-// prefix the way the kernel does. Non-existent tail components are kept
-// lexically so dangling links still resolve.
+// resolveOverlaySymlinkTarget resolves the target of the link at linkPath, applying
+// ".." to the already resolved prefix the way the kernel does. When links is not
+// nil, symlinks are substituted from that snapshot, which is how the state before
+// an unpack is reconstructed. When links is nil the live filesystem decides, so
+// resolution agrees with the volume's own name resolution (case-insensitive
+// volumes included) instead of assuming two map keys name two entries.
+// Non-existent tail components are kept lexically so dangling links still resolve.
 func resolveOverlaySymlinkTarget(links map[string]string, linkPath string) (string, error) {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
@@ -1447,7 +1450,13 @@ func resolveOverlaySymlinkTarget(links map[string]string, linkPath string) (stri
 			continue
 		}
 		next := filepath.Join(current, part)
-		if linkTarget, ok := links[filepath.Clean(next)]; ok {
+		linkTarget, isLink := "", false
+		if links != nil {
+			linkTarget, isLink = links[filepath.Clean(next)]
+		} else if info, lstatErr := os.Lstat(next); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			linkTarget, isLink = linkTargetOf(next)
+		}
+		if isLink {
 			hops++
 			if hops > maxOverlaySymlinkHops {
 				return "", fmt.Errorf("too many symlink hops while resolving %q", linkPath)
@@ -1463,6 +1472,33 @@ func resolveOverlaySymlinkTarget(links map[string]string, linkPath string) (stri
 	return filepath.Clean(current), nil
 }
 
+// linkTargetOf reads one symlink target, returning ok=false when the link is gone.
+func linkTargetOf(linkPath string) (string, bool) {
+	target, err := os.Readlink(linkPath)
+	if err != nil {
+		return "", false
+	}
+	return target, true
+}
+
+// overlayLinkConfined reports whether the link at linkPath stays inside the
+// overlay. links selects the link graph to resolve through: nil means the live
+// filesystem.
+func overlayLinkConfined(localRoot, overlayRoot string, links map[string]string, linkPath, target string) bool {
+	rel, err := filepath.Rel(overlayRoot, linkPath)
+	if err != nil {
+		return false
+	}
+	if err := validatePackSymlinkTarget(localRoot, filepath.ToSlash(rel), target); err != nil {
+		return false
+	}
+	resolved, err := resolveOverlaySymlinkTarget(links, linkPath)
+	if err != nil {
+		return false
+	}
+	return overlayPathWithin(overlayRoot, resolved)
+}
+
 // overlayPathWithin reports whether path stays inside overlayRoot.
 func overlayPathWithin(overlayRoot, path string) bool {
 	rel, err := filepath.Rel(overlayRoot, path)
@@ -1474,14 +1510,18 @@ func overlayPathWithin(overlayRoot, path string) bool {
 
 // auditUnpackedOverlaySymlinks enforces the pack symlink policy on the public
 // unpack path. The tar extraction runs inside the ti-drive9 companion, so the
-// overlay it produced is verified afterwards: every link the archive added or
-// changed whose target is absolute or resolves outside the overlay is removed
-// and the command fails closed. Links resolve through the whole installed link
-// graph, so a chain such as `s -> ..` plus `a -> s/../outside` is caught even
-// though each target is lexically inside the overlay.
+// overlay it produced is verified afterwards: every link whose target is
+// absolute or resolves outside the overlay is removed and the command fails
+// closed. Resolution follows the live filesystem, so a chain such as `s -> ..`
+// plus `a -> s/../outside` is caught even though each target is lexically
+// inside the overlay, and case-insensitive volumes are handled the way the
+// volume itself resolves names.
 //
-// before is the snapshot taken right before the companion ran; unchanged
-// pre-existing links are not this archive's doing and are left alone.
+// before is the snapshot taken right before the companion ran. A link whose text
+// did not change is kept only when it was already confined before the run: if the
+// archive installed or replaced a component its target passes through, the link
+// became unsafe because of this archive and is removed. Links that were already
+// unconfined before the run are pre-existing local state and are left alone.
 func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) error {
 	localRoot = strings.TrimSpace(localRoot)
 	if localRoot == "" || !filepath.IsAbs(localRoot) {
@@ -1492,33 +1532,45 @@ func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) er
 		return err
 	}
 	overlayRoot := filepath.Join(localRoot, "overlay")
-	var violations []string
+	type violation struct {
+		path   string
+		target string
+		rel    string
+	}
+	var violations []violation
 	for linkPath, target := range links {
-		if previous, ok := before[linkPath]; ok && previous == target {
-			continue
-		}
 		rel, relErr := filepath.Rel(overlayRoot, linkPath)
 		if relErr != nil {
 			return apperr.Wrap("fs.unpack_audit_overlay", "runtime", 1, fmt.Sprintf("resolve unpacked path %q", linkPath), relErr)
 		}
-		rejected := validatePackSymlinkTarget(localRoot, filepath.ToSlash(rel), target) != nil
-		if !rejected {
-			resolved, resolveErr := resolveOverlaySymlinkTarget(links, linkPath)
-			rejected = resolveErr != nil || !overlayPathWithin(overlayRoot, resolved)
-		}
-		if !rejected {
+		confinedNow := overlayLinkConfined(localRoot, overlayRoot, nil, linkPath, target)
+		if previous, ok := before[linkPath]; ok && previous == target {
+			confinedBefore := overlayLinkConfined(localRoot, overlayRoot, before, linkPath, target)
+			if !confinedBefore || confinedNow {
+				continue
+			}
+			violations = append(violations, violation{path: linkPath, target: target, rel: rel})
 			continue
 		}
-		if removeErr := os.Remove(linkPath); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			return apperr.Wrap("fs.unpack_audit_overlay", "runtime", 1, fmt.Sprintf("remove unsafe unpacked symlink %q", linkPath), removeErr)
+		if confinedNow {
+			continue
 		}
-		violations = append(violations, fmt.Sprintf("%s -> %s", rel, target))
+		violations = append(violations, violation{path: linkPath, target: target, rel: rel})
 	}
 	if len(violations) == 0 {
 		return nil
 	}
-	sort.Strings(violations)
-	return apperr.New("fs.unsafe_pack_symlink", "runtime", 1, fmt.Sprintf("removed %d unsafe symlink(s) from %s: %s; the remote pack contains links that escape the local overlay", len(violations), overlayRoot, strings.Join(violations, ", ")))
+	// Decide first, then remove, so one removal cannot change the resolution of
+	// another link that is still being audited.
+	var details []string
+	for _, item := range violations {
+		if removeErr := os.Remove(item.path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			return apperr.Wrap("fs.unpack_audit_overlay", "runtime", 1, fmt.Sprintf("remove unsafe unpacked symlink %q", item.path), removeErr)
+		}
+		details = append(details, fmt.Sprintf("%s -> %s", item.rel, item.target))
+	}
+	sort.Strings(details)
+	return apperr.New("fs.unsafe_pack_symlink", "runtime", 1, fmt.Sprintf("removed %d unsafe symlink(s) from %s: %s; the remote pack contains links that escape the local overlay", len(details), overlayRoot, strings.Join(details, ", ")))
 }
 
 func validatePackLocalRoot(localRoot, flagName string) (string, error) {
