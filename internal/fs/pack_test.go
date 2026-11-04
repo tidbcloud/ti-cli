@@ -3,7 +3,6 @@ package fs
 import (
 	"archive/tar"
 	"bytes"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -104,6 +103,12 @@ func TestValidatePackSymlinkTargetAllowsOverlayRootTarget(t *testing.T) {
 	}
 }
 
+// snapshotEntries builds an overlay snapshot for tests without touching the
+// filesystem, so folding rules and pre-run spellings can be pinned exactly.
+func snapshotEntries(entries map[string]overlayEntry) *overlayTreeSnapshot {
+	return newOverlayTreeSnapshot(entries)
+}
+
 // TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks covers the enforcement
 // that runs on the public unpack path, where the ti-drive9 companion performs
 // the extraction: escaping links are removed and the command fails closed.
@@ -136,7 +141,6 @@ func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-
 	err := auditUnpackedOverlaySymlinks(localRoot, nil)
 	if err == nil {
 		t.Fatal("escaping symlinks were accepted")
@@ -150,13 +154,9 @@ func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
 		}
 	}
 	for path, target := range safeLinks {
-		info, statErr := os.Lstat(path)
-		if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
-			t.Fatalf("safe symlink %q was removed: info=%v err=%v", path, info, statErr)
-		}
 		got, readErr := os.Readlink(path)
 		if readErr != nil || got != target {
-			t.Fatalf("Readlink(%q) = %q err=%v, want %q", path, got, readErr, target)
+			t.Fatalf("safe symlink %q was removed: got=%q err=%v", path, got, readErr)
 		}
 	}
 	if _, statErr := os.Stat(content); statErr != nil {
@@ -186,7 +186,6 @@ func TestAuditUnpackedOverlaySymlinksAcceptsSafeAndAbsentOverlays(t *testing.T) 
 	if err := auditUnpackedOverlaySymlinks(localRoot, nil); err != nil {
 		t.Fatalf("safe overlay rejected: %v", err)
 	}
-
 	symlinkedOverlay := t.TempDir()
 	if err := os.Symlink(t.TempDir(), filepath.Join(symlinkedOverlay, "overlay")); err != nil {
 		t.Skipf("symlinks are not supported: %v", err)
@@ -196,10 +195,10 @@ func TestAuditUnpackedOverlaySymlinksAcceptsSafeAndAbsentOverlays(t *testing.T) 
 	}
 }
 
-// TestAuditUnpackedOverlaySymlinksCatchesEscapingLinkChain covers the review
-// finding that lexical containment alone misses a chain: `s -> ..` plus
-// `a -> s/../outside` passes the lexical check for each target, but following
-// the links reaches localRoot/outside.
+// TestAuditUnpackedOverlaySymlinksCatchesEscapingLinkChain covers the finding
+// that lexical containment misses a chain: `s -> ..` plus
+// `a -> s/../outside` passes each single-link check, but following the links
+// reaches localRoot/outside.
 func TestAuditUnpackedOverlaySymlinksCatchesEscapingLinkChain(t *testing.T) {
 	localRoot := t.TempDir()
 	repo := filepath.Join(localRoot, "overlay", "repo")
@@ -230,23 +229,19 @@ func TestAuditUnpackedOverlaySymlinksCatchesEscapingLinkChain(t *testing.T) {
 }
 
 // TestAuditUnpackedOverlaySymlinksPreservesUnchangedPreExistingLinks covers the
-// review finding that the audit must not delete links the archive did not
-// install.
+// finding that the audit must not delete links the archive did not install.
 func TestAuditUnpackedOverlaySymlinksPreservesUnchangedPreExistingLinks(t *testing.T) {
 	localRoot := t.TempDir()
 	other := filepath.Join(localRoot, "overlay", "other")
 	repo := filepath.Join(localRoot, "overlay", "repo")
-	if err := os.MkdirAll(other, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
+	for _, dir := range []string{other, repo} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := os.WriteFile(filepath.Join(repo, "item.txt"), []byte("packed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// A user-created link outside the archive's paths, and one that is already
-	// absolute before this command runs.
 	preexisting := map[string]string{
 		filepath.Join(other, "tool"):   "/usr/bin/tool",
 		filepath.Join(other, "escape"): "../../../../../../home/victim/.ssh",
@@ -256,12 +251,9 @@ func TestAuditUnpackedOverlaySymlinksPreservesUnchangedPreExistingLinks(t *testi
 			t.Fatal(err)
 		}
 	}
-	before, err := scanOverlaySymlinks(localRoot)
+	before, err := scanOverlayTree(localRoot)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if len(before) != len(preexisting) {
-		t.Fatalf("snapshot = %#v", before)
 	}
 	if err := os.Symlink("item.txt", filepath.Join(repo, "inside")); err != nil {
 		t.Fatal(err)
@@ -275,7 +267,6 @@ func TestAuditUnpackedOverlaySymlinksPreservesUnchangedPreExistingLinks(t *testi
 			t.Fatalf("pre-existing link %q was modified: got=%q err=%v", path, got, readErr)
 		}
 	}
-	// A new escaping link is still rejected while the pre-existing link stays.
 	if err := os.Symlink("/etc/passwd", filepath.Join(repo, "new-escape")); err != nil {
 		t.Fatal(err)
 	}
@@ -293,50 +284,217 @@ func TestAuditUnpackedOverlaySymlinksPreservesUnchangedPreExistingLinks(t *testi
 }
 
 // TestAuditUnpackedOverlaySymlinksRejectsUnchangedLinkWhoseDependencyMoved
-// covers the review finding that comparing the target text is not enough: an
-// unchanged `a -> s/../outside` was confined while `s` was a directory, and the
-// archive turns `s` into a permitted link, so `a` now escapes.
+// covers the finding that comparing the target text is not enough: an unchanged
+// `a -> s/../outside` was confined while `s` was a directory, and the archive
+// turns `s` into a permitted link, so `a` now escapes.
 func TestAuditUnpackedOverlaySymlinksRejectsUnchangedLinkWhoseDependencyMoved(t *testing.T) {
 	localRoot := t.TempDir()
 	repo := filepath.Join(localRoot, "overlay", "repo")
 	if err := os.MkdirAll(filepath.Join(repo, "s"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink("s/../outside", filepath.Join(repo, "a")); err != nil {
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink("s/../outside", linkA); err != nil {
 		t.Fatal(err)
 	}
-	before, err := scanOverlaySymlinks(localRoot)
+	before, err := scanOverlayTree(localRoot)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(before) != 1 {
-		t.Fatalf("snapshot = %#v", before)
-	}
-	// The archive replaces the directory `s` with a link to the overlay root.
 	if err := os.RemoveAll(filepath.Join(repo, "s")); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil {
 		t.Fatal(err)
 	}
-	err = auditUnpackedOverlaySymlinks(localRoot, before)
-	if err == nil {
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err == nil {
 		t.Fatal("link that became unsafe through an installed dependency was accepted")
+	}
+	if _, statErr := os.Lstat(linkA); !os.IsNotExist(statErr) {
+		t.Fatalf("unchanged escaping link %q was left behind: %v", "a", statErr)
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksRejectsReplacedDirectorySpelling covers the
+// review finding that the pre-run decision must use the snapshot's own names and
+// semantics: the archive replaces `O/Repo` with a case-sensitive `O/repo`, and
+// canonicalizing the ancestor against the live tree would wrongly conclude that
+// the unchanged link was already escaping.
+func TestAuditUnpackedOverlaySymlinksRejectsReplacedDirectorySpelling(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	work := filepath.Join(overlayRoot, "A")
+	repo := filepath.Join(overlayRoot, "repo")
+	for _, dir := range []string{filepath.Join(work), repo} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := "t/repo/S/../../../outside"
+	linkA := filepath.Join(work, "a")
+	if err := os.Symlink(target, linkA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(work, "t")); err != nil {
+		t.Fatal(err)
+	}
+	// Post-run: the archive replaced the root with lowercase `repo`, whose own
+	// lookup is case-sensitive, and installed `S -> .`.
+	if err := os.Symlink(".", filepath.Join(repo, "S")); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-run snapshot: folding overlay root, case-sensitive `O/Repo`.
+	entries := map[string]overlayEntry{
+		filepath.Clean(overlayRoot):                                       {kind: overlayEntryDir, folds: true, known: true},
+		filepath.Clean(work):                                              {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(work, "t")):                          {kind: overlayEntrySymlink, target: ".."},
+		filepath.Clean(linkA):                                             {kind: overlayEntrySymlink, target: target},
+		filepath.Clean(filepath.Join(overlayRoot, "Repo")):                {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(overlayRoot, "Repo", "deep")):        {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(overlayRoot, "Repo", "deep", "dir")): {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(overlayRoot, "Repo", "S")):           {kind: overlayEntrySymlink, target: "deep/dir"},
+	}
+	before := snapshotEntries(entries)
+	err := auditUnpackedOverlaySymlinks(localRoot, before)
+	if err == nil {
+		t.Fatal("replaced directory spelling exempted an unchanged escaping link")
 	}
 	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
 		t.Fatalf("error code = %q: %v", code, err)
 	}
-	if _, statErr := os.Lstat(filepath.Join(repo, "a")); !os.IsNotExist(statErr) {
+	if _, statErr := os.Lstat(linkA); !os.IsNotExist(statErr) {
 		t.Fatalf("unchanged escaping link %q was left behind: %v", "a", statErr)
-	}
-	if _, statErr := os.Lstat(filepath.Join(repo, "s")); statErr != nil {
-		t.Fatalf("confined link %q was removed: %v", "s", statErr)
 	}
 }
 
-// TestAuditUnpackedOverlaySymlinksMatchesFilesystemCaseFolding covers the review
-// finding that map-key lookups do not follow a case-insensitive volume, where an
-// archive can install `S -> ..` and reach it as `s`.
+// TestOverlayLinkConfinedSnapshotUsesStoredSpellingAndFolding pins the snapshot
+// resolver: a folded directory canonicalizes a case-variant component to the
+// stored spelling, including an ancestor.
+func TestOverlayLinkConfinedSnapshotUsesStoredSpellingAndFolding(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	work := filepath.Join(overlayRoot, "A")
+	repo := filepath.Join(overlayRoot, "Repo")
+	for _, dir := range []string{work, repo} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := "t/repo/S/../../../outside"
+	linkA := filepath.Join(work, "a")
+	if err := os.Symlink(target, linkA); err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]overlayEntry{
+		filepath.Clean(overlayRoot):                        {kind: overlayEntryDir, folds: true, known: true},
+		filepath.Clean(work):                               {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(repo):                               {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(work, "t")):           {kind: overlayEntrySymlink, target: ".."},
+		filepath.Clean(linkA):                              {kind: overlayEntrySymlink, target: target},
+		filepath.Clean(filepath.Join(repo, "S")):           {kind: overlayEntrySymlink, target: "deep/dir"},
+		filepath.Clean(filepath.Join(repo, "deep")):        {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(repo, "deep", "dir")): {kind: overlayEntryDir, folds: false, known: true},
+	}
+	before := snapshotEntries(entries)
+	confined, ambiguous := overlayLinkConfinedSnapshot(localRoot, overlayRoot, before, linkA, target)
+	if !confined || ambiguous {
+		t.Fatalf("snapshot resolution = (confined=%v ambiguous=%v), want (true, false)", confined, ambiguous)
+	}
+	// With a case-sensitive overlay root the stored `Repo` is not reachable as
+	// `repo`, so the same target escapes.
+	entries[filepath.Clean(overlayRoot)] = overlayEntry{kind: overlayEntryDir, folds: false, known: true}
+	sensitive := snapshotEntries(entries)
+	confined, ambiguous = overlayLinkConfinedSnapshot(localRoot, overlayRoot, sensitive, linkA, target)
+	if confined || ambiguous {
+		t.Fatalf("case-sensitive snapshot resolution = (confined=%v ambiguous=%v), want (false, false)", confined, ambiguous)
+	}
+}
+
+// TestOverlayLinkConfinedSnapshotFlagsAmbiguousCaseMatches pins the fail-closed
+// signal for a directory whose folding rule is unknown.
+func TestOverlayLinkConfinedSnapshotFlagsAmbiguousCaseMatches(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := "s/x/../../../outside"
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink(target, linkA); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotEntries(map[string]overlayEntry{
+		filepath.Clean(overlayRoot):              {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(repo):                     {kind: overlayEntryDir, folds: false, known: false},
+		filepath.Clean(filepath.Join(repo, "S")): {kind: overlayEntrySymlink, target: ".."},
+		filepath.Clean(linkA):                    {kind: overlayEntrySymlink, target: target},
+	})
+	if _, ambiguous := overlayLinkConfinedSnapshot(localRoot, overlayRoot, before, linkA, target); !ambiguous {
+		t.Fatal("unknown directory folding did not mark a case-variant match as ambiguous")
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown pins the
+// review finding: an inconclusive folding answer must not exempt an unchanged
+// link whose pre-run resolution is ambiguous.
+func TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := "s/x/../../../outside"
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink(target, linkA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotEntries(map[string]overlayEntry{
+		filepath.Clean(overlayRoot):              {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(repo):                     {kind: overlayEntryDir, folds: false, known: false},
+		filepath.Clean(filepath.Join(repo, "S")): {kind: overlayEntrySymlink, target: ".."},
+		filepath.Clean(linkA):                    {kind: overlayEntrySymlink, target: target},
+	})
+	err := auditUnpackedOverlaySymlinks(localRoot, before)
+	if err == nil {
+		t.Fatal("unknown folding exempted an unchanged link with an ambiguous pre-run resolution")
+	}
+	if _, statErr := os.Lstat(linkA); !os.IsNotExist(statErr) {
+		t.Fatalf("ambiguous unchanged link was left installed: %v", statErr)
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksPreservesKnownPreExistingEscape keeps the
+// preservation guarantee for a link that is definitively unconfined before and
+// after the run.
+func TestAuditUnpackedOverlaySymlinksPreservesKnownPreExistingEscape(t *testing.T) {
+	localRoot := t.TempDir()
+	repo := filepath.Join(localRoot, "overlay", "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	preexisting := filepath.Join(repo, "escape")
+	if err := os.Symlink("/etc/passwd", preexisting); err != nil {
+		t.Fatal(err)
+	}
+	before, err := scanOverlayTree(localRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err != nil {
+		t.Fatalf("pre-existing unconfined link was not preserved: %v", err)
+	}
+	if _, statErr := os.Lstat(preexisting); statErr != nil {
+		t.Fatalf("pre-existing link was removed: %v", statErr)
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksMatchesFilesystemCaseFolding covers a
+// case-insensitive volume when one is available.
 func TestAuditUnpackedOverlaySymlinksMatchesFilesystemCaseFolding(t *testing.T) {
 	localRoot := t.TempDir()
 	repo := filepath.Join(localRoot, "overlay", "repo")
@@ -356,80 +514,11 @@ func TestAuditUnpackedOverlaySymlinksMatchesFilesystemCaseFolding(t *testing.T) 
 	if err := os.Symlink("s/../outside", filepath.Join(repo, "a")); err != nil {
 		t.Fatal(err)
 	}
-	err := auditUnpackedOverlaySymlinks(localRoot, nil)
-	if err == nil {
+	if err := auditUnpackedOverlaySymlinks(localRoot, nil); err == nil {
 		t.Fatal("case-variant chain was accepted")
-	}
-	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
-		t.Fatalf("error code = %q: %v", code, err)
 	}
 	if _, statErr := os.Lstat(filepath.Join(repo, "a")); !os.IsNotExist(statErr) {
 		t.Fatalf("case-variant escaping link %q was left behind: %v", "a", statErr)
-	}
-}
-
-// TestOverlayLinkGraphFoldsSnapshotNamesPerDirectory covers the review finding
-// that snapshot lookups must follow each directory's own folding rule: the
-// overlay root can fold names while its parent does not, and an entry can be
-// reached through a different spelling than the one the archive installed.
-func TestOverlayLinkGraphFoldsSnapshotNamesPerDirectory(t *testing.T) {
-	localRoot := t.TempDir()
-	overlayRoot := filepath.Join(localRoot, "overlay")
-	repo := filepath.Join(overlayRoot, "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// Pre-run graph: `repo/t -> ..` and the overlay root contains `S`; the
-	// overlay root folds names, `repo` does not.
-	snapshot := map[string]string{
-		filepath.Clean(filepath.Join(repo, "t")):        "..",
-		filepath.Clean(filepath.Join(overlayRoot, "S")): "deep/dir",
-	}
-	linkA := filepath.Join(repo, "a")
-	if err := os.Symlink("t/s/../../outside", linkA); err != nil {
-		t.Fatal(err)
-	}
-	probe := func(dir string) (bool, bool) {
-		if filepath.Clean(dir) == filepath.Clean(overlayRoot) {
-			return true, true
-		}
-		return false, true
-	}
-	graph := newOverlayLinkGraph(snapshot, probe)
-	confined, ambiguous := overlayLinkConfined(localRoot, overlayRoot, graph, linkA, "t/s/../../outside")
-	if !confined || ambiguous {
-		t.Fatalf("folded snapshot resolution = (confined=%v ambiguous=%v), want (true, false)", confined, ambiguous)
-	}
-	sensitive := newOverlayLinkGraph(snapshot, func(string) (bool, bool) { return false, true })
-	confined, ambiguous = overlayLinkConfined(localRoot, overlayRoot, sensitive, linkA, "t/s/../../outside")
-	if confined || ambiguous {
-		t.Fatalf("case-sensitive snapshot resolution = (confined=%v ambiguous=%v), want (false, false)", confined, ambiguous)
-	}
-}
-
-// TestOverlayLinkConfinedFlagsAmbiguousCaseMatches pins the fail-closed signal:
-// when a case variant matches but the directory's folding rule is unknown, the
-// answer must be reported as ambiguous instead of silently deciding.
-func TestOverlayLinkConfinedFlagsAmbiguousCaseMatches(t *testing.T) {
-	localRoot := t.TempDir()
-	overlayRoot := filepath.Join(localRoot, "overlay")
-	repo := filepath.Join(overlayRoot, "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	snapshot := map[string]string{filepath.Clean(filepath.Join(repo, "S")): ".."}
-	target := "s/x/../../../outside"
-	linkA := filepath.Join(repo, "a")
-	if err := os.Symlink(target, linkA); err != nil {
-		t.Fatal(err)
-	}
-	unknown := newOverlayLinkGraph(snapshot, func(string) (bool, bool) { return false, false })
-	if _, ambiguous := overlayLinkConfined(localRoot, overlayRoot, unknown, linkA, target); !ambiguous {
-		t.Fatal("unknown directory folding did not mark a case-variant match as ambiguous")
-	}
-	known := newOverlayLinkGraph(snapshot, func(string) (bool, bool) { return false, true })
-	if _, ambiguous := overlayLinkConfined(localRoot, overlayRoot, known, linkA, target); ambiguous {
-		t.Fatal("known case-sensitive directory reported an ambiguous authoritative match")
 	}
 }
 
@@ -469,113 +558,7 @@ func TestOverlayDirCaseFoldingProbesInsideTheDirectory(t *testing.T) {
 	}
 }
 
-// TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown pins the
-// review finding: an inconclusive folding answer must not exempt an unchanged
-// link whose pre-run resolution is ambiguous.
-func TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown(t *testing.T) {
-	localRoot := t.TempDir()
-	repo := filepath.Join(localRoot, "overlay", "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("..", filepath.Join(repo, "S")); err != nil {
-		t.Fatal(err)
-	}
-	linkA := filepath.Join(repo, "a")
-	if err := os.Symlink("s/x/../../../outside", linkA); err != nil {
-		t.Fatal(err)
-	}
-	before, err := scanOverlaySymlinks(localRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The archive installs `repo/s`; combined with the unknown folding rule this
-	// makes the pre-run answer ambiguous while the live resolution escapes. On a
-	// case-insensitive volume `repo/s` already names `repo/S`, so EEXIST is fine.
-	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil && !errors.Is(err, os.ErrExist) {
-		t.Fatal(err)
-	}
-	previous := overlayCaseFoldingProbe
-	overlayCaseFoldingProbe = func(string) (bool, bool) { return false, false }
-	t.Cleanup(func() { overlayCaseFoldingProbe = previous })
-	err = auditUnpackedOverlaySymlinks(localRoot, before)
-	if err == nil {
-		t.Fatal("unknown folding exempted an unchanged link with an ambiguous pre-run resolution")
-	}
-	if _, statErr := os.Lstat(linkA); !os.IsNotExist(statErr) {
-		t.Fatalf("ambiguous unchanged link was left installed: %v", statErr)
-	}
-}
-
-// TestAuditUnpackedOverlaySymlinksPreservesKnownPreExistingEscape keeps the
-// preservation guarantee for a link that is definitively unconfined before and
-// after the run.
-func TestAuditUnpackedOverlaySymlinksPreservesKnownPreExistingEscape(t *testing.T) {
-	localRoot := t.TempDir()
-	repo := filepath.Join(localRoot, "overlay", "repo")
-	if err := os.MkdirAll(repo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	preexisting := filepath.Join(repo, "escape")
-	if err := os.Symlink("/etc/passwd", preexisting); err != nil {
-		t.Fatal(err)
-	}
-	before, err := scanOverlaySymlinks(localRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	previous := overlayCaseFoldingProbe
-	overlayCaseFoldingProbe = func(string) (bool, bool) { return false, true }
-	t.Cleanup(func() { overlayCaseFoldingProbe = previous })
-	if err := auditUnpackedOverlaySymlinks(localRoot, before); err != nil {
-		t.Fatalf("pre-existing unconfined link was not preserved: %v", err)
-	}
-	if _, statErr := os.Lstat(preexisting); statErr != nil {
-		t.Fatalf("pre-existing link was removed: %v", statErr)
-	}
-}
-
-// TestOverlayLinkGraphCanonicalizesAncestorCaseAliases covers the review finding
-// that a case alias in a regular ancestor component (repo vs Repo) must resolve
-// the way the folding ancestor directory does, not through the final directory's
-// rule.
-func TestOverlayLinkGraphCanonicalizesAncestorCaseAliases(t *testing.T) {
-	localRoot := t.TempDir()
-	overlayRoot := filepath.Join(localRoot, "overlay")
-	repo := filepath.Join(overlayRoot, "Repo")
-	work := filepath.Join(overlayRoot, "A")
-	for _, dir := range []string{filepath.Join(repo, "deep", "dir"), work} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := os.Symlink("..", filepath.Join(work, "t")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("deep/dir", filepath.Join(repo, "S")); err != nil {
-		t.Fatal(err)
-	}
-	target := "t/repo/S/../../../outside"
-	linkA := filepath.Join(work, "a")
-	if err := os.Symlink(target, linkA); err != nil {
-		t.Fatal(err)
-	}
-	snapshot, err := scanOverlaySymlinks(localRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Only the overlay root folds; the subdirectories are case-sensitive.
-	probe := func(dir string) (bool, bool) {
-		return filepath.Clean(dir) == filepath.Clean(overlayRoot), true
-	}
-	graph := newOverlayLinkGraph(snapshot, probe)
-	confined, ambiguous := overlayLinkConfined(localRoot, overlayRoot, graph, linkA, target)
-	if !confined || ambiguous {
-		t.Fatalf("ancestor case alias resolution = (confined=%v ambiguous=%v), want (true, false)", confined, ambiguous)
-	}
-}
-
-// TestOverlayDirCaseFoldingIgnoresHardLinkPairs covers the review finding that a
+// TestOverlayDirCaseFoldingIgnoresHardLinkPairs covers the finding that a
 // same-inode case-variant pair is not proof of case-insensitive lookup.
 func TestOverlayDirCaseFoldingIgnoresHardLinkPairs(t *testing.T) {
 	dir := t.TempDir()

@@ -1266,7 +1266,7 @@ func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSyst
 	if err != nil {
 		return UnpackFileSystemResult{}, err
 	}
-	before, err := scanOverlaySymlinks(localRoot)
+	before, err := scanOverlayTree(localRoot)
 	if err != nil {
 		return UnpackFileSystemResult{}, err
 	}
