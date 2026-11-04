@@ -1409,9 +1409,11 @@ type overlayTreeSnapshot struct {
 }
 
 // newOverlayTreeSnapshot indexes entries by parent directory so a case alias can
-// be resolved with the filesystem's own equality, not a synthesized lowercase
-// key: casefold lookup uses Unicode folding, where for example U+017F (long s)
-// matches ASCII `S` even though Go lowercasing leaves it unchanged.
+// be resolved without a synthesized lowercase key: Go cannot reproduce every
+// equivalence a casefold filesystem accepts (ext4 uses full Unicode case folding
+// plus canonical decomposition, where for example U+00DF matches `ss`), so alias
+// lookup is best effort and a miss in a folding directory is reported as
+// ambiguous rather than absent.
 func newOverlayTreeSnapshot(entries map[string]overlayEntry) *overlayTreeSnapshot {
 	snapshot := &overlayTreeSnapshot{entries: entries, children: map[string][]string{}}
 	for path := range entries {
@@ -1498,7 +1500,11 @@ func (s *overlayTreeSnapshot) lookupChild(dir, name string) (string, overlayEntr
 	if !ok || dirEntry.kind != overlayEntryDir {
 		return "", overlayEntry{}, overlayAbsent
 	}
-	// Unicode simple case folding is what casefold filesystems compare with.
+	// Best effort alias match. A casefold filesystem accepts equivalences Go
+	// cannot reproduce (full folds such as U+00DF/`ss` and canonical
+	// decomposition), so a miss in a folding directory must never be reported as
+	// definitively absent: it is ambiguous, and an ambiguous pre-run answer drops
+	// the pre-existing-link exemption.
 	stored := ""
 	for _, candidate := range s.children[dir] {
 		if candidate == name {
@@ -1509,18 +1515,22 @@ func (s *overlayTreeSnapshot) lookupChild(dir, name string) (string, overlayEntr
 			stored = candidate
 		}
 	}
-	if stored == "" || stored == name {
-		return "", overlayEntry{}, overlayAbsent
-	}
-	path := filepath.Join(dir, stored)
-	switch {
-	case dirEntry.known && dirEntry.folds:
-		return path, s.entries[path], overlayFound
-	case dirEntry.known:
-		return "", overlayEntry{}, overlayAbsent
-	default:
+	if !dirEntry.known {
+		if stored == "" || stored == name {
+			return "", overlayEntry{}, overlayAbsent
+		}
+		path := filepath.Join(dir, stored)
 		return path, s.entries[path], overlayAmbiguous
 	}
+	if !dirEntry.folds {
+		return "", overlayEntry{}, overlayAbsent
+	}
+	if stored == "" || stored == name {
+		// The directory folds names but Go cannot prove this component is absent.
+		return "", overlayEntry{}, overlayAmbiguous
+	}
+	path := filepath.Join(dir, stored)
+	return path, s.entries[path], overlayFound
 }
 
 // overlayDirCaseFolding reports whether dir resolves entry names

@@ -381,7 +381,7 @@ func TestOverlayLinkConfinedSnapshotUsesStoredSpellingAndFolding(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	target := "t/repo/S/../../../outside"
+	target := "t/repo/S/../../deep"
 	linkA := filepath.Join(work, "a")
 	if err := os.Symlink(target, linkA); err != nil {
 		t.Fatal(err)
@@ -402,10 +402,18 @@ func TestOverlayLinkConfinedSnapshotUsesStoredSpellingAndFolding(t *testing.T) {
 		t.Fatalf("snapshot resolution = (confined=%v ambiguous=%v), want (true, false)", confined, ambiguous)
 	}
 	// With a case-sensitive overlay root the stored `Repo` is not reachable as
-	// `repo`, so the same target escapes.
+	// `repo`, so a deeper target escapes.
+	escapingTarget := "t/repo/S/../../../deep"
+	if err := os.Remove(linkA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(escapingTarget, linkA); err != nil {
+		t.Fatal(err)
+	}
 	entries[filepath.Clean(overlayRoot)] = overlayEntry{kind: overlayEntryDir, folds: false, known: true}
+	entries[filepath.Clean(linkA)] = overlayEntry{kind: overlayEntrySymlink, target: escapingTarget}
 	sensitive := snapshotEntries(entries)
-	confined, ambiguous = overlayLinkConfinedSnapshot(localRoot, overlayRoot, sensitive, linkA, target)
+	confined, ambiguous = overlayLinkConfinedSnapshot(localRoot, overlayRoot, sensitive, linkA, escapingTarget)
 	if confined || ambiguous {
 		t.Fatalf("case-sensitive snapshot resolution = (confined=%v ambiguous=%v), want (false, false)", confined, ambiguous)
 	}
@@ -603,7 +611,7 @@ func TestOverlayLinkConfinedSnapshotUsesUnicodeFolding(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	target := "t/\u017f/../../outside"
+	target := "t/\u017f/../../deep"
 	linkA := filepath.Join(repo, "a")
 	if err := os.Symlink(target, linkA); err != nil {
 		t.Fatal(err)
@@ -657,5 +665,78 @@ func TestScanOverlayTreePreservesDirectoryMtimes(t *testing.T) {
 	}
 	if !info.ModTime().Equal(want) {
 		t.Fatalf("scanning or auditing changed the directory mtime: got %v want %v", info.ModTime(), want)
+	}
+}
+
+// TestOverlayLinkConfinedSnapshotFlagsFullFoldAliasAsAmbiguous covers the review
+// finding that ext4 folding also accepts full folds and canonical decomposition
+// (U+00DF/`ss`), which Go cannot reproduce: an unmatched component in a folding
+// directory must be ambiguous, never definitively absent.
+func TestOverlayLinkConfinedSnapshotFlagsFullFoldAliasAsAmbiguous(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := "t/\u00df/../../outside"
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink(target, linkA); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotEntries(map[string]overlayEntry{
+		filepath.Clean(overlayRoot):                               {kind: overlayEntryDir, folds: true, known: true},
+		filepath.Clean(repo):                                      {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(repo, "t")):                  {kind: overlayEntrySymlink, target: ".."},
+		filepath.Clean(linkA):                                     {kind: overlayEntrySymlink, target: target},
+		filepath.Clean(filepath.Join(overlayRoot, "SS")):          {kind: overlayEntrySymlink, target: "deep/dir"},
+		filepath.Clean(filepath.Join(overlayRoot, "deep")):        {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(overlayRoot, "deep", "dir")): {kind: overlayEntryDir, folds: false, known: true},
+	})
+	if _, ambiguous := overlayLinkConfinedSnapshot(localRoot, overlayRoot, before, linkA, target); !ambiguous {
+		t.Fatal("full-fold alias miss was treated as definitively absent")
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksRejectsFullFoldAliasEscape is the public
+// regression for the same finding: the unchanged link is removed even though the
+// snapshot cannot name the alias the filesystem would follow.
+func TestAuditUnpackedOverlaySymlinksRejectsFullFoldAliasEscape(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := "t/\u00df/../../outside"
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink(target, linkA); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "t")); err != nil {
+		t.Fatal(err)
+	}
+	// Post-run: the archive replaced `O/SS` with `SS -> .`.
+	if err := os.Symlink(".", filepath.Join(overlayRoot, "SS")); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotEntries(map[string]overlayEntry{
+		filepath.Clean(overlayRoot):                               {kind: overlayEntryDir, folds: true, known: true},
+		filepath.Clean(repo):                                      {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(repo, "t")):                  {kind: overlayEntrySymlink, target: ".."},
+		filepath.Clean(linkA):                                     {kind: overlayEntrySymlink, target: target},
+		filepath.Clean(filepath.Join(overlayRoot, "SS")):          {kind: overlayEntrySymlink, target: "deep/dir"},
+		filepath.Clean(filepath.Join(overlayRoot, "deep")):        {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(overlayRoot, "deep", "dir")): {kind: overlayEntryDir, folds: false, known: true},
+	})
+	err := auditUnpackedOverlaySymlinks(localRoot, before)
+	if err == nil {
+		t.Fatal("full-fold alias escape was exempted")
+	}
+	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
+		t.Fatalf("error code = %q: %v", code, err)
+	}
+	if _, statErr := os.Lstat(linkA); !os.IsNotExist(statErr) {
+		t.Fatalf("unchanged escaping link %q was left behind: %v", "a", statErr)
 	}
 }
