@@ -1464,25 +1464,35 @@ func (g overlayLinkGraph) lookup(path string) (string, bool) {
 	return "", false
 }
 
-// overlayVolumeFoldsCase reports whether the volume holding localRoot resolves
-// names case-insensitively. The before/after comparison must use the same rule
-// as the live filesystem, otherwise it can preserve a link this unpack made
-// unsafe or delete an unrelated pre-existing one.
-func overlayVolumeFoldsCase(localRoot string) bool {
-	probe, err := os.CreateTemp(localRoot, ".ti-casefold-probe-")
+// overlayCaseFolding reports whether the volume holding overlayRoot resolves
+// names case-insensitively, and whether that could be determined at all. It
+// stats a case variant of the existing overlay directory and compares identity,
+// so it needs no write access and works on a read-only overlay. Unknown must not
+// be treated as case-sensitive: the caller has to fail closed instead.
+func overlayCaseFolding(overlayRoot string) (folds bool, known bool) {
+	clean := filepath.Clean(overlayRoot)
+	base := filepath.Base(clean)
+	upper := strings.ToUpper(base)
+	if upper == base {
+		return false, false
+	}
+	original, err := os.Lstat(clean)
 	if err != nil {
-		return false
+		return false, false
 	}
-	name := probe.Name()
-	_ = probe.Close()
-	defer os.Remove(name)
-	variant := filepath.Join(filepath.Dir(name), strings.ToUpper(filepath.Base(name)))
-	if variant == name {
-		return false
+	variant, err := os.Lstat(filepath.Join(filepath.Dir(clean), upper))
+	switch {
+	case err == nil:
+		return os.SameFile(original, variant), true
+	case errors.Is(err, os.ErrNotExist):
+		return false, true
+	default:
+		return false, false
 	}
-	_, statErr := os.Lstat(variant)
-	return statErr == nil
 }
+
+// overlayCaseFoldingProbe is a seam so tests can exercise the unknown case.
+var overlayCaseFoldingProbe = overlayCaseFolding
 
 // resolveOverlaySymlinkTarget resolves the target of the link at linkPath, applying
 // ".." to the already resolved prefix the way the kernel does. A zero graph makes
@@ -1593,8 +1603,10 @@ func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) er
 	overlayRoot := filepath.Join(localRoot, "overlay")
 	// The pre-run snapshot must resolve names the same way the volume does,
 	// otherwise the before/after comparison disagrees on case-insensitive
-	// volumes.
-	beforeGraph := newOverlayLinkGraph(before, overlayVolumeFoldsCase(overlayRoot))
+	// volumes. When that cannot be determined, the exemption is dropped: a link
+	// that is unconfined now is treated as newly unsafe rather than pre-existing.
+	caseFolds, caseKnown := overlayCaseFoldingProbe(overlayRoot)
+	beforeGraph := newOverlayLinkGraph(before, caseFolds)
 	type violation struct {
 		path   string
 		target string
@@ -1608,6 +1620,15 @@ func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) er
 		}
 		confinedNow := overlayLinkConfined(localRoot, overlayRoot, overlayLinkGraph{}, linkPath, target)
 		if previous, ok := before[linkPath]; ok && previous == target {
+			if !caseKnown {
+				// Unknown name semantics cannot prove the link was safe before
+				// this unpack, so it is not exempt.
+				if confinedNow {
+					continue
+				}
+				violations = append(violations, violation{path: linkPath, target: target, rel: rel})
+				continue
+			}
 			confinedBefore := overlayLinkConfined(localRoot, overlayRoot, beforeGraph, linkPath, target)
 			if !confinedBefore || confinedNow {
 				continue

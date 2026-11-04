@@ -399,17 +399,75 @@ func TestOverlayLinkGraphFoldsSnapshotNames(t *testing.T) {
 	}
 }
 
-// TestOverlayVolumeFoldsCaseProbesTheOverlayVolume keeps the case-detection
-// helper honest: it must agree with the filesystem it probes.
-func TestOverlayVolumeFoldsCaseProbesTheOverlayVolume(t *testing.T) {
-	dir := t.TempDir()
-	probe := "case-probe"
-	if err := os.WriteFile(filepath.Join(dir, probe), nil, 0o644); err != nil {
+// TestOverlayCaseFoldingProbesWithoutWriting keeps the case-detection helper
+// honest and read-only: it must agree with the filesystem it probes, and it must
+// not need write access to the overlay (review finding: a 0555 overlay still has
+// to be classified, not silently treated as case-sensitive).
+func TestOverlayCaseFoldingProbesWithoutWriting(t *testing.T) {
+	parent := t.TempDir()
+	overlayRoot := filepath.Join(parent, "overlay")
+	if err := os.MkdirAll(overlayRoot, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err := os.Stat(filepath.Join(dir, strings.ToUpper(probe)))
-	want := err == nil
-	if got := overlayVolumeFoldsCase(dir); got != want {
-		t.Fatalf("overlayVolumeFoldsCase = %v, want %v", got, want)
+	_, statErr := os.Lstat(filepath.Join(parent, strings.ToUpper("overlay")))
+	wantFolds := statErr == nil
+	folds, known := overlayCaseFolding(overlayRoot)
+	if !known {
+		t.Fatalf("case folding probe was inconclusive for %q", overlayRoot)
+	}
+	if folds != wantFolds {
+		t.Fatalf("folds = %v, want %v", folds, wantFolds)
+	}
+	if err := os.Chmod(overlayRoot, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(overlayRoot, 0o755) })
+	folds, known = overlayCaseFolding(overlayRoot)
+	if !known || folds != wantFolds {
+		t.Fatalf("read-only overlay probe = (%v, %v), want (%v, true)", folds, known, wantFolds)
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown pins the
+// review finding: an inconclusive probe must not reinstate the exemption for an
+// unchanged link that is unconfined now.
+func TestAuditUnpackedOverlaySymlinksFailsClosedWhenCaseFoldingIsUnknown(t *testing.T) {
+	localRoot := t.TempDir()
+	repo := filepath.Join(localRoot, "overlay", "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	preexisting := filepath.Join(repo, "escape")
+	if err := os.Symlink("/etc/passwd", preexisting); err != nil {
+		t.Fatal(err)
+	}
+	before, err := scanOverlaySymlinks(localRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := overlayCaseFoldingProbe
+	overlayCaseFoldingProbe = func(string) (bool, bool) { return false, false }
+	t.Cleanup(func() { overlayCaseFoldingProbe = previous })
+	err = auditUnpackedOverlaySymlinks(localRoot, before)
+	if err == nil {
+		t.Fatal("unknown case folding still exempted an unconfined unchanged link")
+	}
+	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
+		t.Fatalf("error code = %q: %v", code, err)
+	}
+	if _, statErr := os.Lstat(preexisting); !os.IsNotExist(statErr) {
+		t.Fatalf("unconfined unchanged link was left installed: %v", statErr)
+	}
+	// With a known case-sensitive volume the same link is pre-existing local
+	// state and must be preserved.
+	if err := os.Symlink("/etc/passwd", preexisting); err != nil {
+		t.Fatal(err)
+	}
+	overlayCaseFoldingProbe = func(string) (bool, bool) { return false, true }
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err != nil {
+		t.Fatalf("pre-existing unconfined link was not preserved on a known volume: %v", err)
+	}
+	if _, statErr := os.Lstat(preexisting); statErr != nil {
+		t.Fatalf("pre-existing link was removed: %v", statErr)
 	}
 }
