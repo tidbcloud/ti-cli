@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
@@ -364,5 +365,51 @@ func TestAuditUnpackedOverlaySymlinksMatchesFilesystemCaseFolding(t *testing.T) 
 	}
 	if _, statErr := os.Lstat(filepath.Join(repo, "a")); !os.IsNotExist(statErr) {
 		t.Fatalf("case-variant escaping link %q was left behind: %v", "a", statErr)
+	}
+}
+
+// TestOverlayLinkGraphFoldsSnapshotNames covers the review finding that the
+// pre-unpack snapshot used case-sensitive map keys while live resolution used
+// the volume: on a case-insensitive volume both must agree. The snapshot graph is
+// built synthetically so the difference is visible on any filesystem.
+func TestOverlayLinkGraphFoldsSnapshotNames(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The pre-run state, as the snapshot recorded it: `repo/t -> ..` and
+	// `S -> deep/dir`, referenced through the lower-case spelling used by `a`.
+	snapshot := map[string]string{
+		filepath.Clean(filepath.Join(repo, "t")):        "..",
+		filepath.Clean(filepath.Join(overlayRoot, "S")): "deep/dir",
+	}
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink("t/s/../../outside", linkA); err != nil {
+		t.Fatal(err)
+	}
+	folded := newOverlayLinkGraph(snapshot, true)
+	if !overlayLinkConfined(localRoot, overlayRoot, folded, linkA, "t/s/../../outside") {
+		t.Fatal("case-folded snapshot resolution reported a confined pre-run link as escaping")
+	}
+	exact := newOverlayLinkGraph(snapshot, false)
+	if overlayLinkConfined(localRoot, overlayRoot, exact, linkA, "t/s/../../outside") {
+		t.Fatal("exact-case snapshot resolution followed the case-variant link")
+	}
+}
+
+// TestOverlayVolumeFoldsCaseProbesTheOverlayVolume keeps the case-detection
+// helper honest: it must agree with the filesystem it probes.
+func TestOverlayVolumeFoldsCaseProbesTheOverlayVolume(t *testing.T) {
+	dir := t.TempDir()
+	probe := "case-probe"
+	if err := os.WriteFile(filepath.Join(dir, probe), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := os.Stat(filepath.Join(dir, strings.ToUpper(probe)))
+	want := err == nil
+	if got := overlayVolumeFoldsCase(dir); got != want {
+		t.Fatalf("overlayVolumeFoldsCase = %v, want %v", got, want)
 	}
 }

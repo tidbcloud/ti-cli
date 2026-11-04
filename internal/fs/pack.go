@@ -1424,14 +1424,73 @@ func scanOverlaySymlinks(localRoot string) (map[string]string, error) {
 	return links, nil
 }
 
+// overlayLinkGraph is the pre-unpack symlink snapshot used to reconstruct the
+// state before a companion run. Lookups follow the same name equality as the
+// volume that holds the overlay: a case-insensitive volume folds names, so a
+// snapshot must not assume two spellings always name two entries.
+type overlayLinkGraph struct {
+	byPath map[string]string
+	byFold map[string]string
+}
+
+// newOverlayLinkGraph builds a snapshot graph. foldCase must match the volume,
+// because only then may `s` and `S` be treated as the same entry.
+func newOverlayLinkGraph(links map[string]string, foldCase bool) overlayLinkGraph {
+	graph := overlayLinkGraph{byPath: links}
+	if links == nil || !foldCase {
+		return graph
+	}
+	graph.byFold = make(map[string]string, len(links))
+	for path, target := range links {
+		graph.byFold[strings.ToLower(path)] = target
+	}
+	return graph
+}
+
+// lookup returns the snapshot link at path, or ok=false when the snapshot has no
+// link there. A zero graph means the caller wants the live filesystem.
+func (g overlayLinkGraph) lookup(path string) (string, bool) {
+	if g.byPath == nil {
+		return "", false
+	}
+	clean := filepath.Clean(path)
+	if target, ok := g.byPath[clean]; ok {
+		return target, true
+	}
+	if g.byFold != nil {
+		target, ok := g.byFold[strings.ToLower(clean)]
+		return target, ok
+	}
+	return "", false
+}
+
+// overlayVolumeFoldsCase reports whether the volume holding localRoot resolves
+// names case-insensitively. The before/after comparison must use the same rule
+// as the live filesystem, otherwise it can preserve a link this unpack made
+// unsafe or delete an unrelated pre-existing one.
+func overlayVolumeFoldsCase(localRoot string) bool {
+	probe, err := os.CreateTemp(localRoot, ".ti-casefold-probe-")
+	if err != nil {
+		return false
+	}
+	name := probe.Name()
+	_ = probe.Close()
+	defer os.Remove(name)
+	variant := filepath.Join(filepath.Dir(name), strings.ToUpper(filepath.Base(name)))
+	if variant == name {
+		return false
+	}
+	_, statErr := os.Lstat(variant)
+	return statErr == nil
+}
+
 // resolveOverlaySymlinkTarget resolves the target of the link at linkPath, applying
-// ".." to the already resolved prefix the way the kernel does. When links is not
-// nil, symlinks are substituted from that snapshot, which is how the state before
-// an unpack is reconstructed. When links is nil the live filesystem decides, so
-// resolution agrees with the volume's own name resolution (case-insensitive
-// volumes included) instead of assuming two map keys name two entries.
-// Non-existent tail components are kept lexically so dangling links still resolve.
-func resolveOverlaySymlinkTarget(links map[string]string, linkPath string) (string, error) {
+// ".." to the already resolved prefix the way the kernel does. A zero graph makes
+// the live filesystem decide, so resolution agrees with the volume's own name
+// resolution. A snapshot graph reconstructs the pre-run state with the same name
+// equality rule. Non-existent tail components are kept lexically so dangling
+// links still resolve.
+func resolveOverlaySymlinkTarget(graph overlayLinkGraph, linkPath string) (string, error) {
 	target, err := os.Readlink(linkPath)
 	if err != nil {
 		return "", err
@@ -1450,11 +1509,11 @@ func resolveOverlaySymlinkTarget(links map[string]string, linkPath string) (stri
 			continue
 		}
 		next := filepath.Join(current, part)
-		linkTarget, isLink := "", false
-		if links != nil {
-			linkTarget, isLink = links[filepath.Clean(next)]
-		} else if info, lstatErr := os.Lstat(next); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
-			linkTarget, isLink = linkTargetOf(next)
+		linkTarget, isLink := graph.lookup(next)
+		if !isLink && graph.byPath == nil {
+			if info, lstatErr := os.Lstat(next); lstatErr == nil && info.Mode()&os.ModeSymlink != 0 {
+				linkTarget, isLink = linkTargetOf(next)
+			}
 		}
 		if isLink {
 			hops++
@@ -1482,9 +1541,9 @@ func linkTargetOf(linkPath string) (string, bool) {
 }
 
 // overlayLinkConfined reports whether the link at linkPath stays inside the
-// overlay. links selects the link graph to resolve through: nil means the live
-// filesystem.
-func overlayLinkConfined(localRoot, overlayRoot string, links map[string]string, linkPath, target string) bool {
+// overlay. A zero graph resolves against the live filesystem; a snapshot graph
+// resolves against the pre-run state.
+func overlayLinkConfined(localRoot, overlayRoot string, graph overlayLinkGraph, linkPath, target string) bool {
 	rel, err := filepath.Rel(overlayRoot, linkPath)
 	if err != nil {
 		return false
@@ -1492,7 +1551,7 @@ func overlayLinkConfined(localRoot, overlayRoot string, links map[string]string,
 	if err := validatePackSymlinkTarget(localRoot, filepath.ToSlash(rel), target); err != nil {
 		return false
 	}
-	resolved, err := resolveOverlaySymlinkTarget(links, linkPath)
+	resolved, err := resolveOverlaySymlinkTarget(graph, linkPath)
 	if err != nil {
 		return false
 	}
@@ -1532,6 +1591,10 @@ func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) er
 		return err
 	}
 	overlayRoot := filepath.Join(localRoot, "overlay")
+	// The pre-run snapshot must resolve names the same way the volume does,
+	// otherwise the before/after comparison disagrees on case-insensitive
+	// volumes.
+	beforeGraph := newOverlayLinkGraph(before, overlayVolumeFoldsCase(overlayRoot))
 	type violation struct {
 		path   string
 		target string
@@ -1543,9 +1606,9 @@ func auditUnpackedOverlaySymlinks(localRoot string, before map[string]string) er
 		if relErr != nil {
 			return apperr.Wrap("fs.unpack_audit_overlay", "runtime", 1, fmt.Sprintf("resolve unpacked path %q", linkPath), relErr)
 		}
-		confinedNow := overlayLinkConfined(localRoot, overlayRoot, nil, linkPath, target)
+		confinedNow := overlayLinkConfined(localRoot, overlayRoot, overlayLinkGraph{}, linkPath, target)
 		if previous, ok := before[linkPath]; ok && previous == target {
-			confinedBefore := overlayLinkConfined(localRoot, overlayRoot, before, linkPath, target)
+			confinedBefore := overlayLinkConfined(localRoot, overlayRoot, beforeGraph, linkPath, target)
 			if !confinedBefore || confinedNow {
 				continue
 			}
