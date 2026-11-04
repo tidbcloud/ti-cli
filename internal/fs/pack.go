@@ -1405,21 +1405,18 @@ type overlayEntry struct {
 // their stored spelling and lookup semantics.
 type overlayTreeSnapshot struct {
 	entries  map[string]overlayEntry
-	children map[string]map[string]string
+	children map[string][]string
 }
 
-// newOverlayTreeSnapshot indexes entries by parent directory for case-variant
-// lookups.
+// newOverlayTreeSnapshot indexes entries by parent directory so a case alias can
+// be resolved with the filesystem's own equality, not a synthesized lowercase
+// key: casefold lookup uses Unicode folding, where for example U+017F (long s)
+// matches ASCII `S` even though Go lowercasing leaves it unchanged.
 func newOverlayTreeSnapshot(entries map[string]overlayEntry) *overlayTreeSnapshot {
-	snapshot := &overlayTreeSnapshot{entries: entries, children: map[string]map[string]string{}}
+	snapshot := &overlayTreeSnapshot{entries: entries, children: map[string][]string{}}
 	for path := range entries {
 		dir := filepath.Clean(filepath.Dir(path))
-		table := snapshot.children[dir]
-		if table == nil {
-			table = map[string]string{}
-			snapshot.children[dir] = table
-		}
-		table[strings.ToLower(filepath.Base(path))] = filepath.Base(path)
+		snapshot.children[dir] = append(snapshot.children[dir], filepath.Base(path))
 	}
 	return snapshot
 }
@@ -1501,9 +1498,18 @@ func (s *overlayTreeSnapshot) lookupChild(dir, name string) (string, overlayEntr
 	if !ok || dirEntry.kind != overlayEntryDir {
 		return "", overlayEntry{}, overlayAbsent
 	}
-	table := s.children[dir]
-	stored, ok := table[strings.ToLower(name)]
-	if !ok || stored == name {
+	// Unicode simple case folding is what casefold filesystems compare with.
+	stored := ""
+	for _, candidate := range s.children[dir] {
+		if candidate == name {
+			stored = candidate
+			break
+		}
+		if strings.EqualFold(candidate, name) {
+			stored = candidate
+		}
+	}
+	if stored == "" || stored == name {
 		return "", overlayEntry{}, overlayAbsent
 	}
 	path := filepath.Join(dir, stored)
@@ -1518,48 +1524,35 @@ func (s *overlayTreeSnapshot) lookupChild(dir, name string) (string, overlayEntr
 }
 
 // overlayDirCaseFolding reports whether dir resolves entry names
-// case-insensitively, and whether that could be determined. It inspects the
-// directory's own entries first, so a read-only directory is still classified,
-// and only then falls back to creating a probe file inside it. A separately
-// stored case variant proves nothing: on a case-sensitive volume it can be a
-// hard link to the same inode.
+// case-insensitively, and whether that could be determined. It only inspects the
+// directory's own entries: the audit must not create or delete anything inside
+// the overlay, because that would change the mtimes the pack/unpack contract
+// preserves. A directory with no usable entry reports unknown, and a separately
+// stored case variant proves nothing (it can be a hard link on a case-sensitive
+// volume).
 func overlayDirCaseFolding(dir string) (folds bool, known bool) {
 	entries, err := os.ReadDir(dir)
-	if err == nil {
-		names := make(map[string]struct{}, len(entries))
-		for _, entry := range entries {
-			names[entry.Name()] = struct{}{}
-		}
-		for _, entry := range entries {
-			name := entry.Name()
-			upper := strings.ToUpper(name)
-			if upper == name {
-				continue
-			}
-			if _, distinct := names[upper]; distinct {
-				continue
-			}
-			if _, err := os.Lstat(filepath.Join(dir, upper)); err == nil {
-				return true, true
-			} else if errors.Is(err, os.ErrNotExist) {
-				return false, true
-			}
-		}
-	}
-	probe, err := os.CreateTemp(dir, ".ti-casefold-")
 	if err != nil {
 		return false, false
 	}
-	name := probe.Name()
-	_ = probe.Close()
-	defer os.Remove(name)
-	if _, err := os.Lstat(name); err != nil {
-		return false, false
+	names := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		names[entry.Name()] = struct{}{}
 	}
-	if _, err := os.Lstat(filepath.Join(dir, strings.ToUpper(filepath.Base(name)))); err == nil {
-		return true, true
-	} else if errors.Is(err, os.ErrNotExist) {
-		return false, true
+	for _, entry := range entries {
+		name := entry.Name()
+		variant := strings.ToUpper(name)
+		if variant == name {
+			continue
+		}
+		if _, distinct := names[variant]; distinct {
+			continue
+		}
+		if _, err := os.Lstat(filepath.Join(dir, variant)); err == nil {
+			return true, true
+		} else if errors.Is(err, os.ErrNotExist) {
+			return false, true
+		}
 	}
 	return false, false
 }

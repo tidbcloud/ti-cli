@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
@@ -525,7 +526,7 @@ func TestAuditUnpackedOverlaySymlinksMatchesFilesystemCaseFolding(t *testing.T) 
 // TestOverlayDirCaseFoldingProbesInsideTheDirectory keeps the detection helper
 // honest and read-only: it inspects the directory's own entries, so it needs no
 // write access, and it reports unknown instead of guessing.
-func TestOverlayDirCaseFoldingProbesInsideTheDirectory(t *testing.T) {
+func TestOverlayDirCaseFoldingInspectsOnlyExistingEntries(t *testing.T) {
 	parent := t.TempDir()
 	dir := filepath.Join(parent, "overlay")
 	if err := os.MkdirAll(filepath.Join(dir, "repo"), 0o755); err != nil {
@@ -537,6 +538,12 @@ func TestOverlayDirCaseFoldingProbesInsideTheDirectory(t *testing.T) {
 	if !known || folds != wantFolds {
 		t.Fatalf("probe = (folds=%v known=%v), want (folds=%v known=true)", folds, known, wantFolds)
 	}
+	// The classification must not need write access and must not leave anything
+	// behind: the audit may not change directory metadata.
+	before, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Chmod(dir, 0o555); err != nil {
 		t.Fatal(err)
 	}
@@ -545,16 +552,19 @@ func TestOverlayDirCaseFoldingProbesInsideTheDirectory(t *testing.T) {
 	if !known || folds != wantFolds {
 		t.Fatalf("read-only probe = (folds=%v known=%v), want (folds=%v known=true)", folds, known, wantFolds)
 	}
-	empty := filepath.Join(parent, "empty")
-	if err := os.MkdirAll(empty, 0o555); err != nil {
+	after, err := os.ReadDir(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(empty, 0o755) })
-	if os.Geteuid() == 0 {
-		t.Skip("root can always create the probe file, so the unknown path cannot be exercised")
+	if len(before) != len(after) {
+		t.Fatalf("probe changed the directory: before=%v after=%v", before, after)
+	}
+	empty := filepath.Join(parent, "empty")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	if _, known := overlayDirCaseFolding(empty); known {
-		t.Fatal("unwritable empty directory was classified instead of reported unknown")
+		t.Fatal("directory without a usable entry was classified instead of reported unknown")
 	}
 }
 
@@ -580,5 +590,72 @@ func TestOverlayDirCaseFoldingIgnoresHardLinkPairs(t *testing.T) {
 	}
 	if folds {
 		t.Fatal("hard-linked case-variant entries were treated as case folding")
+	}
+}
+
+// TestOverlayLinkConfinedSnapshotUsesUnicodeFolding covers the review finding
+// that a folded filesystem compares with Unicode case folding, not lowercasing:
+// U+017F (long s) matches ASCII `S`, so the snapshot must find that entry.
+func TestOverlayLinkConfinedSnapshotUsesUnicodeFolding(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := "t/\u017f/../../outside"
+	linkA := filepath.Join(repo, "a")
+	if err := os.Symlink(target, linkA); err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]overlayEntry{
+		filepath.Clean(overlayRoot):                               {kind: overlayEntryDir, folds: true, known: true},
+		filepath.Clean(repo):                                      {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(repo, "t")):                  {kind: overlayEntrySymlink, target: ".."},
+		filepath.Clean(linkA):                                     {kind: overlayEntrySymlink, target: target},
+		filepath.Clean(filepath.Join(overlayRoot, "S")):           {kind: overlayEntrySymlink, target: "deep/dir"},
+		filepath.Clean(filepath.Join(overlayRoot, "deep")):        {kind: overlayEntryDir, folds: false, known: true},
+		filepath.Clean(filepath.Join(overlayRoot, "deep", "dir")): {kind: overlayEntryDir, folds: false, known: true},
+	}
+	before := snapshotEntries(entries)
+	confined, ambiguous := overlayLinkConfinedSnapshot(localRoot, overlayRoot, before, linkA, target)
+	if !confined || ambiguous {
+		t.Fatalf("unicode folding resolution = (confined=%v ambiguous=%v), want (true, false)", confined, ambiguous)
+	}
+}
+
+// TestScanOverlayTreePreservesDirectoryMtimes covers the review finding that
+// snapshotting must not mutate directory metadata: an empty directory keeps the
+// mtime the archive restored, both before and after the audit.
+func TestScanOverlayTreePreservesDirectoryMtimes(t *testing.T) {
+	localRoot := t.TempDir()
+	empty := filepath.Join(localRoot, "overlay", "empty")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := time.Unix(1_600_000_000, 0)
+	if err := os.Chtimes(empty, want, want); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(want) {
+		t.Fatalf("setup mtime = %v, want %v", info.ModTime(), want)
+	}
+	before, err := scanOverlayTree(localRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err != nil {
+		t.Fatalf("audit of a symlink-free overlay failed: %v", err)
+	}
+	info, err = os.Stat(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !info.ModTime().Equal(want) {
+		t.Fatalf("scanning or auditing changed the directory mtime: got %v want %v", info.ModTime(), want)
 	}
 }
