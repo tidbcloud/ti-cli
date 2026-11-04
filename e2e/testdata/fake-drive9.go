@@ -143,8 +143,9 @@ func main() {
 		return
 	}
 	if hasPrefix(args, "unpack") {
-		// Emulate the companion extractor. FAKE_DRIVE9_UNPACK_SYMLINK_* lets a
-		// test prove that ti audits the overlay the companion just produced.
+		// Emulate the companion extractor. FAKE_DRIVE9_UNPACK_* lets a test prove
+		// that ti audits the overlay the companion produced, including the
+		// partial-failure path.
 		if localRoot := flagValue(args, "--local-root"); localRoot != "" {
 			overlay := filepath.Join(localRoot, "overlay")
 			_ = os.MkdirAll(filepath.Join(overlay, "repo"), 0o755)
@@ -154,6 +155,14 @@ func main() {
 				_ = os.MkdirAll(filepath.Dir(linkPath), 0o755)
 				_ = os.Symlink(os.Getenv("FAKE_DRIVE9_UNPACK_SYMLINK_TARGET"), linkPath)
 			}
+			if os.Getenv("FAKE_DRIVE9_UNPACK_CHAIN") == "1" {
+				_ = os.Symlink("..", filepath.Join(overlay, "repo", "s"))
+				_ = os.Symlink("s/../outside", filepath.Join(overlay, "repo", "a"))
+			}
+		}
+		if os.Getenv("FAKE_DRIVE9_UNPACK_FAIL") == "1" {
+			fmt.Fprintln(os.Stderr, "drive9: unpack failed after partial install")
+			os.Exit(1)
 		}
 		fmt.Println(`{"status":"unpacked"}`)
 		return

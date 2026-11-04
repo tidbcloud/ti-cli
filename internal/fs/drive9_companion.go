@@ -1257,8 +1257,21 @@ func (s Service) drive9PackFileSystem(ctx context.Context, opts PackFileSystemOp
 }
 
 func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSystemOptions) (UnpackFileSystemResult, error) {
+	// Security (information protection): the tar extraction happens inside the
+	// ti-drive9 companion, so resolve the effective local overlay first, snapshot
+	// its symlinks, and audit whatever the companion produced. An unknown overlay
+	// is an error: silently skipping the audit would leave the command
+	// vulnerable.
+	localRoot, err := s.unpackAuditLocalRoot(opts)
+	if err != nil {
+		return UnpackFileSystemResult{}, err
+	}
+	before, err := scanOverlaySymlinks(localRoot)
+	if err != nil {
+		return UnpackFileSystemResult{}, err
+	}
 	args := []string{"unpack"}
-	appendFlagValue(&args, "--local-root", opts.LocalRoot)
+	appendFlagValue(&args, "--local-root", localRoot)
 	appendFlagValue(&args, "--remote-root", opts.RemoteRoot)
 	appendFlagValue(&args, "--mount", opts.MountPath)
 	appendFlagValue(&args, "--profile", opts.MountProfile)
@@ -1273,39 +1286,46 @@ func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSyst
 		}
 		args = append(args, drive9Remote(normalized))
 	}
-	if _, err := s.drive9Run(ctx, opts.Profile, args, false); err != nil {
-		return UnpackFileSystemResult{}, err
+	_, runErr := s.drive9Run(ctx, opts.Profile, args, false)
+	// The audit also runs when the companion failed: unpack is not atomic, so a
+	// partial install can already have written an escaping link.
+	auditErr := auditUnpackedOverlaySymlinks(localRoot, before)
+	switch {
+	case runErr != nil && auditErr != nil:
+		return UnpackFileSystemResult{}, apperr.New("fs.unpack_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", runErr, auditErr))
+	case runErr != nil:
+		return UnpackFileSystemResult{}, runErr
+	case auditErr != nil:
+		return UnpackFileSystemResult{}, auditErr
 	}
-	// Security (information protection): the tar extraction itself happens in
-	// the ti-drive9 companion, so verify the local overlay it just produced and
-	// fail closed if the remote pack planted a link that escapes it.
-	if err := auditUnpackedOverlaySymlinks(s.unpackAuditLocalRoot(opts)); err != nil {
-		return UnpackFileSystemResult{}, err
-	}
-	return UnpackFileSystemResult{Status: "unpacked", ArchivePath: archivePath, LocalRoot: opts.LocalRoot, RemoteRoot: opts.RemoteRoot, MountProfile: opts.MountProfile, Replaced: !opts.NoReplace, CreatedAt: time.Now().UTC()}, nil
+	return UnpackFileSystemResult{Status: "unpacked", ArchivePath: archivePath, LocalRoot: localRoot, RemoteRoot: opts.RemoteRoot, MountProfile: opts.MountProfile, Replaced: !opts.NoReplace, CreatedAt: time.Now().UTC()}, nil
 }
 
 // unpackAuditLocalRoot returns the local root whose overlay the companion
-// unpack wrote. An explicit --local-root wins; otherwise the mount locator of
-// --mount-path is used, because the companion derives the local root itself in
-// that case.
-func (s Service) unpackAuditLocalRoot(opts UnpackFileSystemOptions) string {
+// unpack writes. An explicit --local-root wins. A mount path only resolves when
+// the mount recorded its local root, because the companion derives the overlay
+// itself; an undeterminable overlay is an error rather than a silent skip.
+func (s Service) unpackAuditLocalRoot(opts UnpackFileSystemOptions) (string, error) {
 	if localRoot := strings.TrimSpace(opts.LocalRoot); localRoot != "" {
-		return localRoot
+		if !filepath.IsAbs(localRoot) {
+			return "", apperr.New("fs.invalid_local_root", "usage", 2, "--local-root must be an absolute path")
+		}
+		return filepath.Clean(localRoot), nil
 	}
 	mountPath := strings.TrimSpace(opts.MountPath)
 	if mountPath == "" {
-		return ""
+		return "", apperr.New("fs.missing_local_root", "usage", 2, "unpack-file-system requires --local-root or --mount-path")
 	}
 	homeDir, err := s.homeDir()
 	if err != nil {
-		return ""
+		return "", err
 	}
-	state, _, err := mountstate.Read(homeDir, mountPath)
-	if err != nil {
-		return ""
+	if state, _, readErr := mountstate.Read(homeDir, mountPath); readErr == nil {
+		if localRoot := strings.TrimSpace(state.LocalRoot); localRoot != "" && filepath.IsAbs(localRoot) {
+			return filepath.Clean(localRoot), nil
+		}
 	}
-	return strings.TrimSpace(state.LocalRoot)
+	return "", apperr.New("fs.unpack_unknown_local_root", "runtime", 1, fmt.Sprintf("cannot determine the local overlay root for mount %q, so the unpacked symlinks cannot be audited; pass --local-root with the same overlay the companion uses", mountPath))
 }
 
 func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystemOptions) (MountResult, error) {

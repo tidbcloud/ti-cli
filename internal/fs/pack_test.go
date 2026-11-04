@@ -136,7 +136,7 @@ func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
 		}
 	}
 
-	err := auditUnpackedOverlaySymlinks(localRoot)
+	err := auditUnpackedOverlaySymlinks(localRoot, nil)
 	if err == nil {
 		t.Fatal("escaping symlinks were accepted")
 	}
@@ -164,11 +164,11 @@ func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
 }
 
 func TestAuditUnpackedOverlaySymlinksAcceptsSafeAndAbsentOverlays(t *testing.T) {
-	if err := auditUnpackedOverlaySymlinks(""); err != nil {
-		t.Fatalf("empty local root rejected: %v", err)
+	if err := auditUnpackedOverlaySymlinks("", nil); err == nil {
+		t.Fatal("empty local root silently disabled the audit")
 	}
 	missing := filepath.Join(t.TempDir(), "no-overlay")
-	if err := auditUnpackedOverlaySymlinks(missing); err != nil {
+	if err := auditUnpackedOverlaySymlinks(missing, nil); err != nil {
 		t.Fatalf("missing overlay rejected: %v", err)
 	}
 	localRoot := t.TempDir()
@@ -182,7 +182,7 @@ func TestAuditUnpackedOverlaySymlinksAcceptsSafeAndAbsentOverlays(t *testing.T) 
 	if err := os.Symlink("item.txt", filepath.Join(repo, "inside")); err != nil {
 		t.Fatal(err)
 	}
-	if err := auditUnpackedOverlaySymlinks(localRoot); err != nil {
+	if err := auditUnpackedOverlaySymlinks(localRoot, nil); err != nil {
 		t.Fatalf("safe overlay rejected: %v", err)
 	}
 
@@ -190,7 +190,103 @@ func TestAuditUnpackedOverlaySymlinksAcceptsSafeAndAbsentOverlays(t *testing.T) 
 	if err := os.Symlink(t.TempDir(), filepath.Join(symlinkedOverlay, "overlay")); err != nil {
 		t.Skipf("symlinks are not supported: %v", err)
 	}
-	if err := auditUnpackedOverlaySymlinks(symlinkedOverlay); err == nil {
+	if err := auditUnpackedOverlaySymlinks(symlinkedOverlay, nil); err == nil {
 		t.Fatal("symlinked overlay accepted")
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksCatchesEscapingLinkChain covers the review
+// finding that lexical containment alone misses a chain: `s -> ..` plus
+// `a -> s/../outside` passes the lexical check for each target, but following
+// the links reaches localRoot/outside.
+func TestAuditUnpackedOverlaySymlinksCatchesEscapingLinkChain(t *testing.T) {
+	localRoot := t.TempDir()
+	repo := filepath.Join(localRoot, "overlay", "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(repo, "s")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("s/../outside", filepath.Join(repo, "a")); err != nil {
+		t.Fatal(err)
+	}
+	err := auditUnpackedOverlaySymlinks(localRoot, nil)
+	if err == nil {
+		t.Fatal("escaping symlink chain was accepted")
+	}
+	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
+		t.Fatalf("error code = %q: %v", code, err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, "a")); !os.IsNotExist(statErr) {
+		t.Fatalf("escaping chain link %q was left behind: %v", "a", statErr)
+	}
+	// The intermediate hop resolves to the overlay root itself, which the policy
+	// keeps; only the link that escapes is removed.
+	if _, statErr := os.Lstat(filepath.Join(repo, "s")); statErr != nil {
+		t.Fatalf("in-overlay chain link %q was removed: %v", "s", statErr)
+	}
+}
+
+// TestAuditUnpackedOverlaySymlinksPreservesUnchangedPreExistingLinks covers the
+// review finding that the audit must not delete links the archive did not
+// install.
+func TestAuditUnpackedOverlaySymlinksPreservesUnchangedPreExistingLinks(t *testing.T) {
+	localRoot := t.TempDir()
+	other := filepath.Join(localRoot, "overlay", "other")
+	repo := filepath.Join(localRoot, "overlay", "repo")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "item.txt"), []byte("packed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A user-created link outside the archive's paths, and one that is already
+	// absolute before this command runs.
+	preexisting := map[string]string{
+		filepath.Join(other, "tool"):   "/usr/bin/tool",
+		filepath.Join(other, "escape"): "../../../../../../home/victim/.ssh",
+	}
+	for path, target := range preexisting {
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := scanOverlaySymlinks(localRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != len(preexisting) {
+		t.Fatalf("snapshot = %#v", before)
+	}
+	if err := os.Symlink("item.txt", filepath.Join(repo, "inside")); err != nil {
+		t.Fatal(err)
+	}
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err != nil {
+		t.Fatalf("unchanged pre-existing links rejected: %v", err)
+	}
+	for path, target := range preexisting {
+		got, readErr := os.Readlink(path)
+		if readErr != nil || got != target {
+			t.Fatalf("pre-existing link %q was modified: got=%q err=%v", path, got, readErr)
+		}
+	}
+	// A new escaping link is still rejected while the pre-existing link stays.
+	if err := os.Symlink("/etc/passwd", filepath.Join(repo, "new-escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := auditUnpackedOverlaySymlinks(localRoot, before); err == nil {
+		t.Fatal("new escaping link was accepted")
+	}
+	if _, statErr := os.Lstat(filepath.Join(repo, "new-escape")); !os.IsNotExist(statErr) {
+		t.Fatalf("new escaping link was left behind: %v", statErr)
+	}
+	for path := range preexisting {
+		if _, statErr := os.Lstat(path); statErr != nil {
+			t.Fatalf("pre-existing link %q was removed by the new violation: %v", path, statErr)
+		}
 	}
 }
