@@ -1548,11 +1548,14 @@ func resolveOverlayTargetLive(linkPath string, changed map[string]struct{}, cano
 			if readErr != nil {
 				return "", false, readErr
 			}
+			// A link target is relative to the directory holding the link; an
+			// absolute target restarts at the filesystem root and must not be
+			// overwritten by the link's own directory.
+			current = filepath.Dir(next)
 			if filepath.IsAbs(linkTarget) {
 				current = string(filepath.Separator)
 			}
 			pending = append(strings.Split(filepath.ToSlash(linkTarget), "/"), pending...)
-			current = filepath.Dir(next)
 			continue
 		}
 		current = next

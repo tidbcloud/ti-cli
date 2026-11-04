@@ -213,6 +213,35 @@ func TestFSUnpackFileSystemRejectsEscapingSymlinksFromCompanion(t *testing.T) {
 		}
 	})
 
+	t.Run("absolute-dependency-still-rejected", func(t *testing.T) {
+		localRoot := t.TempDir()
+		overlayRoot := filepath.Join(localRoot, "overlay")
+		external := filepath.Join(t.TempDir(), "external")
+		if err := os.MkdirAll(filepath.Join(external, "item"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(overlayRoot, "repo"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(external, filepath.Join(overlayRoot, "shared")); err != nil {
+			t.Fatal(err)
+		}
+		env := append([]string{}, baseEnv...)
+		env = append(env,
+			"FAKE_DRIVE9_UNPACK_SYMLINK_REL=repo/a",
+			"FAKE_DRIVE9_UNPACK_SYMLINK_TARGET=../shared/item",
+		)
+		result := runTIWithInput(t, bin, "", env, unpackArgs(localRoot)...)
+		result.wantExitCode(1)
+		result.wantStderrContains("unsafe symlink")
+		if _, err := os.Lstat(filepath.Join(overlayRoot, "repo", "a")); !os.IsNotExist(err) {
+			t.Fatalf("installed link escaping through an absolute dependency was left behind: %v", err)
+		}
+		if got, err := os.Readlink(filepath.Join(overlayRoot, "shared")); err != nil || got != external {
+			t.Fatalf("unchanged absolute dependency was modified: got=%q err=%v", got, err)
+		}
+	})
+
 	t.Run("mount-without-local-root-fails-closed", func(t *testing.T) {
 		env := append([]string{}, baseEnv...)
 		result := runTIWithInput(t, bin, "", env, "fs", "unpack-file-system", "--mount-path", filepath.Join(home, "mnt"), "--remote-root", "/workspace")

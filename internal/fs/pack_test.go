@@ -414,3 +414,40 @@ func TestStoredEntryNameUsesFilesystemIdentity(t *testing.T) {
 		t.Fatalf("storedEntryName = %q ok=%v, want one of the stored names", name, ok)
 	}
 }
+
+// TestAuditUnpackedOverlaySymlinksRejectsEscapeThroughAbsolutedDependency covers
+// the review finding that an absolute intermediate target must restart at the
+// filesystem root: a newly installed relative link that passes through an
+// unchanged absolute dependency escapes and must be removed.
+func TestAuditUnpackedOverlaySymlinksRejectsEscapeThroughAbsoluteDependency(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	external := filepath.Join(t.TempDir(), "external")
+	if err := os.MkdirAll(filepath.Join(external, "item"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(overlayRoot, "shared")
+	if err := os.Symlink(external, shared); err != nil {
+		t.Fatal(err)
+	}
+	before := snapshotForTest(t, localRoot)
+	installed := filepath.Join(repo, "a")
+	if err := os.Symlink("../shared/item", installed); err != nil {
+		t.Fatal(err)
+	}
+	err := auditUnpackedOverlaySymlinks(localRoot, before)
+	if err == nil {
+		t.Fatal("new link escaping through an absolute dependency was accepted")
+	}
+	if _, statErr := os.Lstat(installed); !os.IsNotExist(statErr) {
+		t.Fatalf("installed escaping link was left behind: %v", statErr)
+	}
+	// The absolute dependency predates the run and is not this run's doing.
+	if got, readErr := os.Readlink(shared); readErr != nil || got != external {
+		t.Fatalf("unchanged absolute dependency was modified: got=%q err=%v", got, readErr)
+	}
+}
