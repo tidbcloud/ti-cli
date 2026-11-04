@@ -102,3 +102,95 @@ func TestValidatePackSymlinkTargetAllowsOverlayRootTarget(t *testing.T) {
 		t.Fatal("target escaping the overlay root accepted")
 	}
 }
+
+// TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks covers the enforcement
+// that runs on the public unpack path, where the ti-drive9 companion performs
+// the extraction: escaping links are removed and the command fails closed.
+func TestAuditUnpackedOverlaySymlinksRemovesEscapingLinks(t *testing.T) {
+	localRoot := t.TempDir()
+	overlayRoot := filepath.Join(localRoot, "overlay")
+	repo := filepath.Join(overlayRoot, "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := filepath.Join(repo, "item.txt")
+	if err := os.WriteFile(content, []byte("packed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	safeLinks := map[string]string{
+		filepath.Join(repo, "inside"):  "item.txt",
+		filepath.Join(repo, "sibling"): "../sibling.txt",
+	}
+	for path, target := range safeLinks {
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unsafeLinks := map[string]string{
+		filepath.Join(repo, "absolute"): "/etc/passwd",
+		filepath.Join(repo, "escape"):   "../../../../../../home/victim/.ssh",
+	}
+	for path, target := range unsafeLinks {
+		if err := os.Symlink(target, path); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	err := auditUnpackedOverlaySymlinks(localRoot)
+	if err == nil {
+		t.Fatal("escaping symlinks were accepted")
+	}
+	if code := apperr.CodeFor(err); code != "fs.unsafe_pack_symlink" {
+		t.Fatalf("error code = %q: %v", code, err)
+	}
+	for path := range unsafeLinks {
+		if _, statErr := os.Lstat(path); !os.IsNotExist(statErr) {
+			t.Fatalf("unsafe symlink %q was left behind: %v", path, statErr)
+		}
+	}
+	for path, target := range safeLinks {
+		info, statErr := os.Lstat(path)
+		if statErr != nil || info.Mode()&os.ModeSymlink == 0 {
+			t.Fatalf("safe symlink %q was removed: info=%v err=%v", path, info, statErr)
+		}
+		got, readErr := os.Readlink(path)
+		if readErr != nil || got != target {
+			t.Fatalf("Readlink(%q) = %q err=%v, want %q", path, got, readErr, target)
+		}
+	}
+	if _, statErr := os.Stat(content); statErr != nil {
+		t.Fatalf("benign unpacked content was lost: %v", statErr)
+	}
+}
+
+func TestAuditUnpackedOverlaySymlinksAcceptsSafeAndAbsentOverlays(t *testing.T) {
+	if err := auditUnpackedOverlaySymlinks(""); err != nil {
+		t.Fatalf("empty local root rejected: %v", err)
+	}
+	missing := filepath.Join(t.TempDir(), "no-overlay")
+	if err := auditUnpackedOverlaySymlinks(missing); err != nil {
+		t.Fatalf("missing overlay rejected: %v", err)
+	}
+	localRoot := t.TempDir()
+	repo := filepath.Join(localRoot, "overlay", "repo")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "item.txt"), []byte("packed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("item.txt", filepath.Join(repo, "inside")); err != nil {
+		t.Fatal(err)
+	}
+	if err := auditUnpackedOverlaySymlinks(localRoot); err != nil {
+		t.Fatalf("safe overlay rejected: %v", err)
+	}
+
+	symlinkedOverlay := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(symlinkedOverlay, "overlay")); err != nil {
+		t.Skipf("symlinks are not supported: %v", err)
+	}
+	if err := auditUnpackedOverlaySymlinks(symlinkedOverlay); err == nil {
+		t.Fatal("symlinked overlay accepted")
+	}
+}

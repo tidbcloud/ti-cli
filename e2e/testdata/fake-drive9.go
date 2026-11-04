@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -139,6 +140,22 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(`{"path":"/","size":0,"isdir":true}`)
+		return
+	}
+	if hasPrefix(args, "unpack") {
+		// Emulate the companion extractor. FAKE_DRIVE9_UNPACK_SYMLINK_* lets a
+		// test prove that ti audits the overlay the companion just produced.
+		if localRoot := flagValue(args, "--local-root"); localRoot != "" {
+			overlay := filepath.Join(localRoot, "overlay")
+			_ = os.MkdirAll(filepath.Join(overlay, "repo"), 0o755)
+			_ = os.WriteFile(filepath.Join(overlay, "repo", "item.txt"), []byte("packed\n"), 0o644)
+			if rel := os.Getenv("FAKE_DRIVE9_UNPACK_SYMLINK_REL"); rel != "" {
+				linkPath := filepath.Join(overlay, filepath.FromSlash(rel))
+				_ = os.MkdirAll(filepath.Dir(linkPath), 0o755)
+				_ = os.Symlink(os.Getenv("FAKE_DRIVE9_UNPACK_SYMLINK_TARGET"), linkPath)
+			}
+		}
+		fmt.Println(`{"status":"unpacked"}`)
 		return
 	}
 	if hasPrefix(args, "mount") {

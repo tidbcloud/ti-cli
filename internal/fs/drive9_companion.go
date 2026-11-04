@@ -20,6 +20,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/config/region"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 	"github.com/tidbcloud/ti-cli/internal/fswrap"
 )
 
@@ -1275,7 +1276,36 @@ func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSyst
 	if _, err := s.drive9Run(ctx, opts.Profile, args, false); err != nil {
 		return UnpackFileSystemResult{}, err
 	}
+	// Security (information protection): the tar extraction itself happens in
+	// the ti-drive9 companion, so verify the local overlay it just produced and
+	// fail closed if the remote pack planted a link that escapes it.
+	if err := auditUnpackedOverlaySymlinks(s.unpackAuditLocalRoot(opts)); err != nil {
+		return UnpackFileSystemResult{}, err
+	}
 	return UnpackFileSystemResult{Status: "unpacked", ArchivePath: archivePath, LocalRoot: opts.LocalRoot, RemoteRoot: opts.RemoteRoot, MountProfile: opts.MountProfile, Replaced: !opts.NoReplace, CreatedAt: time.Now().UTC()}, nil
+}
+
+// unpackAuditLocalRoot returns the local root whose overlay the companion
+// unpack wrote. An explicit --local-root wins; otherwise the mount locator of
+// --mount-path is used, because the companion derives the local root itself in
+// that case.
+func (s Service) unpackAuditLocalRoot(opts UnpackFileSystemOptions) string {
+	if localRoot := strings.TrimSpace(opts.LocalRoot); localRoot != "" {
+		return localRoot
+	}
+	mountPath := strings.TrimSpace(opts.MountPath)
+	if mountPath == "" {
+		return ""
+	}
+	homeDir, err := s.homeDir()
+	if err != nil {
+		return ""
+	}
+	state, _, err := mountstate.Read(homeDir, mountPath)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(state.LocalRoot)
 }
 
 func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystemOptions) (MountResult, error) {
