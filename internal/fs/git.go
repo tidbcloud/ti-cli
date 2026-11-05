@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -580,7 +581,15 @@ func (s Service) hydrateGitWorkspaceWithClient(ctx context.Context, client *apif
 			result.Skipped++
 			continue
 		}
-		if err := runGit(hydrateCtx, opts.TargetPath, "cat-file", "-e", node.ObjectSHA+"^{object}"); err != nil {
+		// Security (information protection): object_sha is remote-supplied and is
+		// passed to git argv below, so only a hexadecimal object id may reach it.
+		// Otherwise a value such as "--batch" or "-h" would be parsed as a git
+		// option instead of a revision.
+		objectSHA, err := safeGitObjectSHA(node.ObjectSHA)
+		if err != nil {
+			return GitHydrateResult{}, apperr.Wrap("git.hydrate_object", "runtime", 1, fmt.Sprintf("hydrate git object for %s", node.Path), err)
+		}
+		if err := runGit(hydrateCtx, opts.TargetPath, "cat-file", "-e", objectSHA+"^{object}"); err != nil {
 			return GitHydrateResult{}, apperr.Wrap("git.hydrate_object", "runtime", 1, fmt.Sprintf("hydrate git object for %s", node.Path), err)
 		}
 		if node.Kind == "file" {
@@ -862,7 +871,17 @@ func restoreGitLayout(ctx context.Context, client *apifs.Client, workspace apifs
 	if err != nil {
 		return "", "", err
 	}
-	gitDir = filepath.Join(commonRoot, ".git", filepath.FromSlash(workspace.GitDirRel))
+	// Security (information protection): gitdir_rel arrives from the remote
+	// workspace metadata and is not trusted. It is resolved, not joined
+	// verbatim, so restore can never create, recursively clear, and overwrite a
+	// directory outside the common .git worktrees subtree.
+	gitDir, err = safeWorktreeGitDirTarget(filepath.Join(commonRoot, ".git"), workspace.GitDirRel)
+	if err != nil {
+		return "", "", err
+	}
+	if err := ensureNoSymlinkGitDirPath(resolved.LocalRoot, gitDir); err != nil {
+		return "", "", err
+	}
 	if err := os.MkdirAll(worktreeRoot, 0o755); err != nil {
 		return "", "", err
 	}
@@ -874,6 +893,84 @@ func restoreGitLayout(ctx context.Context, client *apifs.Client, workspace apifs
 		return "", "", err
 	}
 	return worktreeRoot, gitDir, nil
+}
+
+// safeWorktreeGitDirTarget resolves the remote-supplied gitdir_rel of a linked
+// git workspace into a local directory and confines the result to the common
+// .git/worktrees subtree.
+//
+// Security (information protection): gitdir_rel is controlled by the FS
+// backend, so a value such as "../../../../home/victim/.ssh" must never name a
+// local directory: restore creates that directory, deletes every entry in it
+// except "objects", and extracts the remote git state archive into it as the
+// invoking user. Pinning the target to .git/worktrees also refuses values that
+// stay inside .git but would land on git's own sensitive directories, such as
+// hooks or refs, where the extracted archive could plant executables.
+func safeWorktreeGitDirTarget(commonGitDir, gitDirRel string) (string, error) {
+	rel := strings.TrimSpace(gitDirRel)
+	if rel == "" {
+		return "", apperr.New("git.invalid_gitdir_rel", "runtime", 1, "git workspace metadata gitdir_rel is empty")
+	}
+	if strings.ContainsRune(rel, '\x00') ||
+		strings.ContainsRune(rel, '\\') ||
+		strings.HasPrefix(rel, "/") ||
+		filepath.IsAbs(rel) ||
+		filepath.VolumeName(rel) != "" {
+		return "", apperr.New("git.invalid_gitdir_rel", "runtime", 1, fmt.Sprintf("git workspace metadata gitdir_rel %q must be a relative path", gitDirRel))
+	}
+	base := filepath.Clean(commonGitDir)
+	worktreesRoot := filepath.Join(base, "worktrees")
+	target := filepath.Clean(filepath.Join(base, filepath.FromSlash(rel)))
+	relToWorktrees, err := filepath.Rel(worktreesRoot, target)
+	if err != nil || relToWorktrees == "." || relToWorktrees == ".." || strings.HasPrefix(relToWorktrees, ".."+string(filepath.Separator)) {
+		return "", apperr.New("git.gitdir_rel_escape", "runtime", 1, fmt.Sprintf("git workspace metadata gitdir_rel %q escapes the common .git worktrees directory", gitDirRel))
+	}
+	return target, nil
+}
+
+// ensureNoSymlinkGitDirPath refuses to restore git state through a symlinked
+// path inside the local overlay. Lexical containment alone is not enough: a
+// symlinked component would redirect the restore's recursive delete and
+// archive writes outside the intended directory.
+func ensureNoSymlinkGitDirPath(localRoot, gitDir string) error {
+	localRoot = strings.TrimSpace(localRoot)
+	if localRoot == "" || !filepath.IsAbs(localRoot) {
+		return nil
+	}
+	overlayRoot := filepath.Clean(filepath.Join(localRoot, "overlay"))
+	target := filepath.Clean(gitDir)
+	if target != overlayRoot && !strings.HasPrefix(target, overlayRoot+string(filepath.Separator)) {
+		return apperr.New("git.gitdir_rel_escape", "runtime", 1, fmt.Sprintf("git directory %s is outside local overlay root %s", target, overlayRoot))
+	}
+	rel, err := filepath.Rel(overlayRoot, target)
+	if err != nil {
+		return apperr.Wrap("git.resolve_git_dir", "runtime", 1, "resolve git directory against local overlay root", err)
+	}
+	if rel == "." {
+		return nil
+	}
+	if info, err := os.Lstat(overlayRoot); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return apperr.New("git.unsafe_git_dir_symlink", "runtime", 1, fmt.Sprintf("refusing to restore git state through symlink %s", overlayRoot))
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return apperr.Wrap("git.stat_git_dir", "runtime", 1, fmt.Sprintf("stat local overlay root %s", overlayRoot), err)
+	}
+	current := overlayRoot
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				return nil
+			}
+			return apperr.Wrap("git.stat_git_dir", "runtime", 1, fmt.Sprintf("stat git directory path %s", current), err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return apperr.New("git.unsafe_git_dir_symlink", "runtime", 1, fmt.Sprintf("refusing to restore git state through symlink %s", current))
+		}
+	}
+	return nil
 }
 
 func restoreGitStateArchive(content []byte, gitDir string) error {
@@ -900,9 +997,17 @@ func restoreGitStateArchive(content []byte, gitDir string) error {
 		if err != nil {
 			return apperr.Wrap("git.extract_git_state_archive", "runtime", 1, "read git state archive entry", err)
 		}
-		target, err := safeGitStateArchiveTarget(gitDir, hdr.Name)
+		target, rel, err := safeGitStateArchiveTarget(gitDir, hdr.Name)
 		if err != nil {
 			return err
+		}
+		if isReservedGitStateEntry(rel) {
+			// Security (information protection): the git state archive and its
+			// entry names come from the remote FS backend. git config and hooks
+			// are never restored, because a hostile archive could otherwise plant
+			// an executable hook or a config command that git runs on the next
+			// invocation in the restored workspace.
+			continue
 		}
 		switch hdr.Typeflag {
 		case tar.TypeDir:
@@ -931,17 +1036,79 @@ func restoreGitStateArchive(content []byte, gitDir string) error {
 	return nil
 }
 
-func safeGitStateArchiveTarget(gitDir, name string) (string, error) {
-	clean := pathpkg.Clean(strings.TrimPrefix(filepath.ToSlash(name), "/"))
-	if clean == "." || clean == "" || clean == "objects" || strings.HasPrefix(clean, "objects/") {
-		return "", apperr.New("git.invalid_git_state_entry", "runtime", 1, fmt.Sprintf("invalid git state archive entry %q", name))
+// safeGitStateArchiveTarget validates one remote git state archive entry and
+// returns its extraction target plus its archive-relative path.
+func safeGitStateArchiveTarget(gitDir, name string) (target string, rel string, err error) {
+	rel = gitStateEntryRel(name)
+	if rel == "." || rel == "" || containsGitStateName(rel, "objects") {
+		return "", "", apperr.New("git.invalid_git_state_entry", "runtime", 1, fmt.Sprintf("invalid git state archive entry %q", name))
 	}
-	target := filepath.Join(gitDir, filepath.FromSlash(clean))
-	rel, err := filepath.Rel(gitDir, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", apperr.New("git.invalid_git_state_entry", "runtime", 1, fmt.Sprintf("git state archive entry escapes .git: %q", name))
+	target = filepath.Join(gitDir, filepath.FromSlash(rel))
+	relToGitDir, err := filepath.Rel(gitDir, target)
+	if err != nil || relToGitDir == ".." || strings.HasPrefix(relToGitDir, ".."+string(filepath.Separator)) {
+		return "", "", apperr.New("git.invalid_git_state_entry", "runtime", 1, fmt.Sprintf("git state archive entry escapes .git: %q", name))
 	}
-	return target, nil
+	return target, rel, nil
+}
+
+// gitStateEntryRel normalizes a remote git state archive entry name into a
+// clean slash-separated path relative to the git directory.
+func gitStateEntryRel(name string) string {
+	return pathpkg.Clean(strings.TrimPrefix(filepath.ToSlash(name), "/"))
+}
+
+// isReservedGitStateEntry reports whether a remote git state archive entry must
+// not be restored. Git config and hooks are the entries that turn a hostile
+// archive into local code execution, so they are dropped instead of written.
+func isReservedGitStateEntry(rel string) bool {
+	parts := strings.Split(rel, "/")
+	for i, part := range parts {
+		if gitStateNameEqual(part, "hooks") {
+			return true
+		}
+		if i == len(parts)-1 && (gitStateNameEqual(part, "config") || gitStateNameEqual(part, "config.worktree")) {
+			return true
+		}
+	}
+	return false
+}
+
+// containsGitStateName reports whether any component of the archive-relative
+// path names a reserved git directory.
+func containsGitStateName(rel, reserved string) bool {
+	for _, part := range strings.Split(rel, "/") {
+		if gitStateNameEqual(part, reserved) {
+			return true
+		}
+	}
+	return false
+}
+
+// gitStateNameEqual compares a remote-supplied archive entry name with a
+// reserved lowercase name. Case-insensitive comparison plus trailing dot and
+// space trimming matches how the name can resolve on case-insensitive
+// filesystems and on Windows, where "Hooks" or "config." name the same
+// directory as "hooks" and "config". Without the normalization a hostile
+// archive could bypass the reserved-entry check by changing the case.
+func gitStateNameEqual(name, reserved string) bool {
+	return strings.ToLower(strings.TrimRight(name, ". ")) == reserved
+}
+
+// safeGitObjectSHA validates a remote-supplied git object id and returns it in
+// trimmed form. Object ids are the only remote value passed to `git cat-file`
+// argv, so they must be plain hexadecimal: a value such as "--batch" or "-h"
+// would otherwise be parsed as a git option instead of a revision.
+func safeGitObjectSHA(objectSHA string) (string, error) {
+	value := strings.TrimSpace(objectSHA)
+	if len(value) != 40 && len(value) != 64 {
+		return "", apperr.New("git.invalid_object_sha", "runtime", 1, fmt.Sprintf("invalid git object id %q", objectSHA))
+	}
+	for _, r := range value {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
+			return "", apperr.New("git.invalid_object_sha", "runtime", 1, fmt.Sprintf("invalid git object id %q", objectSHA))
+		}
+	}
+	return value, nil
 }
 
 func removeGitStateExceptObjects(gitDir string) error {
@@ -1113,19 +1280,18 @@ func archiveGitStateDir(gitDir string) ([]byte, error) {
 
 func skipGitStatePath(rel string, entry fs.DirEntry) bool {
 	clean := pathpkg.Clean(rel)
-	if clean == "objects" || strings.HasPrefix(clean, "objects/") {
+	if clean == "." || clean == "" {
+		return false
+	}
+	// Objects and the reserved config/hooks entries are never restored, so they
+	// are also left out of the uploaded state. Dropping config keeps local git
+	// configuration, which can embed credentials or a core.sshCommand, off the
+	// wire to the FS backend.
+	if containsGitStateName(clean, "objects") || isReservedGitStateEntry(clean) {
 		return true
 	}
 	if strings.HasSuffix(clean, ".lock") {
 		return true
-	}
-	parts := strings.Split(clean, "/")
-	for i, part := range parts {
-		if part == "objects" {
-			if i > 0 && parts[i-1] == "modules" {
-				return true
-			}
-		}
 	}
 	_ = entry
 	return false
