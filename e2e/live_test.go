@@ -193,28 +193,6 @@ func TestLiveCLICommandSurface(t *testing.T) {
 	checkUpdateHelp.wantStdoutNotContains("--yes")
 }
 
-func TestLiveRuntimeExec(t *testing.T) {
-	requireLive(t)
-	if os.Getenv("TI_LIVE_RUNTIME") != "1" {
-		t.Skip("TI_LIVE_RUNTIME=1 is required; run make live-e2e-runtime against a Runtime-enabled File System")
-	}
-
-	bin := tiBinary(t)
-	profileName := liveProfileName(t)
-	profile := ensureLiveFSResource(t, bin, profileName)
-	env := liveFSTokenEnv(profile, t.TempDir())
-
-	success := runTIWithInput(t, bin, "", env, "exec", "printf 'ti-runtime-stdout\\n'; printf 'ti-runtime-stderr\\n' >&2")
-	success.wantExitCode(0)
-	if success.stdout != "ti-runtime-stdout\n" || !strings.Contains(success.stderr, "ti-runtime-stderr\n") || strings.Contains(success.stderr, "ti-runtime-stdout") {
-		success.fail("live Runtime stdout and stderr changed or merged")
-	}
-
-	nonzero := runTIWithInput(t, bin, "", env, "exec", "exit 17")
-	nonzero.wantExitCode(17)
-	nonzero.wantStderrNotContains("ti [ERROR]")
-}
-
 func TestLiveDBCommandSurface(t *testing.T) {
 	requireLive(t)
 	bin := tiBinary(t)

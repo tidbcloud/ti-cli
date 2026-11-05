@@ -25,8 +25,13 @@ func newExecCommand(info version.Info) *cobra.Command {
 	flags := &execFlags{}
 	cmd := newCommand(commandSpec{
 		Use:   "exec [flags] [--] command [arg...]",
-		Short: "Run a command in a remote sandbox.",
-		Long: `Run a command in a remote sandbox.
+		Short: "Run a command against a remote Filesystem.",
+		Long: `Run a command against a remote Filesystem.
+
+The server chooses the execution backend: supported commands use a lightweight
+executor (justbash); other commands use a sandbox. A command that has already
+started is never retried on another backend. Runtime is currently available only
+in AWS us-east-1 and us-west-2.
 
 The selected Filesystem is available at /workspace. Standard output and
 standard error stream live. Only files under /workspace persist.
@@ -37,6 +42,7 @@ a matching local FUSE mount, omit -w to drain pending writes and follow the
 local directory. Explicit -w does not drain local writes. WebDAV mounts need -w.
 
 Examples:
+  ti exec --file-system-id <id> --read-only ls /workspace
   ti exec --file-system-id <id> -w repo npm test
   ti exec -w repo 'npm ci && npm test'
   ti exec -w repo -e CI=1 -t 20m -- make -j8 test
@@ -101,8 +107,8 @@ retried: a lost response may mean the command ran.`,
 	cmd.Flags().StringVarP(&flags.timeout, "timeout", "t", "", "Stop the command after this duration; the server may use a shorter limit.")
 	cmd.Flags().BoolVar(&flags.fresh, "fresh", false, "Start a new sandbox; persisted Filesystem data is kept.")
 	cmd.Flags().StringVar(&flags.layer, "layer", "", "Use a LayerFS layer ID, name, or tag:key=value reference.")
-	cmd.Flags().BoolVar(&flags.readOnly, "read-only", false, "Mount the workspace read-only.")
-	cmd.Flags().BoolVarP(&flags.verbose, "verbose", "v", false, "Show the sandbox, working directory, and duration.")
+	cmd.Flags().BoolVar(&flags.readOnly, "read-only", false, "Prevent writes to the Filesystem during this command.")
+	cmd.Flags().BoolVarP(&flags.verbose, "verbose", "v", false, "Show execution details, working directory, and duration.")
 	cmd.Flags().String("file-system-id", "", "The file system ID. Can also be supplied through TI_FS_FILE_SYSTEM_ID or derived from an explicitly supplied FS token.")
 	cmd.Flags().String("fs-token", "", "File system token. Prefer TI_FS_TOKEN so the secret does not enter process arguments.")
 	cmd.Flags().SetInterspersed(false)

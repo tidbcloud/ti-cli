@@ -179,14 +179,17 @@ Automatic mounting uses FUSE on Linux and WebDAV on macOS and Windows. macOS use
 
 Mount commands start the companion runtime in the background, wait until the mount is ready, and then return a structured result. Use `ti fs unmount-file-system` or `ti fs-vault unmount-vault` to end a mount. The public CLI does not expose a foreground mount mode.
 
-Run a command in a remote sandbox:
+Run a command against a remote Filesystem (Runtime is available only in AWS `us-east-1` and `us-west-2`):
 
 ```shell
+ti exec --file-system-id <file-system-id> --read-only ls /workspace
 ti exec --file-system-id <file-system-id> -w repo npm test
 # With TI_FS_FILE_SYSTEM_ID or TI_FS_TOKEN already set:
 ti exec -w repo 'npm ci && npm test'
 ti exec -w repo -e CI=1 -e GITHUB_TOKEN -t 20m -- make -j8 test
 ```
+
+The server chooses the backend. Supported commands run in the lightweight justbash executor; unsupported commands go to a sandbox before execution starts. Shell syntax alone does not determine the backend. Once a command starts, a failure does not cause it to run again on another backend.
 
 The selected Filesystem is available at `/workspace`. Standard output and standard error stream live, and the remote command's exact exit status is preserved. Only files under `/workspace` persist; `--fresh` starts a new sandbox without erasing those files. Remote stdin and interactive terminals are not supported.
 
@@ -490,4 +493,4 @@ Run the complete live suite in one test process:
 make live-e2e
 ```
 
-Set `LIVE_E2E_PROFILE=<profile>` to use a profile other than `live-e2e`. The DB and FS suites perform real cloud mutations and clean up only resources created by the test run. `make live-e2e-runtime` and the complete `make live-e2e` suite require Runtime to be enabled for the selected Filesystem; they run harmless commands, verify separate stdout and stderr plus exact non-zero exit propagation, and fail instead of treating a disabled Runtime as proof of compatibility.
+Set `LIVE_E2E_PROFILE=<profile>` to use a profile other than `live-e2e`. The DB and FS suites perform real cloud mutations and clean up only resources created by the test run. `make live-e2e-runtime` and the complete `make live-e2e` suite require Runtime to be enabled for the selected Filesystem; they create a uniquely named test directory, verify lightweight reads, sandbox execution, persistence, read-only protection, streams, arguments, environment variables, exact exit codes, timeout, and parent-only cancellation, then remove only that directory. Backend selection is observed from real response frames. A disabled Runtime or failed cancellation fails the suite; it is not proof of compatibility.

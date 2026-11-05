@@ -1224,6 +1224,14 @@ Current expectations:
 
 Do not require live cloud credentials for ordinary `go test ./...`.
 
+## Runtime availability and routing
+
+`ti exec` is currently available only in AWS us-east-1 and us-west-2. Describe
+execution as server-selected: supported commands use the lightweight justbash
+executor; unsupported commands use a sandbox before starting. Do not promise
+that all simple commands avoid a sandbox, or infer routing from shell syntax.
+The wrapper must not implement routing or retry a failed execution.
+
 ## Documentation Workflow
 
 Pending requirements live in `docs/spec/` and are numbered by dependency order,

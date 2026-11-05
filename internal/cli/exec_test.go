@@ -69,8 +69,12 @@ func TestExecHelpAndRemoteArguments(t *testing.T) {
 			if !slices.Equal(got, test.remote) {
 				t.Fatalf("remote args=%q, want %q", got, test.remote)
 			}
-			if test.remote == nil && !bytes.Contains(out.Bytes(), []byte("Run a command in a remote sandbox.")) {
-				t.Fatalf("missing local help: %s", out.String())
+			if test.remote == nil {
+				for _, text := range []string{"Run a command against a remote Filesystem.", "justbash", "us-east-1", "us-west-2"} {
+					if !bytes.Contains(out.Bytes(), []byte(text)) {
+						t.Fatalf("missing %q in local help: %s", text, out.String())
+					}
+				}
 			}
 		})
 	}

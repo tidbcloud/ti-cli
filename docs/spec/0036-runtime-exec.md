@@ -31,6 +31,15 @@ less direct, while changing the established Runtime flag names would create
 two incompatible interfaces for the same operation. The exception applies
 only to `ti exec`.
 
+## Server execution routing
+
+Runtime is currently available only in AWS `us-east-1` and `us-west-2`. The
+server selects the backend: supported commands use the lightweight justbash
+executor, and unsupported commands fall back to a sandbox before execution
+starts. Shell syntax alone does not determine the backend. After execution
+starts, failure must not cause a second execution on another backend. Ti forwards
+the command unchanged and does not implement backend selection.
+
 ## Command And Flags
 
 `ti exec` accepts the same Runtime flags as the pinned Drive9 contract:
@@ -204,9 +213,13 @@ Unit and compiled black-box tests must prove:
   telemetry, operation logs, or debug diagnostics.
 
 Add an opt-in `live-e2e-runtime` target that executes a harmless command
-against a Runtime-enabled real File System, verifies separate stdout/stderr
-and a nonzero exit, and never deletes a resource it did not create. A skipped
-or disabled Runtime test is not evidence that the live path works.
+against a Runtime-enabled real File System. Verify lightweight read-only
+listing and reading, Python sandbox execution, fresh-sandbox persistence,
+read-only rejection with unchanged readback, separate stdout/stderr, argv and
+environment preservation, nonzero exits, timeout, and parent-only cancellation.
+Observe backend selection from response frames without rewriting them or
+recording credentials. Create a unique test directory and delete only resources
+created by this run. A skipped or disabled Runtime test is not evidence that the live path works.
 
 ## Out Of Scope
 
