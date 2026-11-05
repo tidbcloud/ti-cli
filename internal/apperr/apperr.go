@@ -12,6 +12,7 @@ type Error struct {
 	ExitCode int
 	Message  string
 	Cause    error
+	Silent   bool
 }
 
 type appErrorer interface {
@@ -52,6 +53,26 @@ func Wrap(code, category string, exitCode int, message string, cause error) *Err
 		Message:  message,
 		Cause:    cause,
 	}
+}
+
+// SilentExit returns an error that carries a process exit status without
+// asking the ti boundary to print another diagnostic. It is used when a child
+// process has already written the complete user-facing result to stderr.
+func SilentExit(code string, exitCode int) *Error {
+	return &Error{
+		Code:     code,
+		Category: "runtime",
+		ExitCode: exitCode,
+		Silent:   true,
+	}
+}
+
+func IsSilent(err error) bool {
+	if err == nil {
+		return false
+	}
+	var appErr *Error
+	return errors.As(err, &appErr) && appErr.Silent
 }
 
 func NotImplemented(commandPath string) *Error {

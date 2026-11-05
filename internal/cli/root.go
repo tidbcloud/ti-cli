@@ -33,7 +33,7 @@ const usageRequiredFlagAnnotation = "ti_usage_required"
 
 func init() {
 	cobra.AddTemplateFunc("usageSynopsis", usageSynopsis)
-	cobra.AddTemplateFunc("formattedFlagUsages", formattedFlagUsages)
+	cobra.AddTemplateFunc("formattedFlagUsagesFor", formattedFlagUsagesFor)
 }
 
 type Options struct {
@@ -88,6 +88,7 @@ func NewRootCommand(info version.Info) *cobra.Command {
 
 	root.AddCommand(newConfigureCommand(info))
 	root.AddCommand(newUpdateCommand(info))
+	root.AddCommand(newExecCommand(info))
 	root.AddCommand(newDBCommand(info))
 	root.AddCommand(newFSCommand(info))
 	root.AddCommand(newFSGitCommand(info))
@@ -125,7 +126,10 @@ func Execute(ctx context.Context, root *cobra.Command, info version.Info, args [
 			option(&executeOpts)
 		}
 	}
-	if !isUpdateInvocation(args) {
+	call := inspectInvocation(root, args)
+	args = normalizeExecHelp(args, call)
+	call = inspectInvocation(root, args)
+	if !call.update {
 		if err := envcompat.Validate(nil); err != nil {
 			return err
 		}
@@ -139,10 +143,10 @@ func Execute(ctx context.Context, root *cobra.Command, info version.Info, args [
 			}
 		}
 	}
-	recorder, recordCommand := commandRecorder(args, stderr)
+	recorder, recordCommand := commandRecorder(call, stderr)
 	ctx = oplog.WithRecorder(ctx, recorder)
 	operationStart := time.Now()
-	if err := rejectShortFlags(args); err != nil {
+	if err := rejectShortFlags(call); err != nil {
 		if recordCommand {
 			recorder.Record(ctx, commandEvent(root, root, err, time.Since(operationStart)))
 		}
@@ -158,7 +162,7 @@ func Execute(ctx context.Context, root *cobra.Command, info version.Info, args [
 			Eligible:    true,
 			Endpoint:    effectiveTelemetryEndpoint(info),
 			Info:        info,
-			Debug:       debugRequested(args),
+			Debug:       call.debug,
 			DebugWriter: stderr,
 		})
 	}
@@ -181,7 +185,11 @@ func Execute(ctx context.Context, root *cobra.Command, info version.Info, args [
 }
 
 func resolvedTelemetryCommand(root *cobra.Command, args []string) *cobra.Command {
-	if root == nil || isUpdateInvocation(args) || hasTelemetryExclusionFlag(args) {
+	if root == nil {
+		return nil
+	}
+	call := inspectInvocation(root, args)
+	if call.update || call.help {
 		return nil
 	}
 	cmd, _, err := root.Find(args)
@@ -194,22 +202,6 @@ func resolvedTelemetryCommand(root *cobra.Command, args []string) *cobra.Command
 func hasBusinessSubcommands(cmd *cobra.Command) bool {
 	for _, child := range cmd.Commands() {
 		if child.Name() != "help" {
-			return true
-		}
-	}
-	return false
-}
-
-func hasTelemetryExclusionFlag(args []string) bool {
-	for _, arg := range args {
-		if arg == "--" {
-			return false
-		}
-		name, value, hasValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
-		if !strings.HasPrefix(arg, "--") || (name != "help" && name != "version") {
-			continue
-		}
-		if !hasValue || strings.EqualFold(value, "true") || value == "1" {
 			return true
 		}
 	}
@@ -271,11 +263,11 @@ func telemetryProfileSource(cmd *cobra.Command) string {
 	return "default"
 }
 
-func commandRecorder(args []string, stderr io.Writer) (oplog.Recorder, bool) {
+func commandRecorder(call invocation, stderr io.Writer) (oplog.Recorder, bool) {
 	disabled := func() (oplog.Recorder, bool) {
 		return oplog.NewRecorder(oplog.Config{Enabled: false}), false
 	}
-	if isUpdateInvocation(args) {
+	if call.update {
 		return disabled()
 	}
 	home, err := os.UserHomeDir()
@@ -284,7 +276,7 @@ func commandRecorder(args []string, stderr io.Writer) (oplog.Recorder, bool) {
 	}
 	logging, err := settings.ResolveLogging(home, nil)
 	if err != nil {
-		if debugRequested(args) && stderr != nil {
+		if call.debug && stderr != nil {
 			_, _ = fmt.Fprintln(stderr, "ti [DEBUG]: operation logging disabled because global settings could not be loaded")
 		}
 		return disabled()
@@ -301,53 +293,14 @@ func commandRecorder(args []string, stderr io.Writer) (oplog.Recorder, bool) {
 	return oplog.NewRecorder(cfg), true
 }
 
-func isUpdateInvocation(args []string) bool {
-	valueFlags := map[string]struct{}{
-		"profile": {},
-		"region":  {},
-		"output":  {},
-		"query":   {},
-	}
-	positionals := make([]string, 0, 2)
-	for index := 0; index < len(args); index++ {
-		arg := args[index]
-		if arg == "--" {
-			positionals = append(positionals, args[index+1:]...)
-			break
-		}
-		if strings.HasPrefix(arg, "--") {
-			name, _, hasValue := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
-			if _, ok := valueFlags[name]; ok && !hasValue && index+1 < len(args) {
-				index++
-			}
-			continue
-		}
-		if strings.HasPrefix(arg, "-") {
-			continue
-		}
-		positionals = append(positionals, arg)
-		if len(positionals) == 2 {
-			break
-		}
-	}
-	return len(positionals) > 0 && (positionals[0] == "update" ||
-		(positionals[0] == "help" && len(positionals) > 1 && positionals[1] == "update"))
-}
-
-func debugRequested(args []string) bool {
-	for _, arg := range args {
-		if arg == "--debug" || strings.EqualFold(arg, "--debug=true") {
-			return true
-		}
-	}
-	return false
-}
-
 func commandEvent(root, cmd *cobra.Command, err error, duration time.Duration) oplog.Event {
 	if cmd == nil {
 		cmd = root
 	}
 	profileName, regionCode := commandProfileSummary(cmd)
+	if isExecCommand(cmd) {
+		profileName = ""
+	}
 	return oplog.Event{
 		Type:                           "command",
 		Version:                        rootAnnotation(root, "ti.version"),
@@ -422,19 +375,10 @@ func commandProfileSummary(cmd *cobra.Command) (string, string) {
 	return profileName, configDoc[profileName].RegionCode
 }
 
-func rejectShortFlags(args []string) error {
-	for _, arg := range args {
-		if arg == "--" {
-			return nil
-		}
-		if len(arg) > 1 && strings.HasPrefix(arg, "-") && !strings.HasPrefix(arg, "--") {
-			return apperr.New(
-				"cli.short_flag_not_allowed",
-				"usage",
-				2,
-				fmt.Sprintf("short flags are not supported: %s; use long flags such as --help", arg),
-			)
-		}
+func rejectShortFlags(call invocation) error {
+	if !call.exec && call.shortFlag != "" {
+		return apperr.New("cli.short_flag_not_allowed", "usage", 2,
+			fmt.Sprintf("short flags are not supported: %s; use long flags such as --help", call.shortFlag))
 	}
 	return nil
 }
@@ -818,9 +762,12 @@ func normalizeError(err error) error {
 	}
 }
 
-func HasShorthand(cmd *cobra.Command) bool {
+func HasNonExecShorthand(cmd *cobra.Command) bool {
 	found := false
 	visitCommands(cmd, func(current *cobra.Command) {
+		if isExecCommand(current) {
+			return
+		}
 		for _, set := range []*pflag.FlagSet{
 			current.Flags(),
 			current.PersistentFlags(),
@@ -848,7 +795,7 @@ func installHelpCommands(cmd *cobra.Command, info version.Info) {
 	for _, child := range cmd.Commands() {
 		installHelpCommands(child, info)
 	}
-	if cmd.Name() == "help" || findChildCommand(cmd, "help") != nil {
+	if isExecCommand(cmd) || cmd.Name() == "help" || findChildCommand(cmd, "help") != nil {
 		return
 	}
 
@@ -865,7 +812,7 @@ func installHelpCommands(cmd *cobra.Command, info version.Info) {
 
 func findChildCommand(cmd *cobra.Command, name string) *cobra.Command {
 	for _, child := range cmd.Commands() {
-		if child.Name() == name {
+		if child.Name() == name || child.HasAlias(name) {
 			return child
 		}
 	}
@@ -890,27 +837,30 @@ func usageSynopsis(cmd *cobra.Command) string {
 		return ""
 	}
 	lines := []string{"  " + usageCommandLine(cmd)}
-	lines = append(lines, usageFlagLines(cmd.LocalFlags())...)
-	lines = append(lines, usageFlagLines(cmd.InheritedFlags())...)
+	lines = append(lines, usageFlagLinesFor(cmd, cmd.LocalFlags())...)
+	lines = append(lines, usageFlagLinesFor(cmd, cmd.InheritedFlags())...)
 	return strings.Join(lines, "\n")
 }
 
 func usageCommandLine(cmd *cobra.Command) string {
 	line := cmd.CommandPath()
+	if isExecCommand(cmd) {
+		return line + " [flags] [--] command [arg...]"
+	}
 	if cmd.HasAvailableSubCommands() {
 		return line + " [command]"
 	}
 	return line
 }
 
-func usageFlagLines(flags *pflag.FlagSet) []string {
+func usageFlagLinesFor(cmd *cobra.Command, flags *pflag.FlagSet) []string {
 	if flags == nil {
 		return nil
 	}
 	required := make([]string, 0)
 	optional := make([]string, 0)
 	flags.VisitAll(func(flag *pflag.Flag) {
-		if flag == nil || flag.Hidden {
+		if !usageFlagVisible(cmd, flag) {
 			return
 		}
 		line := "    " + usageFlagSegment(flag)
@@ -933,6 +883,9 @@ func usageFlagRequired(flag *pflag.Flag) bool {
 
 func usageFlagSegment(flag *pflag.Flag) string {
 	segment := "--" + flag.Name
+	if flag.Shorthand != "" {
+		segment = "-" + flag.Shorthand + ", " + segment
+	}
 	if flag.NoOptDefVal != "" {
 		return segment
 	}
@@ -960,7 +913,7 @@ func usageFlagValueType(flag *pflag.Flag) string {
 	}
 }
 
-func formattedFlagUsages(flags *pflag.FlagSet) string {
+func formattedFlagUsagesFor(cmd *cobra.Command, flags *pflag.FlagSet) string {
 	if flags == nil {
 		return ""
 	}
@@ -971,7 +924,7 @@ func formattedFlagUsages(flags *pflag.FlagSet) string {
 	lines := make([]flagUsage, 0)
 	maxLabelLength := 0
 	flags.VisitAll(func(flag *pflag.Flag) {
-		if flag == nil || flag.Hidden {
+		if !usageFlagVisible(cmd, flag) {
 			return
 		}
 		label := "      " + usageFlagSegment(flag)
@@ -994,6 +947,13 @@ func formattedFlagUsages(flags *pflag.FlagSet) string {
 		fmt.Fprintf(&result, "%-*s   %s\n", maxLabelLength, line.label, line.description)
 	}
 	return result.String()
+}
+
+func usageFlagVisible(cmd *cobra.Command, flag *pflag.Flag) bool {
+	if flag == nil || flag.Hidden {
+		return false
+	}
+	return !isExecCommand(cmd) || (flag.Name != "output" && flag.Name != "query")
 }
 
 func formattedFlagDefault(flag *pflag.Flag) string {
@@ -1042,10 +1002,10 @@ Commands:
 {{end}}{{end}}{{end}}{{if .HasAvailableLocalFlags}}
 
 Flags:
-{{formattedFlagUsages .LocalFlags | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
+{{formattedFlagUsagesFor . .LocalFlags | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
 
 Global Flags:
-{{formattedFlagUsages .InheritedFlags | trimTrailingWhitespaces}}{{end}}
+{{formattedFlagUsagesFor . .InheritedFlags | trimTrailingWhitespaces}}{{end}}
 `
 
 const usageTemplate = `Usage:
@@ -1053,8 +1013,8 @@ const usageTemplate = `Usage:
   {{.CommandPath}} help [command]{{end}}{{if .HasAvailableLocalFlags}}
 
 Flags:
-{{formattedFlagUsages .LocalFlags | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
+{{formattedFlagUsagesFor . .LocalFlags | trimTrailingWhitespaces}}{{end}}{{if .HasAvailableInheritedFlags}}
 
 Global Flags:
-{{formattedFlagUsages .InheritedFlags | trimTrailingWhitespaces}}{{end}}
+{{formattedFlagUsagesFor . .InheritedFlags | trimTrailingWhitespaces}}{{end}}
 `

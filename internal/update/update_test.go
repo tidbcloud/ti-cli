@@ -243,6 +243,33 @@ func TestApplyRejectsIncompatibleCompanionBeforeReplacingFiles(t *testing.T) {
 	}
 }
 
+func TestValidateDrive9CompanionRejectsLegacySurfaceWithoutRuntimeExec(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell companion fixture is Unix-only")
+	}
+	path := filepath.Join(t.TempDir(), "drive9")
+	legacy := `#!/bin/sh
+if [ "$1 $2 $3" = "fs layer help" ]; then
+  echo 'usage: drive9 fs layer <create|list|fork|chain|delete>'
+  exit 0
+fi
+if [ "$1 $2" = "mount --help" ]; then
+  echo '  -layer string'
+  echo '  -checkpoint string'
+  exit 0
+fi
+echo 'drive9: unknown command exec' >&2
+exit 2
+`
+	if err := os.WriteFile(path, []byte(legacy), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	err := validateDrive9Companion(context.Background(), path)
+	if apperr.CodeFor(err) != "update.companion_incompatible" || !strings.Contains(apperr.MessageFor(err), "drive9 exec") {
+		t.Fatalf("legacy companion error = %#v", err)
+	}
+}
+
 const compatibleDrive9CompanionScript = `#!/bin/sh
 if [ "$1 $2 $3" = "fs layer help" ]; then
   echo 'usage: drive9 fs layer <create|list|fork|chain|delete>'
@@ -251,6 +278,9 @@ fi
 if [ "$1 $2" = "mount --help" ]; then
   echo '  -layer string'
   echo '  -checkpoint string'
+  exit 0
+fi
+if [ "$1 $2" = "exec --help" ]; then
   exit 0
 fi
 echo companion

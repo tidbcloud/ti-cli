@@ -1232,6 +1232,186 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 	assertFakeDrive9Call(t, calls, []string{"umount"}, "", home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
 }
 
+func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake companion process semantics are covered by unit tests on Windows")
+	}
+	bin := tiBinary(t)
+	home := t.TempDir()
+	companion := filepath.Join(t.TempDir(), "ti-drive9")
+	build := exec.Command("go", "build", "-o", companion, "./testdata/fake-drive9.go")
+	build.Dir = "."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
+	}
+	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
+	token := drive9TestToken("tenant-runtime")
+	baseEnv := []string{
+		"HOME=" + home,
+		"TI_LOGGING=on",
+		"TI_PROFILE=private-runtime-profile",
+		"TI_DRIVE9_BIN=" + companion,
+		"FAKE_DRIVE9_RECORD=" + recordPath,
+		"TI_FS_TOKEN=" + token,
+		"TI_REGION_CODE=aws-us-east-1",
+		"DRIVE9_API_KEY=ambient-must-not-win",
+	}
+
+	helpRecord := filepath.Join(t.TempDir(), "help-calls.jsonl")
+	helpEnv := []string{
+		"HOME=" + t.TempDir(),
+		"TI_DRIVE9_BIN=" + companion,
+		"FAKE_DRIVE9_RECORD=" + helpRecord,
+	}
+	for _, args := range [][]string{{"exec", "help"}, {"exec", "--help"}} {
+		help := runTIWithInput(t, bin, "", helpEnv, args...)
+		help.wantExitCode(0)
+		help.wantStdoutContains("ti exec [flags] [--] command [arg...]")
+		for _, flag := range []string{"-w, --workspace", "-C, --cwd", "-e, --env", "-t, --timeout", "--fresh", "--layer", "--read-only", "-v, --verbose", "--file-system-id", "--fs-token"} {
+			help.wantStdoutContains(flag)
+		}
+		for _, unsupported := range []string{"--output", "--query", "--dry-run"} {
+			help.wantStdoutNotContains(unsupported)
+		}
+	}
+	if _, err := os.Stat(helpRecord); !os.IsNotExist(err) {
+		t.Fatalf("Runtime help invoked the companion or touched its record file: %v", err)
+	}
+
+	success := runTIWithInput(t, bin, "", append(baseEnv, "SECRET_FROM_LOCAL=local-value"),
+		"exec", "-w", "private/workspace", "-C", "web", "-e", "CI=1", "-e", "SECRET_FROM_LOCAL", "-t", "20m", "--fresh", "--layer", "private-layer", "--read-only", "-v", "--", "run-secret-command", "--output", "text")
+	success.wantExitCode(0)
+	if success.stdout != "runtime stdout\n" || success.stderr != "runtime stderr\n" {
+		success.fail("Runtime streams changed or merged")
+	}
+
+	remoteFlags := runTIWithInput(t, bin, "", baseEnv, "exec", "echo", "-v", "--profile", "remote-profile", "--query", "remote-query", "--debug")
+	remoteFlags.wantExitCode(0)
+	if remoteFlags.stderr != "runtime stderr\n" {
+		remoteFlags.fail("remote --debug unexpectedly enabled ti debug output")
+	}
+	shellLine := "printf 'private shell line'"
+	shell := runTIWithInput(t, bin, "", baseEnv, "exec", shellLine)
+	shell.wantExitCode(0)
+	structured := runTIWithInput(t, bin, "", baseEnv, "exec", "--output", "text", "echo")
+	structured.wantExitCode(2)
+	structured.wantStderrContains("--output is not supported by `ti exec`")
+	queried := runTIWithInput(t, bin, "", baseEnv, "exec", "--query", "value", "echo")
+	queried.wantExitCode(2)
+	queried.wantStderrContains("--query is not supported by `ti exec`")
+	dryRun := runTIWithInput(t, bin, "", baseEnv, "exec", "--dry-run", "echo")
+	dryRun.wantExitCode(2)
+	dryRun.wantStderrContains("unknown flag: --dry-run")
+
+	for _, test := range []struct {
+		mode string
+		code int
+	}{
+		{mode: "nonzero", code: 23},
+		{mode: "timeout", code: 124},
+		{mode: "canceled", code: 130},
+		{mode: "unknown", code: 255},
+	} {
+		result := runTIWithInput(t, bin, "", append(baseEnv, "FAKE_DRIVE9_EXEC_MODE="+test.mode), "exec", "run-once-"+test.mode)
+		result.wantExitCode(test.code)
+		result.wantStderrContains("runtime stderr")
+		result.wantStderrNotContains("ti [ERROR]")
+	}
+
+	incompatible := runTIWithInput(t, bin, "", append(baseEnv, "FAKE_DRIVE9_EXEC_MODE=incompatible"), "exec", "must-not-run")
+	incompatible.wantExitCode(1)
+	incompatible.wantStderrContains("installed Runtime companion does not support `ti exec`")
+	incompatible.wantStdoutNotContains("runtime stdout")
+
+	incompatibleWithoutSelectionRecord := filepath.Join(t.TempDir(), "incompatible-without-selection.jsonl")
+	incompatibleWithoutSelection := runTIWithInput(t, bin, "", []string{
+		"HOME=" + t.TempDir(), "TI_DRIVE9_BIN=" + companion, "FAKE_DRIVE9_RECORD=" + incompatibleWithoutSelectionRecord,
+		"FAKE_DRIVE9_EXEC_MODE=incompatible", "TI_REGION_CODE=aws-us-east-1",
+	}, "exec", "must-not-resolve")
+	incompatibleWithoutSelection.wantExitCode(1)
+	incompatibleWithoutSelection.wantStderrContains("installed Runtime companion does not support `ti exec`")
+	incompatibleWithoutSelection.wantStderrNotContains("file system ID is required")
+	incompatibleWithoutSelectionCalls := readFakeDrive9Calls(t, incompatibleWithoutSelectionRecord)
+	if len(incompatibleWithoutSelectionCalls) != 1 || strings.Join(incompatibleWithoutSelectionCalls[0].Args, "\x00") != "exec\x00--help" {
+		t.Fatalf("incompatible companion passed preflight before resource resolution: %#v", incompatibleWithoutSelectionCalls)
+	}
+
+	missingRecord := filepath.Join(t.TempDir(), "missing.jsonl")
+	missing := runTIWithInput(t, bin, "", []string{
+		"HOME=" + t.TempDir(), "TI_DRIVE9_BIN=" + companion, "FAKE_DRIVE9_RECORD=" + missingRecord, "TI_REGION_CODE=aws-us-east-1",
+	}, "exec", "must-not-start")
+	missing.wantExitCode(2)
+	missing.wantStderrContains("file system ID is required")
+	missingCalls := readFakeDrive9Calls(t, missingRecord)
+	if len(missingCalls) != 1 || strings.Join(missingCalls[0].Args, "\x00") != "exec\x00--help" {
+		t.Fatalf("missing selection passed the local capability gate: %#v", missingCalls)
+	}
+	if missingCalls[0].APIKey != "" || missingCalls[0].Server != "" || missingCalls[0].RegionCode != "" {
+		t.Fatalf("capability gate received credentials or placement before selection: %#v", missingCalls[0])
+	}
+
+	calls := readFakeDrive9Calls(t, recordPath)
+	assertFakeDrive9Args(t, calls, []string{"exec", "--workspace", "private/workspace", "--cwd", "web", "--env", "CI=1", "--env", "SECRET_FROM_LOCAL", "--timeout", "20m", "--fresh", "--layer", "private-layer", "--read-only", "--verbose", "--", "run-secret-command", "--output", "text"})
+	assertFakeDrive9Args(t, calls, []string{"exec", "--", "echo", "-v", "--profile", "remote-profile", "--query", "remote-query", "--debug"})
+	assertFakeDrive9Args(t, calls, []string{"exec", "--", shellLine})
+	for _, call := range calls {
+		if len(call.Args) < 1 || call.Args[0] != "exec" {
+			continue
+		}
+		if len(call.Args) > 1 && call.Args[1] == "--help" {
+			if call.APIKey != "" || call.Server != "" || call.RegionCode != "" || call.TIFSToken != "" || call.TiDBCloudPublicKey != "" || call.TiDBCloudPrivateKey != "" || call.Drive9Public != "" || call.Drive9Private != "" {
+				t.Fatalf("Runtime capability gate received credentials or placement: %#v", call)
+			}
+			continue
+		}
+		if call.APIKey != token || call.TIFSToken != "" || call.TiDBCloudPublicKey != "" || call.TiDBCloudPrivateKey != "" || call.Drive9Public != "" || call.Drive9Private != "" {
+			t.Fatalf("Runtime companion credential boundary failed: %#v", call)
+		}
+	}
+
+	logData, err := os.ReadFile(filepath.Join(home, ".ti", "logs", "ti.jsonl"))
+	if err != nil {
+		t.Fatalf("read Runtime operation log: %v", err)
+	}
+	for _, forbidden := range []string{token, "private-runtime-profile", "private/workspace", "private-layer", "run-secret-command", shellLine, "SECRET_FROM_LOCAL", "local-value", "runtime stdout", "runtime stderr"} {
+		if strings.Contains(string(logData), forbidden) {
+			t.Fatalf("Runtime operation log leaked %q", forbidden)
+		}
+	}
+
+	telemetryRequests := make(chan []byte, 1)
+	telemetryServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		telemetryRequests <- body
+		writer.WriteHeader(http.StatusAccepted)
+	}))
+	defer telemetryServer.Close()
+	telemetryCommand := "runtime-secret-command"
+	telemetryWorkspace := "private/telemetry-workspace"
+	telemetryEnv := "RUNTIME_SECRET=secret-value"
+	telemetry := runTIWithInput(t, bin, "", append(baseEnv,
+		"TI_ALLOW_TEST_ENDPOINTS=1",
+		"TI_TEST_TELEMETRY_ENDPOINT="+telemetryServer.URL,
+		"TI_TELEMETRY=on",
+	), "exec", "-w", telemetryWorkspace, "-e", telemetryEnv, telemetryCommand, "--debug")
+	telemetry.wantExitCode(0)
+	var telemetryBody []byte
+	select {
+	case telemetryBody = <-telemetryRequests:
+	case <-time.After(2 * time.Second):
+		t.Fatal("ti exec did not send telemetry to the fake ingestion server")
+	}
+	for _, forbidden := range []string{token, telemetryCommand, telemetryWorkspace, telemetryEnv, "secret-value", "--debug", "runtime stdout", "runtime stderr"} {
+		if strings.Contains(string(telemetryBody), forbidden) {
+			t.Fatalf("Runtime telemetry leaked %q: %s", forbidden, telemetryBody)
+		}
+	}
+	if !strings.Contains(string(telemetryBody), `"command_path":"ti exec"`) ||
+		!strings.Contains(string(telemetryBody), `"flag_names":["env","workspace"]`) {
+		t.Fatalf("unexpected Runtime telemetry payload: %s", telemetryBody)
+	}
+}
+
 func TestFSLayerForkWorkflowCommands(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake companion build path is covered by unit tests on Windows")
@@ -2128,7 +2308,7 @@ func runTI(t *testing.T, bin string, args ...string) commandResult {
 func hasLiveFSCommandFamily(args []string) bool {
 	for _, arg := range args {
 		switch arg {
-		case "fs", "fs-git", "fs-journal", "fs-vault":
+		case "exec", "fs", "fs-git", "fs-journal", "fs-vault":
 			return true
 		}
 	}

@@ -42,6 +42,11 @@ function Assert-CompanionCommandSurface($CompanionPath) {
             Fail "downloaded ti-drive9 companion is incompatible: missing drive9 mount --$flag"
         }
     }
+
+    $null = (& $CompanionPath exec --help 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0) {
+        Fail "downloaded ti-drive9 companion is incompatible: missing drive9 Runtime exec command; retry after the matching companion release is published"
+    }
 }
 
 function Resolve-InstallDir {
