@@ -19,6 +19,9 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/oplog"
 )
 
+// Options.Host must come from clusterPublicEndpoint in the Starter service,
+// which checks it with validate.StarterEndpointHost before any credential is
+// sent.
 type Options struct {
 	ClusterID   string
 	AccessMode  sqlcred.AccessMode
@@ -127,7 +130,8 @@ func endpointURL(opts Options) (string, error) {
 	if strings.TrimSpace(opts.Host) == "" {
 		return "", apperr.New("db.sql_http_missing_host", "api", 1, "cluster public endpoint host is missing; describe the cluster and try again after it becomes ACTIVE")
 	}
-	return "https://http-" + opts.Host + "/v1beta/sql", nil
+	endpoint := url.URL{Scheme: "https", Host: "http-" + opts.Host, Path: "/v1beta/sql"}
+	return endpoint.String(), nil
 }
 
 func statusError(res *http.Response) error {
