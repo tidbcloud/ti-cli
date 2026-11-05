@@ -802,6 +802,10 @@ func validateDrive9Companion(ctx context.Context, path string) error {
 			return incompatibleDrive9CompanionError("missing `drive9 mount --"+flag+"`", mountHelp, nil)
 		}
 	}
+
+	if _, err := drive9HelpOutput(ctx, path, "exec", "--help"); err != nil {
+		return incompatibleDrive9CompanionError("missing `drive9 exec` Runtime command", "", err)
+	}
 	return nil
 }
 

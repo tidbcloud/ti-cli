@@ -5,11 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/signal"
+	"syscall"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/cli"
 	"github.com/tidbcloud/ti-cli/internal/config/homemigration"
+	"github.com/tidbcloud/ti-cli/internal/interrupt"
 	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
@@ -18,13 +19,15 @@ func main() {
 		runHomeMigration()
 		return
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := interrupt.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	info := version.Current()
 	root := cli.NewRootCommand(info)
 	if err := cli.Execute(ctx, root, info, os.Args[1:], os.Stdout, os.Stderr, cli.WithHomeMigration()); err != nil {
-		fmt.Fprintf(os.Stderr, "\nti [ERROR]: %s\n", apperr.MessageFor(err))
+		if !apperr.IsSilent(err) {
+			fmt.Fprintf(os.Stderr, "\nti [ERROR]: %s\n", apperr.MessageFor(err))
+		}
 		os.Exit(apperr.ExitCodeFor(err))
 	}
 }

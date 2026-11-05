@@ -120,6 +120,10 @@ validate_companion() {
       error "downloaded ti-drive9 companion is incompatible: missing drive9 mount --${flag}"
     fi
   done
+
+  if ! "$companion_path" exec --help >/dev/null 2>&1; then
+    error "downloaded ti-drive9 companion is incompatible: missing drive9 Runtime exec command; retry after the matching companion release is published"
+  fi
 }
 
 case "$(uname -s)" in

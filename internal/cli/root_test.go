@@ -291,7 +291,7 @@ func TestIsUpdateInvocation(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if got := isUpdateInvocation(test.args); got != test.want {
+			if got := inspectInvocation(NewRootCommand(version.Info{}), test.args).update; got != test.want {
 				t.Fatalf("isUpdateInvocation(%q) = %t, want %t", test.args, got, test.want)
 			}
 		})
@@ -747,8 +747,8 @@ func TestNoCommandDefinesShortFlags(t *testing.T) {
 		cmd.InitDefaultHelpFlag()
 		cmd.InitDefaultVersionFlag()
 	})
-	if HasShorthand(root) {
-		t.Fatal("expected command tree to avoid short flags")
+	if HasNonExecShorthand(root) {
+		t.Fatal("expected every command except ti exec to avoid short flags")
 	}
 }
 

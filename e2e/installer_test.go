@@ -203,7 +203,7 @@ fi
 	if err != nil {
 		t.Fatalf("read companion validation calls: %v", err)
 	}
-	for _, want := range []string{"fs layer help", "mount --help"} {
+	for _, want := range []string{"fs layer help", "mount --help", "exec --help"} {
 		if !strings.Contains(string(companionCallData), want) {
 			t.Fatalf("installer did not validate companion command surface %q; calls:\n%s", want, companionCallData)
 		}
@@ -243,6 +243,9 @@ if [ "$1 $2 $3" = "fs layer help" ]; then
 fi
 if [ "$1 $2" = "mount --help" ]; then
   printf '  -layer string\n  -checkpoint string\n'
+  exit 0
+fi
+if [ "$1 $2" = "exec --help" ]; then
   exit 0
 fi
 printf 'compatible companion\n'
@@ -324,7 +327,7 @@ func TestInstallersValidateCompanionCommandSurfaceBeforeInstallation(t *testing.
 	if powerShellValidation < 0 || powerShellInstall < 0 || powerShellValidation >= powerShellInstall {
 		t.Fatal("install.ps1 must validate the staged companion before installing it")
 	}
-	for _, required := range []string{"fork", "chain", "delete", "layer", "checkpoint"} {
+	for _, required := range []string{"fork", "chain", "delete", "layer", "checkpoint", "exec"} {
 		if !strings.Contains(shell, required) || !strings.Contains(powerShell, required) {
 			t.Fatalf("installers do not validate required companion surface %q", required)
 		}
