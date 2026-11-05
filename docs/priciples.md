@@ -75,6 +75,7 @@ Supported TiDB Cloud Starter placement values are:
 | `aws-eu-central-1` | AWS | Frankfurt |
 | `aws-ap-northeast-1` | AWS | Tokyo |
 | `aws-ap-southeast-1` | AWS | Singapore |
+| `aws-sa-east-1` | AWS | São Paulo |
 | `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
 
 `aws` maps to the internal provider `aws`; `alicloud` maps to `alibaba_cloud`; `gcp` maps to `gcp`; `azure` maps to `azure`. TiDB Cloud Filesystem supports `aws-us-east-1`, `aws-ap-southeast-1`, `aws-us-west-2`, `alicloud-ap-southeast-1`, `gcp-us-east1`, and `azure-centralus` through endpoint mappings built into `ti`. `gcp-us-east1` and `azure-centralus` are Filesystem-only placements: TiDB Cloud Starter commands reject them during local placement validation instead of sending an unsupported region to the Starter API.

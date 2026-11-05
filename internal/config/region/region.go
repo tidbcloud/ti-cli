@@ -40,6 +40,7 @@ var supported = map[string][]Region{
 		{Code: "eu-central-1", Label: "Frankfurt"},
 		{Code: "ap-northeast-1", Label: "Tokyo"},
 		{Code: "ap-southeast-1", Label: "Singapore"},
+		{Code: "sa-east-1", Label: "São Paulo"},
 	},
 	ProviderAlibabaCloud: {
 		{Code: "ap-southeast-1", Label: "Singapore"},
