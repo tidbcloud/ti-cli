@@ -14,6 +14,7 @@ import (
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config/region"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
 type Service string
@@ -54,13 +55,17 @@ type Resolver struct {
 	FSManifestHTTPClient *http.Client
 }
 
+// testControlsAllowed gates the TI_TEST_* endpoint overrides. It is a variable
+// so tests, whose binaries are not local builds, can turn the controls on.
+var testControlsAllowed = func() bool { return version.Current().TestControlsAllowed() }
+
 func NewResolver() Resolver {
 	resolver := Resolver{
 		StarterBaseURL: DefaultStarterBaseURL,
 		IAMBaseURL:     DefaultIAMBaseURL,
 		FSMode:         DefaultFSMode,
 	}
-	if os.Getenv("TI_ALLOW_TEST_ENDPOINTS") == "1" {
+	if testControlsAllowed() {
 		if baseURL := strings.TrimSpace(os.Getenv("TI_TEST_STARTER_BASE_URL")); baseURL != "" {
 			resolver.StarterBaseURL = baseURL
 		}

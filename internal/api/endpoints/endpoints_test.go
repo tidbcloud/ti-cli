@@ -38,6 +38,7 @@ func TestResolveStarterAlibabaRegion(t *testing.T) {
 }
 
 func TestResolveStarterTestOverrideRequiresOptIn(t *testing.T) {
+	setLocalBuild(t, true)
 	t.Setenv("TI_TEST_STARTER_BASE_URL", "https://starter.test")
 	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "")
 	endpoint, err := NewResolver().ResolveStarter(region.ProviderAWS, "us-east-1")
@@ -69,6 +70,7 @@ func TestResolveIAMEndpoint(t *testing.T) {
 }
 
 func TestResolveIAMTestOverrideRequiresOptIn(t *testing.T) {
+	setLocalBuild(t, true)
 	t.Setenv("TI_TEST_IAM_BASE_URL", "https://iam.test")
 	t.Setenv("TI_ALLOW_TEST_ENDPOINTS", "")
 	endpoint, err := NewResolver().ResolveIAM()

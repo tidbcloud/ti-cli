@@ -29,9 +29,14 @@ endif
 
 all: build
 
+# Local builds include hidden test controls (see AGENTS.md). Release packaging
+# must not reuse this target: goreleaser stamps installSource=archive and
+# builds without TEST_CONTROLS_TAG.
+TEST_CONTROLS_TAG := ti_test_controls
+
 build:
 	@mkdir -p $(BIN_DIR)
-	$(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(TI_BIN) ./cmd/ti
+	$(GO) build -trimpath -tags $(TEST_CONTROLS_TAG) -ldflags "$(LDFLAGS)" -o $(TI_BIN) ./cmd/ti
 
 build-telemetry-backend:
 	@mkdir -p $(BIN_DIR)
@@ -43,6 +48,7 @@ build-telemetry-migrator:
 
 test:
 	$(GO) test ./...
+	$(GO) test -tags $(TEST_CONTROLS_TAG) -run 'TestFakeMountReady' ./internal/fs
 
 e2e: build
 	TI_E2E_BIN="$(abspath $(TI_BIN))" $(GO) test ./e2e -count=1 -v

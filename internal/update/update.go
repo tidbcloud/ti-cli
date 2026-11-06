@@ -335,12 +335,12 @@ func newClient(info version.Info, baseURL string, httpClient *http.Client) clien
 }
 
 // testReleaseAPIBaseURL returns the TI_RELEASE_API_BASE_URL override only for
-// local builds that opt in with TI_ALLOW_TEST_ENDPOINTS=1, the same gate as the
-// test telemetry endpoint. The release origin also serves the checksums, so it
+// local builds that opt in with TI_ALLOW_TEST_ENDPOINTS=1, the same gate as every
+// other hidden test control (version.Info.TestControlsAllowed). The release origin also serves the checksums, so it
 // decides which binary ti installs and runs; other builds always use
 // DefaultReleaseAPIBaseURL. The override must be https, or http to localhost.
 func testReleaseAPIBaseURL(info version.Info) string {
-	if info.InstallSource != "local" || os.Getenv("TI_ALLOW_TEST_ENDPOINTS") != "1" {
+	if !info.TestControlsAllowed() {
 		return ""
 	}
 	value := strings.TrimRight(strings.TrimSpace(os.Getenv("TI_RELEASE_API_BASE_URL")), "/")
