@@ -1087,6 +1087,9 @@ func TestFSCloudRegionsUseBuiltInEndpoints(t *testing.T) {
 	if output, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build fake companion: %v\n%s", err, output)
 	}
+	// The companion sits next to ti, as installers place it, so the test needs
+	// no TI_DRIVE9_BIN and can leave every hidden test control off.
+	bin = installedLayout(t, bin, companion)
 	for _, regionCode := range []string{"gcp-us-east1", "azure-centralus"} {
 		t.Run(regionCode, func(t *testing.T) {
 			home := t.TempDir()
@@ -1097,7 +1100,6 @@ func TestFSCloudRegionsUseBuiltInEndpoints(t *testing.T) {
 				"HOME=" + home,
 				"TI_PROFILE=default",
 				"TI_REGION_CODE=aws-us-east-1",
-				"TI_DRIVE9_BIN=" + companion,
 				"TI_FS_TOKEN=" + token,
 				"TIDB_CLOUD_PUBLIC_KEY=",
 				"TIDB_CLOUD_PRIVATE_KEY=",
@@ -1250,6 +1252,7 @@ func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {
 		"HOME=" + home,
 		"TI_LOGGING=on",
 		"TI_PROFILE=private-runtime-profile",
+		"TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_DRIVE9_BIN=" + companion,
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 		"TI_FS_TOKEN=" + token,
@@ -1260,6 +1263,7 @@ func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {
 	helpRecord := filepath.Join(t.TempDir(), "help-calls.jsonl")
 	helpEnv := []string{
 		"HOME=" + t.TempDir(),
+		"TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_DRIVE9_BIN=" + companion,
 		"FAKE_DRIVE9_RECORD=" + helpRecord,
 	}
@@ -1325,7 +1329,7 @@ func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {
 
 	incompatibleWithoutSelectionRecord := filepath.Join(t.TempDir(), "incompatible-without-selection.jsonl")
 	incompatibleWithoutSelection := runTIWithInput(t, bin, "", []string{
-		"HOME=" + t.TempDir(), "TI_DRIVE9_BIN=" + companion, "FAKE_DRIVE9_RECORD=" + incompatibleWithoutSelectionRecord,
+		"HOME=" + t.TempDir(), "TI_ALLOW_TEST_ENDPOINTS=1", "TI_DRIVE9_BIN=" + companion, "FAKE_DRIVE9_RECORD=" + incompatibleWithoutSelectionRecord,
 		"FAKE_DRIVE9_EXEC_MODE=incompatible", "TI_REGION_CODE=aws-us-east-1",
 	}, "exec", "must-not-resolve")
 	incompatibleWithoutSelection.wantExitCode(1)
@@ -1338,7 +1342,7 @@ func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {
 
 	missingRecord := filepath.Join(t.TempDir(), "missing.jsonl")
 	missing := runTIWithInput(t, bin, "", []string{
-		"HOME=" + t.TempDir(), "TI_DRIVE9_BIN=" + companion, "FAKE_DRIVE9_RECORD=" + missingRecord, "TI_REGION_CODE=aws-us-east-1",
+		"HOME=" + t.TempDir(), "TI_ALLOW_TEST_ENDPOINTS=1", "TI_DRIVE9_BIN=" + companion, "FAKE_DRIVE9_RECORD=" + missingRecord, "TI_REGION_CODE=aws-us-east-1",
 	}, "exec", "must-not-start")
 	missing.wantExitCode(2)
 	missing.wantStderrContains("file system ID is required")
@@ -2058,6 +2062,27 @@ func assertFakeDrive9TransientCall(t *testing.T, calls []fakeDrive9Call, prefix 
 		return
 	}
 	t.Fatalf("missing fake Drive9 call with prefix %v in %#v", prefix, calls)
+}
+
+// installedLayout copies ti and the companion into one directory as ti and
+// ti-drive9, the layout the installers create, and returns the copied ti.
+func installedLayout(t *testing.T, bin, companion string) string {
+	t.Helper()
+	dir := t.TempDir()
+	copyExecutable(t, bin, filepath.Join(dir, "ti"))
+	copyExecutable(t, companion, filepath.Join(dir, "ti-drive9"))
+	return filepath.Join(dir, "ti")
+}
+
+func copyExecutable(t *testing.T, from, to string) {
+	t.Helper()
+	data, err := os.ReadFile(from)
+	if err != nil {
+		t.Fatalf("read %s: %v", from, err)
+	}
+	if err := os.WriteFile(to, data, 0o755); err != nil {
+		t.Fatalf("write %s: %v", to, err)
+	}
 }
 
 func tiBinary(t *testing.T) string {

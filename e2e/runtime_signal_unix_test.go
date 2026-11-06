@@ -39,7 +39,7 @@ func TestRuntimeExecSignals(t *testing.T) {
 				mode = "wait-for-second-signal"
 			}
 			cmd := exec.Command(bin, "exec", "wait")
-			cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "TI_LOGGING=off", "TI_TELEMETRY=off", "TI_DRIVE9_BIN="+companion,
+			cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "TI_LOGGING=off", "TI_TELEMETRY=off", "TI_ALLOW_TEST_ENDPOINTS=1", "TI_DRIVE9_BIN="+companion,
 				"TI_FS_TOKEN="+drive9TestToken("tenant-runtime-signal"), "TI_REGION_CODE=aws-us-east-1", "FAKE_DRIVE9_EXEC_MODE="+mode)
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			pipe, err := cmd.StdoutPipe()
@@ -137,7 +137,7 @@ func TestRuntimeCapabilityInterrupt(t *testing.T) {
 		t.Run(strconv.FormatBool(group), func(t *testing.T) {
 			record := filepath.Join(t.TempDir(), "calls.jsonl")
 			cmd := exec.Command(tiBinary(t), "exec", "must-not-run")
-			cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "TI_LOGGING=off", "TI_TELEMETRY=off", "TI_DRIVE9_BIN="+companion, "FAKE_DRIVE9_RECORD="+record, "FAKE_DRIVE9_EXEC_MODE=slow-help")
+			cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "TI_LOGGING=off", "TI_TELEMETRY=off", "TI_ALLOW_TEST_ENDPOINTS=1", "TI_DRIVE9_BIN="+companion, "FAKE_DRIVE9_RECORD="+record, "FAKE_DRIVE9_EXEC_MODE=slow-help")
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			var stderr bytes.Buffer
 			cmd.Stderr = &stderr

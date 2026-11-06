@@ -17,6 +17,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 	"github.com/tidbcloud/ti-cli/internal/interrupt"
+	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
 const (
@@ -24,6 +25,12 @@ const (
 	envCompanionBin      = "TI_DRIVE9_BIN"
 	envAllowDrive9       = "TI_ALLOW_STANDALONE_DRIVE9"
 )
+
+// testControlsAllowed gates TI_DRIVE9_BIN and TI_ALLOW_STANDALONE_DRIVE9. The
+// companion they select receives the TiDB Cloud key pair and FS credentials, so
+// only local builds that opt in may use them. It is a variable so tests can
+// turn the controls on.
+var testControlsAllowed = func() bool { return version.Current().TestControlsAllowed() }
 
 type Runner struct {
 	HomeDir       string
@@ -301,14 +308,16 @@ func (r Runner) locateCompanion() (string, error) {
 	if strings.TrimSpace(r.CompanionPath) != "" {
 		candidates = append(candidates, strings.TrimSpace(r.CompanionPath))
 	}
-	if env := strings.TrimSpace(os.Getenv(envCompanionBin)); env != "" {
-		candidates = append(candidates, env)
+	if testControlsAllowed() {
+		if env := strings.TrimSpace(os.Getenv(envCompanionBin)); env != "" {
+			candidates = append(candidates, env)
+		}
 	}
 	if exe, err := os.Executable(); err == nil && exe != "" {
 		candidates = append(candidates, filepath.Join(filepath.Dir(exe), companionBinaryName(defaultCompanionName)))
 	}
 	candidates = append(candidates, companionBinaryName(defaultCompanionName))
-	if os.Getenv(envAllowDrive9) == "1" {
+	if testControlsAllowed() && os.Getenv(envAllowDrive9) == "1" {
 		candidates = append(candidates, companionBinaryName("drive9"))
 	}
 	for _, candidate := range candidates {
