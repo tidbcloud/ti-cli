@@ -1477,6 +1477,10 @@ func executeForTestWithInfo(info version.Info, args ...string) (string, string, 
 	return stdout.String(), stderr.String(), err
 }
 
+// testVersion is a local build, so commands in these tests honour the
+// telemetry and release overrides that use the Info passed in. Hidden controls
+// read without an Info (TI_TEST_*_BASE_URL, TI_TEST_FS_MANIFEST_URL,
+// TI_DRIVE9_BIN) see the go test binary, which is not local, so they stay off.
 func testVersion() version.Info {
 	return version.Info{
 		Version:        "0.0.0-test",

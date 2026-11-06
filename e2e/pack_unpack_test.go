@@ -35,6 +35,7 @@ func TestFSUnpackFileSystemRejectsEscapingSymlinksFromCompanion(t *testing.T) {
 		"HOME=" + home,
 		"TI_PROFILE=default",
 		"TI_REGION_CODE=aws-us-east-1",
+		"TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_DRIVE9_BIN=" + companion,
 		"TI_FS_TOKEN=" + token,
 		"TI_LOGGING=off",
