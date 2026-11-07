@@ -125,7 +125,7 @@ func (s *Server) handleBatch(writer http.ResponseWriter, request *http.Request) 
 		s.reject(writer, http.StatusBadRequest, "invalid_request", "request headers are invalid")
 		return
 	}
-	if !s.limiter.Allow(clientIP(request, s.config.TrustedProxyCIDRs)) {
+	if !s.limiter.Allow(rateLimitKey(clientIP(request, s.config.TrustedProxyCIDRs))) {
 		s.reject(writer, http.StatusTooManyRequests, "rate_limited", "request rate limit exceeded")
 		return
 	}
