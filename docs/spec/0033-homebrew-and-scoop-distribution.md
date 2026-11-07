@@ -40,6 +40,7 @@ For Homebrew and Scoop installs, `ti update` must not replace the binary. It ret
 - The Homebrew formula and Scoop manifest consume GitHub Releases assets produced by `0012-install-and-update-distribution.md`.
 - Package-manager installs embed `install_source=homebrew` or `install_source=scoop` through package build/wrapper metadata when practical.
 - `ti update` also detects common Homebrew and Scoop install paths as a fallback, even if build metadata is missing.
+- Package builds must never stamp `installSource=local` or use the `ti_test_controls` build tag, and must not reuse `make build`. A `local` build honours hidden test controls such as `TI_DRIVE9_BIN` and the `TI_TEST_*` endpoint overrides (see `AGENTS.md`).
 - Users can still run `ti update --check` from Homebrew/Scoop installs; it reports release availability but does not mutate package-managed files.
 
 ## Inputs And Config

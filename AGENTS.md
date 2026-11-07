@@ -918,13 +918,25 @@ endpoint mapping owned by `internal/api/endpoints`. If the mapping does not
 contain the profile placement, return a clear unsupported endpoint error; do
 not add a user-facing raw server URL flag or config key or restore a runtime
 manifest dependency.
-Tests may override the IAM base URL with `TI_TEST_IAM_BASE_URL` and the fs
-manifest URL with `TI_TEST_FS_MANIFEST_URL`, only when
-`TI_ALLOW_TEST_ENDPOINTS=1`; these are hidden test controls, not supported
-user configuration. The release metadata origin used by `ti update` can be
-overridden with `TI_RELEASE_API_BASE_URL` only by a local build
-(`installSource=local`) with `TI_ALLOW_TEST_ENDPOINTS=1`, and only to an https
-URL or plain http to localhost; every other build uses the GitHub release API.
+Hidden test and developer controls are not supported user configuration:
+
+- `TI_TEST_STARTER_BASE_URL`, `TI_TEST_IAM_BASE_URL` and `TI_TEST_FS_MANIFEST_URL`
+  override the Starter, IAM and fs manifest endpoints;
+- `TI_TEST_TELEMETRY_ENDPOINT` overrides the telemetry endpoint;
+- `TI_RELEASE_API_BASE_URL` overrides the `ti update` release metadata origin,
+  and only to an https URL or plain http to localhost;
+- `TI_DRIVE9_BIN` selects the companion binary, and `TI_ALLOW_STANDALONE_DRIVE9=1`
+  allows a bare `drive9` from `PATH`;
+- `TI_TEST_FAKE_MOUNT_READY=1` skips the mount evidence check for the fake e2e
+  companion. It is compiled only with the `ti_test_controls` build tag.
+
+All of them apply only in a local build (`installSource=local`, which only
+`make build` stamps) with `TI_ALLOW_TEST_ENDPOINTS=1`, through
+`version.Info.TestControlsAllowed`. Release builds (`installSource=archive`), `go
+install` and `go test` binaries ignore them, so e2e must run against a binary
+from `make build`, not a plain `go build`. Release packaging (goreleaser, and any
+future Homebrew or Scoop formula) must stamp its own `installSource` and must
+not reuse `make build`, which stamps `local` and the `ti_test_controls` tag.
 
 Local profile namespace lookup order for authenticated commands:
 
@@ -1099,8 +1111,8 @@ entry/object/event commands, low-level Git workspace/tree/state/object-pack/
 overlay commands, or legacy vault token commands unless Drive9 exposes a
 matching public command and the ti command surface is intentionally updated in
 README, specs, tests, and AGENTS. Use `TI_DRIVE9_BIN` only as a developer/test
-override for a compatible companion; normal installs should rely on the
-installer-managed `ti-drive9`.
+override for a compatible companion (a hidden control, local builds only; see
+above); normal installs should rely on the installer-managed `ti-drive9`.
 
 `ti fs create-directory --mode` is a compatibility flag only in the Drive9
 companion path: validate the octal value, but do not emulate directory chmod

@@ -212,7 +212,7 @@ func effectiveTelemetryEndpoint(info version.Info) string {
 	if endpoint := strings.TrimSpace(info.TelemetryEndpoint); endpoint != "" {
 		return endpoint
 	}
-	if info.InstallSource == "local" && os.Getenv("TI_ALLOW_TEST_ENDPOINTS") == "1" {
+	if info.TestControlsAllowed() {
 		return strings.TrimSpace(os.Getenv("TI_TEST_TELEMETRY_ENDPOINT"))
 	}
 	return ""
