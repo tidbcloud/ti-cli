@@ -283,3 +283,48 @@ func TestResolveUnsupportedRegionShowsValidRegions(t *testing.T) {
 		t.Fatalf("expected valid region list in message, got %q", message)
 	}
 }
+
+func TestValidateBaseURLAllowsPlainHTTPOnlyForLoopback(t *testing.T) {
+	for _, tc := range []struct {
+		value string
+		ok    bool
+	}{
+		{"https://serverless.tidbapi.com", true},
+		{"https://example.com:8443/base", true},
+		{"http://127.0.0.1:8080", true},
+		{"http://127.1.2.3", true},
+		{"http://localhost:8080", true},
+		{"http://LOCALHOST", true},
+		{"http://[::1]:8080", true},
+		{"http://example.com", false},
+		{"http://10.0.0.1", false},
+		{"http://localhost.example.com", false},
+		{"ftp://example.com", false},
+		{"https://", false},
+	} {
+		err := validateBaseURL(tc.value)
+		if tc.ok && err != nil {
+			t.Fatalf("%s: expected valid, got %v", tc.value, err)
+		}
+		if !tc.ok && err == nil {
+			t.Fatalf("%s: expected an error", tc.value)
+		}
+	}
+}
+
+func TestResolveFSRejectsPlainHTTPManifestServer(t *testing.T) {
+	resolver := Resolver{
+		FSManifest: &FSRegionManifest{
+			Regions: []FSRegionManifestEntry{{
+				RegionCode:    "aws-us-east-1",
+				Mode:          DefaultFSMode,
+				ServerURL:     "http://aws-us-east-1.drive9.ai",
+				CloudProvider: "aws",
+				TiDBRegion:    "us-east-1",
+			}},
+		},
+	}
+	if _, err := resolver.ResolveFS(region.ProviderAWS, "us-east-1"); err == nil || apperr.CodeFor(err) != "api.invalid_endpoint" {
+		t.Fatalf("expected api.invalid_endpoint for a plain http manifest server, got %v", err)
+	}
+}
