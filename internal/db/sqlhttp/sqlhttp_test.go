@@ -137,3 +137,13 @@ type memoryRecorder struct {
 func (r *memoryRecorder) Record(_ context.Context, event oplog.Event) {
 	r.events = append(r.events, event)
 }
+
+func TestEndpointURLFromClusterHost(t *testing.T) {
+	got, err := endpointURL(Options{Host: "gateway01.us-east-1.prod.aws.tidbcloud.com"})
+	if err != nil {
+		t.Fatalf("endpointURL failed: %v", err)
+	}
+	if got != "https://http-gateway01.us-east-1.prod.aws.tidbcloud.com/v1beta/sql" {
+		t.Fatalf("endpointURL = %q", got)
+	}
+}
