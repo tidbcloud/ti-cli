@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -446,22 +447,29 @@ func readVaultFieldsDirectory(dir string) (map[string]string, error) {
 	return fields, nil
 }
 
+// normalizeVaultEnvKey converts a stored field name into an environment key
+// exactly like the companion's env export does: it walks UTF-8 bytes, upper-cases
+// ASCII letters, prefixes a leading digit with '_', and replaces every other byte
+// with '_'. Walking bytes rather than runes matters for non-ASCII names ("café"
+// exports as CAF__ because the accented letter is two bytes), so read-secret and
+// run-with-secret agree on both the key and on whether two names collide.
 func normalizeVaultEnvKey(field string) (string, error) {
 	if field == "" {
 		return "", apperr.New("vault.invalid_field", "usage", 2, "field name is required")
 	}
 	var b strings.Builder
-	for i, r := range field {
+	for i := 0; i < len(field); i++ {
+		ch := field[i]
 		switch {
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r - 'a' + 'A')
-		case r >= '0' && r <= '9':
+		case ch >= 'A' && ch <= 'Z', ch == '_':
+			b.WriteByte(ch)
+		case ch >= 'a' && ch <= 'z':
+			b.WriteByte(ch - 'a' + 'A')
+		case ch >= '0' && ch <= '9':
 			if i == 0 {
 				b.WriteByte('_')
 			}
-			b.WriteRune(r)
+			b.WriteByte(ch)
 		default:
 			b.WriteByte('_')
 		}
@@ -670,30 +678,42 @@ func vaultSecretChildEnv(base []string, fields map[string]string) ([]string, err
 	if err != nil {
 		return nil, err
 	}
-	return mergeEnv(dropEnvKeysFold(credentialenv.Scrub(base), secretEnv), secretEnv), nil
+	return mergeEnv(dropShadowedEnvKeys(credentialenv.Scrub(base), secretEnv), secretEnv), nil
 }
 
-// dropEnvKeysFold removes inherited entries whose key matches a secret field
-// under Windows case folding. Windows resolves environment names
-// case-insensitively and keeps the last duplicate when exec builds the block, so
-// an ambient db_url would otherwise shadow the injected DB_URL.
-func dropEnvKeysFold(base []string, overrides map[string]string) []string {
+// envKeysFoldCase reports whether environment names compare case-insensitively
+// on this platform. Windows resolves them that way and keeps the last duplicate
+// when exec builds the block, so an ambient db_url would otherwise shadow the
+// injected DB_URL. Unix keeps case-distinct names (for example http_proxy next to
+// HTTP_PROXY), so the deduplication must not fold there.
+var envKeysFoldCase = runtime.GOOS == "windows"
+
+// dropShadowedEnvKeys removes inherited entries that would be overridden by an
+// injected secret field under the target platform's name equality.
+func dropShadowedEnvKeys(base []string, overrides map[string]string) []string {
 	out := make([]string, 0, len(base))
 	for _, entry := range base {
 		key, _, ok := strings.Cut(entry, "=")
-		if ok {
-			shadowed := false
-			for override := range overrides {
-				if strings.EqualFold(key, override) {
-					shadowed = true
-					break
-				}
-			}
-			if shadowed {
-				continue
-			}
+		if ok && envKeyShadowed(key, overrides) {
+			continue
 		}
 		out = append(out, entry)
 	}
 	return out
+}
+
+func envKeyShadowed(key string, overrides map[string]string) bool {
+	for override := range overrides {
+		if envKeysEqual(key, override) {
+			return true
+		}
+	}
+	return false
+}
+
+func envKeysEqual(a, b string) bool {
+	if envKeysFoldCase {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }

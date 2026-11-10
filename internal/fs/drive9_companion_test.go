@@ -1259,11 +1259,13 @@ func TestDrive9RunWithVaultSecretServiceFlow(t *testing.T) {
 		return out.String(), errOut.String(), err
 	}
 
-	out, _, err := run(`{"DB_URL":"mysql://secret","PASSWORD":"s3cr3t"}`, "/bin/sh", "-c", "env")
+	out, _, err := run(`{"DB_URL":"mysql://secret","PASSWORD":"s3cr3t","café":"accented"}`, "/bin/sh", "-c", "env")
 	if err != nil {
 		t.Fatalf("run-with-secret failed: %v", err)
 	}
-	for _, want := range []string{"DB_URL=mysql://secret", "PASSWORD=s3cr3t"} {
+	// café exercises the companion boundary: the companion exports it byte-wise,
+	// so the accented character contributes two underscores.
+	for _, want := range []string{"DB_URL=mysql://secret", "PASSWORD=s3cr3t", "CAF__=accented"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("child environment missing %q:\n%s", want, out)
 		}
@@ -1272,6 +1274,11 @@ func TestDrive9RunWithVaultSecretServiceFlow(t *testing.T) {
 		t.Fatalf("child environment leaked the filesystem token:\n%s", out)
 	}
 	requireFakeDrive9Call(t, recordPath, "vault", "get")
+
+	// "é" (two bytes) and "_" (one byte) stay distinct, matching the companion.
+	if _, _, err := run(`{"é":"a","_":"b"}`, "/bin/sh", "-c", "env"); err != nil {
+		t.Fatalf("distinct non-ASCII field names rejected: %v", err)
+	}
 
 	if _, _, err := run(`{}`, "/bin/true"); apperr.CodeFor(err) != "vault.empty_secret" {
 		t.Fatalf("empty secret error = %v", err)

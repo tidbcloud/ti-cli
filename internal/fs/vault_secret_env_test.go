@@ -83,9 +83,13 @@ func TestVaultSecretChildEnvNormalizesFieldKeys(t *testing.T) {
 }
 
 // TestVaultSecretChildEnvDropsCaseVariantInheritedKey covers the Windows
-// shadowing case: env names fold case-insensitively, so an ambient db_url must
-// not survive next to the injected DB_URL.
+// shadowing case: env names fold case-insensitively there, so an ambient db_url
+// must not survive next to the injected DB_URL.
 func TestVaultSecretChildEnvDropsCaseVariantInheritedKey(t *testing.T) {
+	previous := envKeysFoldCase
+	envKeysFoldCase = true
+	t.Cleanup(func() { envKeysFoldCase = previous })
+
 	env, err := vaultSecretChildEnv([]string{"PATH=/bin", "db_url=ambient", "DB_URL=ambient-upper"}, map[string]string{"DB_URL": "secret"})
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +105,51 @@ func TestVaultSecretChildEnvDropsCaseVariantInheritedKey(t *testing.T) {
 	}
 	if len(values) != 2 {
 		t.Fatalf("unexpected child env: %#v", values)
+	}
+}
+
+// TestVaultSecretChildEnvPreservesCaseDistinctKeysOnUnix pins the other side of
+// that rule: Unix environment names are case-sensitive, so an injected HTTP_PROXY
+// must not delete an inherited http_proxy (curl reads only the lowercase form).
+func TestVaultSecretChildEnvPreservesCaseDistinctKeysOnUnix(t *testing.T) {
+	previous := envKeysFoldCase
+	envKeysFoldCase = false
+	t.Cleanup(func() { envKeysFoldCase = previous })
+
+	env, err := vaultSecretChildEnv(
+		[]string{"PATH=/bin", "http_proxy=http://proxy.example:8080"},
+		map[string]string{"HTTP_PROXY": "http://secret-proxy:3128"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := environmentMapFS(env)
+	if values["http_proxy"] != "http://proxy.example:8080" || values["HTTP_PROXY"] != "http://secret-proxy:3128" {
+		t.Fatalf("case-distinct variables were not both preserved: %#v", values)
+	}
+}
+
+// TestVaultSecretChildEnvNormalizesNonASCIIKeys matches the companion's byte-wise
+// normalization: "café" is two bytes after the accented letter and therefore
+// exports as CAF__, while a single underscore stays distinct.
+func TestVaultSecretChildEnvNormalizesNonASCIIKeys(t *testing.T) {
+	env, err := vaultSecretChildEnv(nil, map[string]string{"café": "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := environmentMapFS(env)
+	if values["CAF__"] != "x" || len(values) != 1 {
+		t.Fatalf("non-ASCII field normalized to %#v, want CAF__", values)
+	}
+
+	// The companion exports "é" as "__" and "_" as "_", so these do not collide.
+	env, err = vaultSecretChildEnv(nil, map[string]string{"é": "a", "_": "b"})
+	if err != nil {
+		t.Fatalf("distinct non-ASCII names rejected: %v", err)
+	}
+	values = environmentMapFS(env)
+	if values["__"] != "a" || values["_"] != "b" {
+		t.Fatalf("non-ASCII collision handling diverged: %#v", values)
 	}
 }
 
@@ -132,8 +181,10 @@ func TestRunVaultSecretCommandDoesNotLeakTokens(t *testing.T) {
 	if !strings.Contains(output, "RUN_WITH_SECRET_SAFE_VAR=kept") {
 		t.Fatalf("child lost the safe environment:\n%s", output)
 	}
-	if strings.Contains(output, "db_url=ambient") {
-		t.Fatalf("case-variant ambient key shadowed the injected value:\n%s", output)
+	// Unix keeps case-distinct names, so the ambient db_url survives while the
+	// injected DB_URL is added; only Windows folds them together.
+	if !strings.Contains(output, "db_url=ambient") {
+		t.Fatalf("case-distinct ambient key was dropped on Unix:\n%s", output)
 	}
 	for _, leak := range []string{"fs-bearer", "vault-token", "org-private", "drive9-bearer", "provider-secret"} {
 		if strings.Contains(output, leak) {

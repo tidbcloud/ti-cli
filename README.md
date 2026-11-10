@@ -203,6 +203,8 @@ Use `ti update` or reinstall ti if the local capability check reports an incompa
 
 Mount readiness means the mounted path is readable: `ti fs mount-file-system` and `ti fs-vault mount-vault` keep polling the mount path until directory listing succeeds, bounded by `--ready-timeout` (default `30s`). If the mount path never becomes readable in time, the command fails with `fs.mount_ready_timeout`, the background mount is left running, and the mount locator is preserved so the matching unmount command can stop it.
 
+`ti fs-vault run-with-secret` reads the named secret through the companion and runs the command from ti itself. The child receives only the secret fields plus an environment with ti credentials removed: the filesystem bearer token, the vault token, the organization API key pair, and the filesystem AI provider key are never inherited. Field names are exported with the same environment-key conversion as `ti fs-vault read-secret --format env` (ASCII letters upper-cased, a leading digit prefixed with `_`, every other byte replaced with `_`), so accented characters produce one underscore per UTF-8 byte; two fields that convert to the same key fail with a usage error instead of overwriting each other. On Windows, an inherited variable that differs from an injected field only by letter case is replaced, because the platform resolves environment names case-insensitively.
+
 Filesystem layers can fork copy-on-write child timelines without copying a workspace. Layer and checkpoint mounts require FUSE; checkpoint mounts are always read-only. Drive9 does not support combining recursive copy with a layer, so seed a directory tree through a writable layer mount, drain it, and then create the checkpoint:
 
 ```shell
