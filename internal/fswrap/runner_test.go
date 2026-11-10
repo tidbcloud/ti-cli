@@ -1,6 +1,7 @@
 package fswrap
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -127,10 +128,14 @@ func TestLocateCompanionRejectsUntrustedCandidates(t *testing.T) {
 		t.Fatalf("relative TI_DRIVE9_BIN error = %v", err)
 	}
 
-	writable := writeCompanionFixture(t, t.TempDir(), "ti-drive9", 0o777)
-	t.Setenv(envCompanionBin, writable)
-	if _, err := runner.locateCompanion(); apperr.CodeFor(err) != "fs.companion_untrusted" {
-		t.Fatalf("world-writable companion error = %v", err)
+	// POSIX mode bits are not enforced on Windows (see owner_other.go), so the
+	// mode-based rejections below only run where they carry meaning.
+	if runtime.GOOS != "windows" {
+		writable := writeCompanionFixture(t, t.TempDir(), "ti-drive9", 0o777)
+		t.Setenv(envCompanionBin, writable)
+		if _, err := runner.locateCompanion(); apperr.CodeFor(err) != "fs.companion_untrusted" {
+			t.Fatalf("world-writable companion error = %v", err)
+		}
 	}
 
 	nonExecutable := writeCompanionFixture(t, t.TempDir(), "ti-drive9", 0o644)
@@ -139,6 +144,15 @@ func TestLocateCompanionRejectsUntrustedCandidates(t *testing.T) {
 		if _, err := runner.locateCompanion(); apperr.CodeFor(err) != "fs.companion_untrusted" {
 			t.Fatalf("non-executable companion error = %v", err)
 		}
+	}
+}
+
+// TestValidateCompanionBinaryRequiresAbsolutePath covers the shared guard
+// directly: implicit candidates are always absolute, so only a direct caller can
+// reach this branch.
+func TestValidateCompanionBinaryRequiresAbsolutePath(t *testing.T) {
+	if err := validateCompanionBinary("ti-drive9"); !errors.Is(err, errCompanionPathNotAbsolute) {
+		t.Fatalf("relative path error = %v, want errCompanionPathNotAbsolute", err)
 	}
 }
 

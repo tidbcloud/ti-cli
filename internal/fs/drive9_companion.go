@@ -1229,6 +1229,9 @@ func (s Service) drive9RunWithVaultSecret(ctx context.Context, opts VaultRunWith
 	if err != nil {
 		return err
 	}
+	// Drive9 returns field maps for the json format without a field selector.
+	// The assertion guards any future caller that reads a single field or raw
+	// value instead of silently injecting an empty environment.
 	result, ok := read.(VaultReadSecretResult)
 	if !ok || len(result.Fields) == 0 {
 		return apperr.New("vault.empty_secret", "runtime", 1, fmt.Sprintf("vault secret %q has no fields to inject", name))
