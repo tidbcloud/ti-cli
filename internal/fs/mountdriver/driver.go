@@ -1,25 +1,25 @@
 package mountdriver
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 )
 
+// Driver describes the mount driver named by --driver. Mounting itself belongs
+// to the ti-drive9 companion, so a driver only names itself and reports whether
+// the host could support it; ti never starts a local mount helper itself.
 type Driver interface {
 	Name() string
 	CheckPrerequisites() error
-	Mount(ctx context.Context, serverURL, mountPath string) error
-	Unmount(ctx context.Context, mountPath string) error
 }
 
 func Resolve(name string) (Driver, error) {
-	return ResolveWithDeps(name, runtime.GOOS, exec.LookPath, os.Stat, exec.CommandContext)
+	return resolve(name, runtime.GOOS, exec.LookPath, os.Stat)
 }
 
-func ResolveWithDeps(name, goos string, lookPath func(string) (string, error), stat func(string) (os.FileInfo, error), commandContext func(context.Context, string, ...string) *exec.Cmd) (Driver, error) {
+func resolve(name, goos string, lookPath func(string) (string, error), stat func(string) (os.FileInfo, error)) (Driver, error) {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
@@ -29,11 +29,8 @@ func ResolveWithDeps(name, goos string, lookPath func(string) (string, error), s
 	if stat == nil {
 		stat = os.Stat
 	}
-	if commandContext == nil {
-		commandContext = exec.CommandContext
-	}
 	fuse := FUSE{GOOS: goos, LookPath: lookPath, Stat: stat}
-	webdav := WebDAV{GOOS: goos, LookPath: lookPath, CommandContext: commandContext}
+	webdav := WebDAV{GOOS: goos, LookPath: lookPath}
 	switch name {
 	case "", "auto":
 		if err := fuse.CheckPrerequisites(); err == nil {
@@ -99,14 +96,6 @@ func (d FUSE) CheckPrerequisites() error {
 	}
 }
 
-func (d FUSE) Mount(ctx context.Context, serverURL, mountPath string) error {
-	return fmt.Errorf("ti fs FUSE mounts are handled by the in-process FUSE runtime")
-}
-
-func (d FUSE) Unmount(ctx context.Context, mountPath string) error {
-	return fmt.Errorf("ti fs FUSE unmount is handled by the running FUSE server")
-}
-
 func (d FUSE) goos() string {
 	if d.GOOS != "" {
 		return d.GOOS
@@ -129,9 +118,8 @@ func (d FUSE) stat() func(string) (os.FileInfo, error) {
 }
 
 type WebDAV struct {
-	GOOS           string
-	LookPath       func(string) (string, error)
-	CommandContext func(context.Context, string, ...string) *exec.Cmd
+	GOOS     string
+	LookPath func(string) (string, error)
 }
 
 func (d WebDAV) Name() string {
@@ -159,34 +147,6 @@ func (d WebDAV) CheckPrerequisites() error {
 	}
 }
 
-func (d WebDAV) Mount(ctx context.Context, serverURL, mountPath string) error {
-	if err := d.CheckPrerequisites(); err != nil {
-		return err
-	}
-	cmd := d.command(ctx, "mount_webdav", serverURL, mountPath)
-	if output, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("mount_webdav failed for %q: %w: %s", mountPath, err, string(output))
-	}
-	return nil
-}
-
-func (d WebDAV) Unmount(ctx context.Context, mountPath string) error {
-	goos := d.goos()
-	switch goos {
-	case "darwin":
-		if _, err := d.lookPath()("umount"); err != nil {
-			return fmt.Errorf("missing umount: ti fs cannot detach WebDAV mounts on this system")
-		}
-		cmd := d.command(ctx, "umount", mountPath)
-		if output, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("umount failed for %q: %w: %s", mountPath, err, string(output))
-		}
-		return nil
-	default:
-		return d.CheckPrerequisites()
-	}
-}
-
 func (d WebDAV) goos() string {
 	if d.GOOS != "" {
 		return d.GOOS
@@ -199,11 +159,4 @@ func (d WebDAV) lookPath() func(string) (string, error) {
 		return d.LookPath
 	}
 	return exec.LookPath
-}
-
-func (d WebDAV) command(ctx context.Context, name string, args ...string) *exec.Cmd {
-	if d.CommandContext != nil {
-		return d.CommandContext(ctx, name, args...)
-	}
-	return exec.CommandContext(ctx, name, args...)
 }

@@ -3,17 +3,12 @@ package fs
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -26,7 +21,6 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/fs/mountcontrol"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountdriver"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
-	"golang.org/x/net/webdav"
 )
 
 const (
@@ -508,8 +502,6 @@ func (s Service) mountForeground(ctx context.Context, inputs mountInputs, remote
 	switch inputs.driver.Name() {
 	case "fuse":
 		return s.mountFUSEForeground(ctx, inputs, remote, checks)
-	case "webdav":
-		return s.mountWebDAVForeground(ctx, inputs, remote, checks)
 	default:
 		return MountResult{}, apperr.New("fs.invalid_mount_driver", "usage", 2, fmt.Sprintf("unsupported ti fs mount driver %q", inputs.driver.Name()))
 	}
@@ -553,84 +545,6 @@ func (s Service) autoUnpackMount(ctx context.Context, inputs mountInputs) (strin
 		return "", err
 	}
 	return fmt.Sprintf("restored %d entries from %s", len(manifest.Entries), archivePath), nil
-}
-
-func (s Service) mountWebDAVForeground(ctx context.Context, inputs mountInputs, remote apifs.StatusResponse, checks []MountRuntimeCheck) (MountResult, error) {
-	prefix, err := randomWebDAVPrefix()
-	if err != nil {
-		return MountResult{}, apperr.Wrap("fs.mount_nonce", "runtime", 1, "create local WebDAV mount prefix", err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return MountResult{}, apperr.Wrap("fs.mount_listen", "runtime", 1, "start local ti fs WebDAV bridge", err)
-	}
-	defer listener.Close()
-
-	handler := &webdav.Handler{
-		Prefix:     prefix,
-		FileSystem: newRemoteWebDAVFS(inputs.client, inputs.remotePath, inputs.readOnly),
-		LockSystem: webdav.NewMemLS(),
-	}
-	server := &http.Server{Handler: handler}
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- server.Serve(listener)
-	}()
-
-	addr := listener.Addr().(*net.TCPAddr)
-	serverURL := fmt.Sprintf("http://127.0.0.1:%d%s/", addr.Port, prefix)
-	if err := os.MkdirAll(inputs.mountPath, 0o755); err != nil {
-		_ = server.Close()
-		return MountResult{}, apperr.Wrap("fs.create_mount_path", "runtime", 1, fmt.Sprintf("create mount path %q", inputs.mountPath), err)
-	}
-	mountCtx, cancelMount := context.WithTimeout(ctx, inputs.timeout)
-	if err := inputs.driver.Mount(mountCtx, serverURL, inputs.mountPath); err != nil {
-		cancelMount()
-		_ = server.Close()
-		return MountResult{}, apperr.Wrap("fs.mount_driver", "runtime", 1, err.Error(), err)
-	}
-	cancelMount()
-
-	state, err := mountstate.New(inputs.profile.Name, inputs.fileSystemName, inputs.mountPath, inputs.remotePath, inputs.driver.Name(), inputs.endpoint.BaseURL, os.Getpid(), inputs.readOnly, time.Now().UTC())
-	if err != nil {
-		_ = inputs.driver.Unmount(context.Background(), inputs.mountPath)
-		_ = server.Close()
-		return MountResult{}, apperr.Wrap("fs.mount_state", "runtime", 1, fmt.Sprintf("create mount state for %q", inputs.mountPath), err)
-	}
-	state.MountProfile = inputs.mountProfile
-	state.LocalRoot = inputs.localRoot
-	state.PackPaths = append([]string(nil), inputs.packPaths...)
-	stateFile, err := mountstate.Write(inputs.homeDir, state)
-	if err != nil {
-		_ = inputs.driver.Unmount(context.Background(), inputs.mountPath)
-		_ = server.Close()
-		return MountResult{}, apperr.Wrap("fs.write_mount_state", "runtime", 1, fmt.Sprintf("write mount state for %q", inputs.mountPath), err)
-	}
-	defer func() {
-		_ = mountstate.Remove(inputs.homeDir, inputs.mountPath)
-	}()
-
-	signalCh := make(chan os.Signal, 2)
-	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(signalCh)
-	go func() {
-		select {
-		case <-ctx.Done():
-		case <-signalCh:
-		}
-		_ = inputs.driver.Unmount(context.Background(), inputs.mountPath)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-
-	err = <-serverErr
-	if err != nil && err != http.ErrServerClosed {
-		_ = inputs.driver.Unmount(context.Background(), inputs.mountPath)
-		return MountResult{}, apperr.Wrap("fs.mount_server", "runtime", 1, "ti fs WebDAV bridge stopped unexpectedly", err)
-	}
-	checks = append(checks, MountRuntimeCheck{Name: "mount_state", Status: "passed", Message: stateFile})
-	return mountResult("unmounted", inputs, remote, checks, os.Getpid(), stateFile, ""), nil
 }
 
 func mountResult(status string, inputs mountInputs, remote apifs.StatusResponse, checks []MountRuntimeCheck, pid int, stateFile, logFile string) MountResult {
@@ -759,14 +673,6 @@ func mountCacheBytes(value, fallback int64, flagName string) (int64, error) {
 		return fallback, nil
 	}
 	return value << 20, nil
-}
-
-func randomWebDAVPrefix() (string, error) {
-	var buf [16]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", err
-	}
-	return "/ti-" + hex.EncodeToString(buf[:]), nil
 }
 
 func statusMessage(value string) string {

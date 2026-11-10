@@ -2,9 +2,11 @@ package fs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -658,4 +660,61 @@ func (r VaultAuditResult) Human() string {
 	}
 	_ = writer.Flush()
 	return strings.TrimRight(out.String(), "\n")
+}
+
+// runVaultSecretCommand runs the user command with the vault fields injected into
+// an environment scrubbed of ti's credentials. It is the only place a
+// run-with-secret child is spawned, and it never receives the filesystem bearer
+// token or the vault token.
+func runVaultSecretCommand(ctx context.Context, opts VaultRunWithSecretOptions, fields map[string]string) error {
+	env, err := vaultSecretChildEnv(os.Environ(), fields)
+	if err != nil {
+		return err
+	}
+	command := append([]string(nil), opts.Command...)
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Env = env
+	cmd.Stdin = opts.Stdin
+	cmd.Stdout = opts.Stdout
+	cmd.Stderr = opts.Stderr
+	if err := cmd.Run(); err != nil {
+		exitCode := 1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
+			exitCode = exitErr.ExitCode()
+		}
+		return apperr.Wrap("vault.command_failed", "runtime", exitCode, fmt.Sprintf("vault command %q failed", command[0]), err)
+	}
+	return nil
+}
+
+// vaultSecretChildEnv builds the child environment: ti's credential variables are
+// removed, then the validated vault fields are added. Secret fields win over any
+// inherited variable with the same name.
+func vaultSecretChildEnv(base []string, fields map[string]string) ([]string, error) {
+	secretEnv, err := validateVaultEnvFields(fields)
+	if err != nil {
+		return nil, err
+	}
+	merged := make(map[string]string, len(base)+len(secretEnv))
+	for _, entry := range scrubTICredEnv(base) {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		merged[key] = value
+	}
+	for key, value := range secretEnv {
+		merged[key] = value
+	}
+	keys := make([]string, 0, len(merged))
+	for key := range merged {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		env = append(env, key+"="+merged[key])
+	}
+	return env, nil
 }

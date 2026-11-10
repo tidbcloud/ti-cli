@@ -1203,17 +1203,37 @@ func (s Service) drive9ListVaultAuditEvents(ctx context.Context, opts VaultAudit
 	return out, nil
 }
 
+// drive9RunWithVaultSecret reads the requested secret through the companion and
+// then runs the user command from ti itself.
+//
+// Security (secret protection): the companion needs the filesystem API key to
+// read the secret, so handing it the child command as well would let the child
+// inherit that bearer token (and the vault token) if the companion forwards its
+// environment. Reading the secret here and spawning the child from ti keeps the
+// credentials out of the untrusted process: the child only receives scrubbed
+// environment plus the secret fields.
 func (s Service) drive9RunWithVaultSecret(ctx context.Context, opts VaultRunWithSecretOptions) error {
 	if len(opts.Command) == 0 {
 		return apperr.New("vault.missing_command", "usage", 2, "run-with-secret requires `--` followed by a command")
 	}
-	args := append([]string{"vault", "with", opts.SecretPath, "--"}, opts.Command...)
-	runner := s.drive9Runner()
-	runner.Stdin = opts.Stdin
-	runner.Stdout = opts.Stdout
-	runner.Stderr = opts.Stderr
-	_, err := runner.Run(ctx, fswrap.RunOptions{Profile: opts.Profile, Args: args, IncludeFSAPIKey: true, VaultToken: opts.VaultToken})
-	return err
+	name, err := parseVaultPath(strings.TrimSpace(opts.SecretPath))
+	if err != nil {
+		return err
+	}
+	read, err := s.drive9ReadVaultSecret(ctx, VaultReadSecretOptions{
+		Profile:    opts.Profile,
+		SecretName: name,
+		Format:     "json",
+		VaultToken: opts.VaultToken,
+	})
+	if err != nil {
+		return err
+	}
+	result, ok := read.(VaultReadSecretResult)
+	if !ok || len(result.Fields) == 0 {
+		return apperr.New("vault.empty_secret", "runtime", 1, fmt.Sprintf("vault secret %q has no fields to inject", name))
+	}
+	return runVaultSecretCommand(ctx, opts, result.Fields)
 }
 
 func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (MountResult, error) {

@@ -82,8 +82,6 @@ func TestReleaseBuildIgnoresHiddenTestControls(t *testing.T) {
 		"TI_TEST_TELEMETRY_ENDPOINT=" + telemetry.URL + "/v1/telemetry/batch",
 		"TI_RELEASE_API_BASE_URL=" + release.URL,
 		"TI_DRIVE9_BIN=" + override,
-		// The standalone drive9 fallback is covered by the fswrap unit tests.
-		"TI_ALLOW_STANDALONE_DRIVE9=1",
 		"TI_TEST_FAKE_MOUNT_READY=1",
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 	}
