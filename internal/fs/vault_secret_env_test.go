@@ -26,6 +26,9 @@ func TestVaultSecretChildEnvScrubsCredentials(t *testing.T) {
 		"TDC_PRIVATE_KEY=legacy-private",
 		"DRIVE9_API_KEY=drive9-bearer",
 		"DRIVE9_VAULT_TOKEN=drive9-vault",
+		// Windows-compatible spellings must be scrubbed too.
+		"ti_fs_token=fs-bearer-lower",
+		"Tidb_Cloud_Private_Key=org-private-mixed",
 	}
 	env, err := vaultSecretChildEnv(base, map[string]string{
 		"DB_URL":   "mysql://user:pass@host/db",
@@ -39,6 +42,7 @@ func TestVaultSecretChildEnvScrubsCredentials(t *testing.T) {
 		"TI_FS_TOKEN", "TI_FS_API_KEY", "TI_FS_AI_PROVIDER_API_KEY", "TI_VAULT_TOKEN",
 		"TIDB_CLOUD_PUBLIC_KEY", "TIDB_CLOUD_PRIVATE_KEY", "TDC_PRIVATE_KEY",
 		"DRIVE9_API_KEY", "DRIVE9_VAULT_TOKEN",
+		"ti_fs_token", "Tidb_Cloud_Private_Key",
 	} {
 		if _, ok := values[key]; ok {
 			t.Fatalf("child environment kept credential %s", key)

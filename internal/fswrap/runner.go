@@ -255,7 +255,9 @@ func (r Runner) drive9Env(homeDir string, opts RunOptions) ([]string, error) {
 			env = append(env, entry)
 			continue
 		}
-		switch key {
+		// Windows resolves these names case-insensitively too; the scoped
+		// HOME/USERPROFILE values are appended below.
+		switch strings.ToUpper(key) {
 		case "HOME", "USERPROFILE":
 			continue
 		}

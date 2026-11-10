@@ -22,7 +22,13 @@ var credentialPrefixes = []string{
 }
 
 // IsCredential reports whether key names a ti credential environment variable.
+//
+// The match is case-insensitive because Windows environment variable names are:
+// os.Environ() preserves the spelling a user set ("ti_fs_token"), while
+// os.LookupEnv still resolves it to the credential value. Matching only the
+// canonical spelling would hand that value to the child process.
 func IsCredential(key string) bool {
+	key = strings.ToUpper(key)
 	for _, prefix := range credentialPrefixes {
 		if strings.HasPrefix(key, prefix) {
 			return true
