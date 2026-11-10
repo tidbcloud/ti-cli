@@ -1273,7 +1273,10 @@ func TestDrive9RunWithVaultSecretServiceFlow(t *testing.T) {
 	if strings.Contains(out, "fs-bearer") {
 		t.Fatalf("child environment leaked the filesystem token:\n%s", out)
 	}
-	requireFakeDrive9Call(t, recordPath, "vault", "get")
+	call := requireFakeDrive9Call(t, recordPath, "vault", "get")
+	if got, want := strings.Join(call.Args, " "), "vault get demo --json"; got != want {
+		t.Fatalf("companion args = %q, want %q", got, want)
+	}
 
 	// "é" (two bytes) and "_" (one byte) stay distinct, matching the companion.
 	if _, _, err := run(`{"é":"a","_":"b"}`, "/bin/sh", "-c", "env"); err != nil {

@@ -449,10 +449,11 @@ func readVaultFieldsDirectory(dir string) (map[string]string, error) {
 
 // normalizeVaultEnvKey converts a stored field name into an environment key
 // exactly like the companion's env export does: it walks UTF-8 bytes, upper-cases
-// ASCII letters, prefixes a leading digit with '_', and replaces every other byte
-// with '_'. Walking bytes rather than runes matters for non-ASCII names ("café"
-// exports as CAF__ because the accented letter is two bytes), so read-secret and
-// run-with-secret agree on both the key and on whether two names collide.
+// ASCII letters, keeps digits (prefixing a leading one with '_'), keeps '_', and
+// replaces every other byte with '_'. Walking bytes rather than runes matters for
+// non-ASCII names ("café" exports as CAF__ because the accented letter is two
+// bytes), so read-secret and run-with-secret agree on both the key and on whether
+// two names collide.
 func normalizeVaultEnvKey(field string) (string, error) {
 	if field == "" {
 		return "", apperr.New("vault.invalid_field", "usage", 2, "field name is required")
@@ -474,26 +475,38 @@ func normalizeVaultEnvKey(field string) (string, error) {
 			b.WriteByte('_')
 		}
 	}
-	key := b.String()
-	if key == "" {
-		return "", apperr.New("vault.invalid_field", "usage", 2, "field name cannot normalize to an empty env key")
-	}
-	return key, nil
+	return b.String(), nil
 }
 
-func renderVaultEnv(fields map[string]string) (string, error) {
+// normalizedVaultFieldMap converts field names to environment keys and rejects
+// names that collide, so the export path and the injection path cannot diverge.
+// Colliding names are reported in sorted order to keep the message stable across
+// map iteration.
+func normalizedVaultFieldMap(fields map[string]string) (map[string]string, error) {
 	env := make(map[string]string, len(fields))
 	owners := make(map[string]string, len(fields))
 	for field, value := range fields {
 		key, err := normalizeVaultEnvKey(field)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if previous, exists := owners[key]; exists {
-			return "", apperr.New("vault.env_collision", "usage", 2, fmt.Sprintf("secret fields %q and %q both normalize to %q", previous, field, key))
+			first, second := previous, field
+			if first > second {
+				first, second = second, first
+			}
+			return nil, apperr.New("vault.env_collision", "usage", 2, fmt.Sprintf("secret fields %q and %q both normalize to %q", first, second, key))
 		}
 		owners[key] = field
 		env[key] = value
+	}
+	return env, nil
+}
+
+func renderVaultEnv(fields map[string]string) (string, error) {
+	env, err := normalizedVaultFieldMap(fields)
+	if err != nil {
+		return "", err
 	}
 	keys := make([]string, 0, len(env))
 	for key := range env {
@@ -515,21 +528,14 @@ func renderVaultEnv(fields map[string]string) (string, error) {
 // accepts is also injectable here. Field names that normalize to the same key are
 // rejected instead of silently overwriting each other.
 func validateVaultEnvFields(fields map[string]string) (map[string]string, error) {
-	env := make(map[string]string, len(fields))
-	owners := make(map[string]string, len(fields))
-	for field, value := range fields {
-		key, err := normalizeVaultEnvKey(field)
-		if err != nil {
-			return nil, err
-		}
-		if previous, exists := owners[key]; exists {
-			return nil, apperr.New("vault.env_collision", "usage", 2, fmt.Sprintf("secret fields %q and %q both normalize to %q", previous, field, key))
-		}
+	env, err := normalizedVaultFieldMap(fields)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range env {
 		if idx := indexOfForbiddenVaultEnvByte(value); idx >= 0 {
-			return nil, apperr.New("vault.invalid_env_value", "usage", 2, fmt.Sprintf("secret value for key %q contains forbidden control byte 0x%02x at offset %d", field, value[idx], idx))
+			return nil, apperr.New("vault.invalid_env_value", "usage", 2, fmt.Sprintf("secret value for key %q contains forbidden control byte 0x%02x at offset %d", key, value[idx], idx))
 		}
-		owners[key] = field
-		env[key] = value
 	}
 	return env, nil
 }

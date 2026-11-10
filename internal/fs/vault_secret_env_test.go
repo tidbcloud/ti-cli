@@ -82,6 +82,29 @@ func TestVaultSecretChildEnvNormalizesFieldKeys(t *testing.T) {
 	}
 }
 
+// TestVaultSecretChildEnvCollisionMessageIsStable pins the deterministic error
+// text: the colliding pair is reported in sorted order instead of map order.
+func TestVaultSecretChildEnvCollisionMessageIsStable(t *testing.T) {
+	message := ""
+	for i := 0; i < 50; i++ {
+		_, err := vaultSecretChildEnv(nil, map[string]string{"db_url": "a", "DB_URL": "b"})
+		if apperr.CodeFor(err) != "vault.env_collision" {
+			t.Fatalf("collision error = %v", err)
+		}
+		got := apperr.MessageFor(err)
+		if message == "" {
+			message = got
+			continue
+		}
+		if got != message {
+			t.Fatalf("collision message changed across runs: %q vs %q", message, got)
+		}
+	}
+	if !strings.Contains(message, `"DB_URL" and "db_url"`) {
+		t.Fatalf("collision message is not sorted: %q", message)
+	}
+}
+
 // TestVaultSecretChildEnvDropsCaseVariantInheritedKey covers the Windows
 // shadowing case: env names fold case-insensitively there, so an ambient db_url
 // must not survive next to the injected DB_URL.
