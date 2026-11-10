@@ -15,6 +15,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/credentialenv"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 	"github.com/tidbcloud/ti-cli/internal/interrupt"
 	"github.com/tidbcloud/ti-cli/internal/version"
@@ -254,13 +255,11 @@ func (r Runner) drive9Env(homeDir string, opts RunOptions) ([]string, error) {
 			env = append(env, entry)
 			continue
 		}
-		if strings.HasPrefix(key, "DRIVE9_") {
+		switch key {
+		case "HOME", "USERPROFILE":
 			continue
 		}
-		switch key {
-		case "HOME", "USERPROFILE",
-			"TIDB_CLOUD_PUBLIC_KEY", "TIDB_CLOUD_PRIVATE_KEY", "TI_FS_TOKEN", "TI_VAULT_TOKEN", "TI_FS_API_KEY",
-			"TDC_PUBLIC_KEY", "TDC_PRIVATE_KEY", "TDC_FS_TOKEN", "TDC_VAULT_TOKEN":
+		if credentialenv.IsCredential(key) {
 			continue
 		}
 		env = append(env, entry)
@@ -328,16 +327,8 @@ func (r Runner) locateCompanion() (string, error) {
 	reject := func(candidate string, err error) {
 		attempts = append(attempts, fmt.Sprintf("%s: %v", candidate, err))
 	}
-	if exe, err := os.Executable(); err == nil && exe != "" {
-		candidate := filepath.Join(filepath.Dir(exe), companionBinaryName(defaultCompanionName))
-		if err := validateCompanionBinary(candidate); err == nil {
-			return candidate, nil
-		} else if !errors.Is(err, os.ErrNotExist) {
-			reject(candidate, err)
-		}
-	}
-	// The installer-managed companion directory is ti-owned, so it is the last
-	// implicit candidate. $PATH is deliberately not consulted: a directory on
+	// ti's own directory and the installer-managed ~/.ti/bin are the only
+	// implicit candidates. $PATH is deliberately not consulted: a directory on
 	// PATH is outside ti's control, and this process receives the TiDB Cloud
 	// private key, the FS API key and vault tokens.
 	for _, dir := range r.trustedCompanionDirs() {
@@ -362,13 +353,10 @@ func resolveExplicitCompanion(candidate string) (string, error) {
 	if !filepath.IsAbs(candidate) {
 		return "", apperr.New("fs.companion_untrusted", "runtime", 1, fmt.Sprintf("ti fs companion path %q must be absolute", candidate))
 	}
-	if _, err := os.Stat(candidate); err != nil {
+	if err := validateCompanionBinary(candidate); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", apperr.New("fs.companion_missing", "runtime", 1, fmt.Sprintf("ti requires the Drive9 companion binary: configured path %q does not exist; update or reinstall ti", candidate))
 		}
-		return "", apperr.Wrap("fs.companion_stat", "runtime", 1, fmt.Sprintf("stat ti fs companion %q", candidate), err)
-	}
-	if err := validateCompanionBinary(candidate); err != nil {
 		return "", apperr.New("fs.companion_untrusted", "runtime", 1, fmt.Sprintf("refusing to run the Drive9 companion %q: %v", candidate, err))
 	}
 	return candidate, nil
@@ -413,20 +401,8 @@ func validateCompanionBinary(path string) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("not a regular file")
 	}
-	perm := info.Mode().Perm()
-	if perm&0o002 != 0 {
-		return fmt.Errorf("world writable (mode %#o)", perm)
-	}
-	if perm&0o020 != 0 {
-		if gid, ok := fileGroupID(info); ok && !currentProcessGroup(gid) {
-			return fmt.Errorf("writable by an unrelated group (mode %#o)", perm)
-		}
-	}
-	if runtime.GOOS != "windows" && perm&0o100 == 0 {
-		return fmt.Errorf("not executable (mode %#o)", perm)
-	}
-	if uid, ok := fileOwnerUID(info); ok && uid != uint32(os.Getuid()) && uid != 0 {
-		return fmt.Errorf("owned by uid %d, want the current user or root", uid)
+	if err := validateCompanionFileMode(info); err != nil {
+		return err
 	}
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
@@ -454,16 +430,7 @@ func validateCompanionDir(dir string) error {
 	if !info.IsDir() {
 		return fmt.Errorf("parent %s is not a directory", dir)
 	}
-	perm := info.Mode().Perm()
-	if perm&0o002 != 0 && info.Mode()&os.ModeSticky == 0 {
-		return fmt.Errorf("parent directory %s is world writable", dir)
-	}
-	if perm&0o020 != 0 {
-		if gid, ok := fileGroupID(info); ok && !currentProcessGroup(gid) {
-			return fmt.Errorf("parent directory %s is writable by an unrelated group", dir)
-		}
-	}
-	return nil
+	return validateCompanionDirMode(info, dir)
 }
 
 func (r Runner) homeDir(opts RunOptions) (string, error) {

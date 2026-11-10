@@ -19,6 +19,7 @@ func TestVaultSecretChildEnvScrubsCredentials(t *testing.T) {
 		"SAFE_VAR=kept",
 		"TI_FS_TOKEN=fs-bearer",
 		"TI_FS_API_KEY=fs-api-key",
+		"TI_FS_AI_PROVIDER_API_KEY=provider-secret",
 		"TI_VAULT_TOKEN=vault-token",
 		"TIDB_CLOUD_PUBLIC_KEY=org-public",
 		"TIDB_CLOUD_PRIVATE_KEY=org-private",
@@ -35,8 +36,9 @@ func TestVaultSecretChildEnvScrubsCredentials(t *testing.T) {
 	}
 	values := environmentMapFS(env)
 	for _, key := range []string{
-		"TI_FS_TOKEN", "TI_FS_API_KEY", "TI_VAULT_TOKEN", "TIDB_CLOUD_PUBLIC_KEY",
-		"TIDB_CLOUD_PRIVATE_KEY", "TDC_PRIVATE_KEY", "DRIVE9_API_KEY", "DRIVE9_VAULT_TOKEN",
+		"TI_FS_TOKEN", "TI_FS_API_KEY", "TI_FS_AI_PROVIDER_API_KEY", "TI_VAULT_TOKEN",
+		"TIDB_CLOUD_PUBLIC_KEY", "TIDB_CLOUD_PRIVATE_KEY", "TDC_PRIVATE_KEY",
+		"DRIVE9_API_KEY", "DRIVE9_VAULT_TOKEN",
 	} {
 		if _, ok := values[key]; ok {
 			t.Fatalf("child environment kept credential %s", key)
@@ -48,7 +50,7 @@ func TestVaultSecretChildEnvScrubsCredentials(t *testing.T) {
 	if values["DB_URL"] != "mysql://user:pass@host/db" || values["PASSWORD"] != "s3cr3t" {
 		t.Fatalf("secret fields not injected: %#v", values)
 	}
-	for _, key := range []string{"TI_FS_TOKEN=", "TI_VAULT_TOKEN=", "TIDB_CLOUD_PRIVATE_KEY="} {
+	for _, key := range []string{"TI_FS_TOKEN=", "TI_VAULT_TOKEN=", "TIDB_CLOUD_PRIVATE_KEY=", "TI_FS_AI_PROVIDER_API_KEY="} {
 		if strings.Contains(strings.Join(env, "\n"), key) {
 			t.Fatalf("child environment still contains %s", key)
 		}
@@ -71,6 +73,7 @@ func TestRunVaultSecretCommandDoesNotLeakTokens(t *testing.T) {
 	t.Setenv("TI_VAULT_TOKEN", "vault-token")
 	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "org-private")
 	t.Setenv("DRIVE9_API_KEY", "drive9-bearer")
+	t.Setenv("TI_FS_AI_PROVIDER_API_KEY", "provider-secret")
 	t.Setenv("RUN_WITH_SECRET_SAFE_VAR", "kept")
 	var out bytes.Buffer
 	err := runVaultSecretCommand(context.Background(), VaultRunWithSecretOptions{
@@ -87,7 +90,7 @@ func TestRunVaultSecretCommandDoesNotLeakTokens(t *testing.T) {
 	if !strings.Contains(output, "RUN_WITH_SECRET_SAFE_VAR=kept") {
 		t.Fatalf("child lost the safe environment:\n%s", output)
 	}
-	for _, leak := range []string{"fs-bearer", "vault-token", "org-private", "drive9-bearer"} {
+	for _, leak := range []string{"fs-bearer", "vault-token", "org-private", "drive9-bearer", "provider-secret"} {
 		if strings.Contains(output, leak) {
 			t.Fatalf("child environment leaked %q:\n%s", leak, output)
 		}

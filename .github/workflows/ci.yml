@@ -53,5 +53,11 @@ jobs:
       - name: Build
         run: make build
 
+      - name: Cross-compile other platforms
+        run: |
+          set -euo pipefail
+          GOOS=windows GOARCH=amd64 go build ./...
+          GOOS=darwin GOARCH=arm64 go build ./...
+
       - name: Build telemetry backend
         run: make build-telemetry-backend build-telemetry-migrator

@@ -18,6 +18,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/authz"
 	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/credentialenv"
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountdriver"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
@@ -544,25 +545,6 @@ func indexOfForbiddenVaultEnvByte(value string) int {
 	return -1
 }
 
-func scrubTICredEnv(base []string) []string {
-	out := make([]string, 0, len(base))
-	for _, entry := range base {
-		key, _, ok := strings.Cut(entry, "=")
-		if !ok {
-			out = append(out, entry)
-			continue
-		}
-		switch key {
-		case "TIDB_CLOUD_PRIVATE_KEY", "TIDB_CLOUD_PUBLIC_KEY", "TI_VAULT_TOKEN", "TI_FS_TOKEN", "TI_FS_API_KEY",
-			"TDC_PRIVATE_KEY", "TDC_PUBLIC_KEY", "TDC_VAULT_TOKEN", "TDC_FS_TOKEN",
-			"DRIVE9_PRIVATE_KEY", "DRIVE9_PUBLIC_KEY", "DRIVE9_VAULT_TOKEN", "DRIVE9_API_KEY":
-			continue
-		}
-		out = append(out, entry)
-	}
-	return out
-}
-
 func mergeEnv(base []string, overrides map[string]string) []string {
 	merged := make(map[string]string, len(base)+len(overrides))
 	for _, entry := range base {
@@ -688,33 +670,14 @@ func runVaultSecretCommand(ctx context.Context, opts VaultRunWithSecretOptions, 
 	return nil
 }
 
-// vaultSecretChildEnv builds the child environment: ti's credential variables are
-// removed, then the validated vault fields are added. Secret fields win over any
-// inherited variable with the same name.
+// vaultSecretChildEnv builds the child environment: every ti credential family
+// (TIDB_CLOUD_*, TDC_*, DRIVE9_*, TI_FS_*, TI_VAULT_*) is removed by the shared
+// credentialenv denylist, then the validated vault fields are added. Secret
+// fields win over any inherited variable with the same name.
 func vaultSecretChildEnv(base []string, fields map[string]string) ([]string, error) {
 	secretEnv, err := validateVaultEnvFields(fields)
 	if err != nil {
 		return nil, err
 	}
-	merged := make(map[string]string, len(base)+len(secretEnv))
-	for _, entry := range scrubTICredEnv(base) {
-		key, value, ok := strings.Cut(entry, "=")
-		if !ok {
-			continue
-		}
-		merged[key] = value
-	}
-	for key, value := range secretEnv {
-		merged[key] = value
-	}
-	keys := make([]string, 0, len(merged))
-	for key := range merged {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	env := make([]string, 0, len(keys))
-	for _, key := range keys {
-		env = append(env, key+"="+merged[key])
-	}
-	return env, nil
+	return mergeEnv(credentialenv.Scrub(base), secretEnv), nil
 }

@@ -133,12 +133,6 @@ func TestLocateCompanionRejectsUntrustedCandidates(t *testing.T) {
 		t.Fatalf("world-writable companion error = %v", err)
 	}
 
-	groupWritable := writeCompanionFixture(t, t.TempDir(), "ti-drive9", 0o664)
-	t.Setenv(envCompanionBin, groupWritable)
-	if _, err := runner.locateCompanion(); apperr.CodeFor(err) != "fs.companion_untrusted" {
-		t.Fatalf("group-writable companion error = %v", err)
-	}
-
 	nonExecutable := writeCompanionFixture(t, t.TempDir(), "ti-drive9", 0o644)
 	t.Setenv(envCompanionBin, nonExecutable)
 	if runtime.GOOS != "windows" {
@@ -189,6 +183,50 @@ func TestLocateCompanionAcceptsOwnGroupWritableInstall(t *testing.T) {
 	}
 	if resolved != path {
 		t.Fatalf("resolved %q, want %q", resolved, path)
+	}
+}
+
+// TestLocateCompanionRejectsUnrelatedGroupWritableBinary exercises the
+// unrelated-group branch: the mode check runs before the executable check, and
+// the fixture is a valid executable so only the group rule can reject it.
+func TestLocateCompanionRejectsUnrelatedGroupWritableBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("group ownership is not enforced on Windows")
+	}
+	allowTestCompanionOverride(t)
+	previous := currentProcessGroup
+	currentProcessGroup = func(uint32) bool { return false }
+	t.Cleanup(func() { currentProcessGroup = previous })
+
+	runner := Runner{HomeDir: t.TempDir()}
+	path := writeCompanionFixture(t, t.TempDir(), "ti-drive9", 0o775)
+	t.Setenv(envCompanionBin, path)
+	if _, err := runner.locateCompanion(); apperr.CodeFor(err) != "fs.companion_untrusted" {
+		t.Fatalf("group-writable companion outside the caller's groups error = %v", err)
+	}
+}
+
+// TestLocateCompanionRejectsDirectoryOwnedByAnotherUser covers the directory
+// ownership rule: the parent must belong to the current user or root.
+func TestLocateCompanionRejectsDirectoryOwnedByAnotherUser(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("directory ownership is not enforced on Windows")
+	}
+	allowTestCompanionOverride(t)
+	previous := fileOwnerUID
+	fileOwnerUID = func(info os.FileInfo) (uint32, bool) {
+		if info.IsDir() {
+			return 65534, true
+		}
+		return uint32(os.Getuid()), true
+	}
+	t.Cleanup(func() { fileOwnerUID = previous })
+
+	runner := Runner{HomeDir: t.TempDir()}
+	path := writeCompanionFixture(t, t.TempDir(), "ti-drive9", 0o755)
+	t.Setenv(envCompanionBin, path)
+	if _, err := runner.locateCompanion(); apperr.CodeFor(err) != "fs.companion_untrusted" {
+		t.Fatalf("directory owned by another uid error = %v", err)
 	}
 }
 

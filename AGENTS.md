@@ -1120,7 +1120,10 @@ bearer token, and vault tokens, so ti refuses untrusted companions. ti never
 resolves the companion from `$PATH`; the only implicit candidates are ti's own
 directory and `~/.ti/bin`, and symlinked installs are resolved before the
 ownership and permission checks, including the directory that actually contains
-the binary.
+the binary. Those POSIX mode and ownership checks apply only on Unix: Windows
+derives permission bits from the read-only attribute and controls access with
+ACLs, so the shared platform seam skips them there instead of rejecting every
+normal install.
 
 `ti fs create-directory --mode` is a compatibility flag only in the Drive9
 companion path: validate the octal value, but do not emulate directory chmod
@@ -1144,7 +1147,12 @@ canonical resource region, `DRIVE9_API_KEY` from its per-resource credentials,
 and TiDB Cloud public/private keys only for remote inventory/create/describe/delete flows. Strip
 inherited `DRIVE9_*` values so user shell state cannot override ti selection.
 Debug and error output must redact TiDB Cloud keys, ti fs API keys, vault tokens, SQL
-credentials, file contents, and secret values.
+credentials, file contents, and secret values. One canonical credential-env
+denylist (`internal/credentialenv`) covers the `TIDB_CLOUD_*`, `TDC_*`,
+`DRIVE9_*`, `TI_FS_*`, and `TI_VAULT_*` families; both the companion environment
+builder and the `ti fs-vault run-with-secret` child environment must scrub
+through it, so non-credential `TI_*` variables such as `TI_PROFILE` and test
+controls stay inherited.
 
 `ti db format-db-connection-string` and `ti db execute-sql-statement` use
 read-write credentials by default. `--read-write`, `--read-only`, and `--admin`

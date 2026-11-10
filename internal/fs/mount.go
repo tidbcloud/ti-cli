@@ -181,10 +181,7 @@ func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, 
 	if opts.CheckpointID != "" {
 		checks = append(checks, dryrun.Check{Name: "checkpoint_view", Status: "passed", Message: opts.CheckpointID + " (read-only)"})
 	}
-	description := "normal execution starts a local ti fs FUSE runtime and mounts it at the requested path"
-	if inputs.driver.Name() == "webdav" {
-		description = "normal execution starts a local WebDAV bridge and mounts it at the requested path"
-	}
+	description := "normal execution starts the ti-drive9 companion mount and returns once the requested path is readable"
 	return dryrun.New(
 		commandPath,
 		"mount_file_system",

@@ -19,6 +19,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/credentialenv"
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
@@ -1260,7 +1261,7 @@ func supportedFSManifestResolver(baseURL string) endpoints.Resolver {
 	}
 }
 
-func TestScrubTICredEnvRemovesCanonicalLegacyAndCompanionSecrets(t *testing.T) {
+func TestCredentialEnvScrubRemovesCanonicalLegacyAndCompanionSecrets(t *testing.T) {
 	base := []string{
 		"SAFE=value",
 		"TIDB_CLOUD_PUBLIC_KEY=canonical-public",
@@ -1268,6 +1269,7 @@ func TestScrubTICredEnvRemovesCanonicalLegacyAndCompanionSecrets(t *testing.T) {
 		"TI_FS_TOKEN=canonical-fs",
 		"TI_VAULT_TOKEN=canonical-vault",
 		"TI_FS_API_KEY=internal-fs",
+		"TI_FS_AI_PROVIDER_API_KEY=provider-key",
 		"TDC_PUBLIC_KEY=legacy-public",
 		"TDC_PRIVATE_KEY=legacy-private",
 		"TDC_FS_TOKEN=legacy-fs",
@@ -1277,7 +1279,7 @@ func TestScrubTICredEnvRemovesCanonicalLegacyAndCompanionSecrets(t *testing.T) {
 		"DRIVE9_API_KEY=companion-fs",
 		"DRIVE9_VAULT_TOKEN=companion-vault",
 	}
-	got := scrubTICredEnv(base)
+	got := credentialenv.Scrub(base)
 	if len(got) != 1 || got[0] != "SAFE=value" {
 		t.Fatalf("credential environment was not scrubbed: %#v", got)
 	}
