@@ -61,9 +61,46 @@ func TestVaultSecretChildEnvScrubsCredentials(t *testing.T) {
 	}
 }
 
-func TestVaultSecretChildEnvRejectsInvalidFieldKeys(t *testing.T) {
-	if _, err := vaultSecretChildEnv(nil, map[string]string{"lower": "x"}); apperr.CodeFor(err) != "vault.invalid_env_key" {
-		t.Fatalf("invalid field key error = %v", err)
+// TestVaultSecretChildEnvNormalizesFieldKeys pins the rule shared with
+// `read-secret --format env`: stored field names are normalized into the env
+// charset instead of being rejected, and colliding normalizations fail closed.
+func TestVaultSecretChildEnvNormalizesFieldKeys(t *testing.T) {
+	env, err := vaultSecretChildEnv(nil, map[string]string{"db_url": "mysql://x", "9lives": "y"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := environmentMapFS(env)
+	if values["DB_URL"] != "mysql://x" || values["_9LIVES"] != "y" {
+		t.Fatalf("field names were not normalized: %#v", values)
+	}
+
+	if _, err := vaultSecretChildEnv(nil, map[string]string{"db_url": "a", "DB_URL": "b"}); apperr.CodeFor(err) != "vault.env_collision" {
+		t.Fatalf("collision error = %v", err)
+	}
+	if _, err := vaultSecretChildEnv(nil, map[string]string{"DB_URL": "a\x00b"}); apperr.CodeFor(err) != "vault.invalid_env_value" {
+		t.Fatalf("control byte error = %v", err)
+	}
+}
+
+// TestVaultSecretChildEnvDropsCaseVariantInheritedKey covers the Windows
+// shadowing case: env names fold case-insensitively, so an ambient db_url must
+// not survive next to the injected DB_URL.
+func TestVaultSecretChildEnvDropsCaseVariantInheritedKey(t *testing.T) {
+	env, err := vaultSecretChildEnv([]string{"PATH=/bin", "db_url=ambient", "DB_URL=ambient-upper"}, map[string]string{"DB_URL": "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := environmentMapFS(env)
+	if values["DB_URL"] != "secret" {
+		t.Fatalf("injected value lost: %#v", values)
+	}
+	for key := range values {
+		if strings.EqualFold(key, "DB_URL") && key != "DB_URL" {
+			t.Fatalf("case variant %q survived the merge: %#v", key, values)
+		}
+	}
+	if len(values) != 2 {
+		t.Fatalf("unexpected child env: %#v", values)
 	}
 }
 
@@ -78,21 +115,25 @@ func TestRunVaultSecretCommandDoesNotLeakTokens(t *testing.T) {
 	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "org-private")
 	t.Setenv("DRIVE9_API_KEY", "drive9-bearer")
 	t.Setenv("TI_FS_AI_PROVIDER_API_KEY", "provider-secret")
+	t.Setenv("db_url", "ambient")
 	t.Setenv("RUN_WITH_SECRET_SAFE_VAR", "kept")
 	var out bytes.Buffer
 	err := runVaultSecretCommand(context.Background(), VaultRunWithSecretOptions{
 		Command: []string{"/bin/sh", "-c", "env"},
 		Stdout:  &out,
-	}, map[string]string{"SECRET_TOKEN": "s3cr3t"})
+	}, map[string]string{"SECRET_TOKEN": "s3cr3t", "DB_URL": "mysql://secret"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	output := out.String()
-	if !strings.Contains(output, "SECRET_TOKEN=s3cr3t") {
+	if !strings.Contains(output, "SECRET_TOKEN=s3cr3t") || !strings.Contains(output, "DB_URL=mysql://secret") {
 		t.Fatalf("child did not receive the secret field:\n%s", output)
 	}
 	if !strings.Contains(output, "RUN_WITH_SECRET_SAFE_VAR=kept") {
 		t.Fatalf("child lost the safe environment:\n%s", output)
+	}
+	if strings.Contains(output, "db_url=ambient") {
+		t.Fatalf("case-variant ambient key shadowed the injected value:\n%s", output)
 	}
 	for _, leak := range []string{"fs-bearer", "vault-token", "org-private", "drive9-bearer", "provider-secret"} {
 		if strings.Contains(output, leak) {

@@ -110,10 +110,3 @@ func isAPINotFound(err error) bool {
 	var apiErr *api.Error
 	return errors.As(err, &apiErr) && apiErr.StatusCode == http.StatusNotFound
 }
-
-func pathErr(op, name string, err error) error {
-	if err == nil {
-		return nil
-	}
-	return &os.PathError{Op: op, Path: name, Err: err}
-}

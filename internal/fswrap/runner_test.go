@@ -23,6 +23,10 @@ func TestDrive9EnvironmentSanitizesTISecrets(t *testing.T) {
 	t.Setenv("TDC_FS_TOKEN", "legacy-fs-token")
 	t.Setenv("TDC_VAULT_TOKEN", "legacy-vault-token")
 	t.Setenv("DRIVE9_API_KEY", "ambient-drive9-token")
+	// Windows resolves environment names case-insensitively; the strip must not
+	// depend on the spelling an ambient shell happens to use.
+	t.Setenv("Drive9_Server", "https://ambient.example")
+	t.Setenv("ti_fs_token", "ambient-lowercase-fs-token")
 	profile := &config.Profile{
 		Name:                  "default",
 		FSResourceName:        "workspace",
@@ -49,6 +53,7 @@ func TestDrive9EnvironmentSanitizesTISecrets(t *testing.T) {
 	for _, key := range []string{
 		"TIDB_CLOUD_PUBLIC_KEY", "TIDB_CLOUD_PRIVATE_KEY", "TI_FS_TOKEN", "TI_VAULT_TOKEN",
 		"TDC_PUBLIC_KEY", "TDC_PRIVATE_KEY", "TDC_FS_TOKEN", "TDC_VAULT_TOKEN",
+		"Drive9_Server", "ti_fs_token",
 	} {
 		if _, ok := values[key]; ok {
 			t.Fatalf("%s leaked into companion environment", key)

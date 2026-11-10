@@ -502,37 +502,28 @@ func renderVaultEnv(fields map[string]string) (string, error) {
 	return out.String(), nil
 }
 
+// validateVaultEnvFields maps secret field names to child environment keys using
+// the same normalization as `read-secret --format env`, so a secret that command
+// accepts is also injectable here. Field names that normalize to the same key are
+// rejected instead of silently overwriting each other.
 func validateVaultEnvFields(fields map[string]string) (map[string]string, error) {
 	env := make(map[string]string, len(fields))
-	for key, value := range fields {
-		if !isValidVaultEnvKey(key) {
-			return nil, apperr.New("vault.invalid_env_key", "usage", 2, fmt.Sprintf("secret key %q violates @env charset [A-Z_][A-Z0-9_]*", key))
+	owners := make(map[string]string, len(fields))
+	for field, value := range fields {
+		key, err := normalizeVaultEnvKey(field)
+		if err != nil {
+			return nil, err
+		}
+		if previous, exists := owners[key]; exists {
+			return nil, apperr.New("vault.env_collision", "usage", 2, fmt.Sprintf("secret fields %q and %q both normalize to %q", previous, field, key))
 		}
 		if idx := indexOfForbiddenVaultEnvByte(value); idx >= 0 {
-			return nil, apperr.New("vault.invalid_env_value", "usage", 2, fmt.Sprintf("secret value for key %q contains forbidden control byte 0x%02x at offset %d", key, value[idx], idx))
+			return nil, apperr.New("vault.invalid_env_value", "usage", 2, fmt.Sprintf("secret value for key %q contains forbidden control byte 0x%02x at offset %d", field, value[idx], idx))
 		}
+		owners[key] = field
 		env[key] = value
 	}
 	return env, nil
-}
-
-func isValidVaultEnvKey(key string) bool {
-	if key == "" {
-		return false
-	}
-	for i := 0; i < len(key); i++ {
-		ch := key[i]
-		switch {
-		case ch >= 'A' && ch <= 'Z', ch == '_':
-		case ch >= '0' && ch <= '9':
-			if i == 0 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func indexOfForbiddenVaultEnvByte(value string) int {
@@ -679,5 +670,30 @@ func vaultSecretChildEnv(base []string, fields map[string]string) ([]string, err
 	if err != nil {
 		return nil, err
 	}
-	return mergeEnv(credentialenv.Scrub(base), secretEnv), nil
+	return mergeEnv(dropEnvKeysFold(credentialenv.Scrub(base), secretEnv), secretEnv), nil
+}
+
+// dropEnvKeysFold removes inherited entries whose key matches a secret field
+// under Windows case folding. Windows resolves environment names
+// case-insensitively and keeps the last duplicate when exec builds the block, so
+// an ambient db_url would otherwise shadow the injected DB_URL.
+func dropEnvKeysFold(base []string, overrides map[string]string) []string {
+	out := make([]string, 0, len(base))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok {
+			shadowed := false
+			for override := range overrides {
+				if strings.EqualFold(key, override) {
+					shadowed = true
+					break
+				}
+			}
+			if shadowed {
+				continue
+			}
+		}
+		out = append(out, entry)
+	}
+	return out
 }

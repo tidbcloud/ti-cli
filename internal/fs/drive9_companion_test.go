@@ -1070,6 +1070,10 @@ func main() {
 			os.Exit(1)
 		}
 		_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"tenant_id": "tenant-1", "status": "active", "kind": "live"})
+	case len(args) >= 2 && args[0] == "vault" && args[1] == "get":
+		if payload := os.Getenv("TI_FAKE_VAULT_GET"); payload != "" {
+			fmt.Fprint(os.Stdout, payload)
+		}
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "cat":
 		fmt.Fprint(os.Stdout, "file bytes")
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "cp" && os.Getenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE") != "":
@@ -1223,6 +1227,60 @@ func testProfile() *config.Profile {
 		RegionCode:          "us-east-1",
 		TiDBCloudPublicKey:  "public",
 		TiDBCloudPrivateKey: "private",
+	}
+}
+
+// TestDrive9RunWithVaultSecretServiceFlow covers the orchestration added by the
+// run-with-secret rewrite through the script companion harness: the companion is
+// asked for the field map, the child runs with the scrubbed environment and the
+// injected fields, and the decode/validation/exit-code paths surface the expected
+// errors.
+func TestDrive9RunWithVaultSecretServiceFlow(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	companion, recordPath := buildFakeDrive9(t)
+	service := testCompanionService(t.TempDir(), companion)
+	profile := dataProfile()
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FS_TOKEN", "fs-bearer")
+
+	run := func(payload string, command ...string) (string, string, error) {
+		t.Helper()
+		t.Setenv("TI_FAKE_VAULT_GET", payload)
+		var out, errOut bytes.Buffer
+		err := service.RunWithVaultSecret(context.Background(), VaultRunWithSecretOptions{
+			Profile:    profile,
+			SecretPath: "/n/vault/demo",
+			Command:    command,
+			Stdout:     &out,
+			Stderr:     &errOut,
+		})
+		return out.String(), errOut.String(), err
+	}
+
+	out, _, err := run(`{"DB_URL":"mysql://secret","PASSWORD":"s3cr3t"}`, "/bin/sh", "-c", "env")
+	if err != nil {
+		t.Fatalf("run-with-secret failed: %v", err)
+	}
+	for _, want := range []string{"DB_URL=mysql://secret", "PASSWORD=s3cr3t"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("child environment missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "fs-bearer") {
+		t.Fatalf("child environment leaked the filesystem token:\n%s", out)
+	}
+	requireFakeDrive9Call(t, recordPath, "vault", "get")
+
+	if _, _, err := run(`{}`, "/bin/true"); apperr.CodeFor(err) != "vault.empty_secret" {
+		t.Fatalf("empty secret error = %v", err)
+	}
+	if _, _, err := run(`{"db_url":"a","DB_URL":"b"}`, "/bin/true"); apperr.CodeFor(err) != "vault.env_collision" {
+		t.Fatalf("colliding field names error = %v", err)
+	}
+	if _, _, err := run(`{"DB_URL":"x"}`, "/bin/sh", "-c", "exit 7"); apperr.CodeFor(err) != "vault.command_failed" {
+		t.Fatalf("child exit error = %v, want vault.command_failed", err)
 	}
 }
 
