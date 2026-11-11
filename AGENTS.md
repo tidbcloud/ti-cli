@@ -1136,6 +1136,17 @@ command and should follow Drive9 public CLI behavior.
 `delete-secret`, grants, audit, and `run-with-secret`, but not for the vault
 mount consumption path.
 
+Mount-time overlay unpack is a security boundary. `ti fs mount-file-system`
+with a `coding-agent`/`portable` mount profile, `--pack-path`, or
+`--unpack-archive-path` lets the companion write a local overlay from a remote
+archive, so it must run the same overlay symlink audit as
+`ti fs unpack-file-system`: resolve the local overlay before the companion runs
+(refuse an unresolvable unpack target instead of skipping the audit), snapshot
+it, audit after the companion returns (including on failure), remove escaping
+links, and stop the mount before reporting the error. Ordinary mounts must keep
+their flag shape, so only a mount that actually unpacks or names `--local-root`
+gets a resolved `--local-root`.
+
 `ti fs drain-file-system` is meaningful only for FUSE mounts where the
 companion records a drain control socket. WebDAV mounts flush through normal
 file close semantics and should not be expected to support drain.

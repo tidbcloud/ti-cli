@@ -1362,6 +1362,29 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	if err != nil {
 		return MountResult{}, err
 	}
+	// Security (information protection): mount-time auto/explicit unpack writes a
+	// local overlay through the companion, so audit it exactly like
+	// unpack-file-system does. An unpack target ti cannot resolve is refused
+	// rather than silently skipped, and the resolved root is passed to the
+	// companion so both sides write the same overlay.
+	auditRoot, unpackPossible, err := s.mountOverlayAudit(opts, remotePath)
+	if err != nil {
+		return MountResult{}, err
+	}
+	if auditRoot != "" {
+		opts.LocalRoot = auditRoot
+	}
+	var overlayBefore map[string]overlayEntryInfo
+	if unpackPossible {
+		var snapshotProblems []string
+		overlayBefore, snapshotProblems, err = scanOverlayEntries(auditRoot)
+		if err != nil {
+			return MountResult{}, err
+		}
+		if len(snapshotProblems) > 0 {
+			return MountResult{}, apperr.New("fs.unpack_audit_incomplete", "runtime", 1, fmt.Sprintf("cannot snapshot the overlay under %q before mounting: %s", auditRoot, strings.Join(snapshotProblems, "; ")))
+		}
+	}
 	args := []string{"mount"}
 	if opts.Driver != "" {
 		args = append(args, "--mode", opts.Driver)
@@ -1405,9 +1428,23 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		args = append(args, "--no-auto-unpack")
 	}
 	args = append(args, drive9Remote(remotePath), opts.MountPath)
-	result, err := s.drive9Run(ctx, opts.Profile, args, true)
-	if err != nil {
-		return MountResult{}, err
+	result, runErr := s.drive9Run(ctx, opts.Profile, args, true)
+	var auditErr error
+	if unpackPossible {
+		// The audit also runs when the companion reported failure: unpack is not
+		// atomic, so a partial install can already have written an escaping link.
+		auditErr = auditUnpackedOverlaySymlinks(auditRoot, overlayBefore)
+	}
+	if auditErr != nil {
+		// Never leave a mount exposing an overlay with an escaping link.
+		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
+		if runErr != nil {
+			return MountResult{}, apperr.New("fs.mount_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", runErr, auditErr))
+		}
+		return MountResult{}, auditErr
+	}
+	if runErr != nil {
+		return MountResult{}, runErr
 	}
 	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", opts); err != nil {
 		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)

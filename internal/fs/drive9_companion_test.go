@@ -697,6 +697,103 @@ func TestDrive9VaultMountUsesBackgroundMode(t *testing.T) {
 	}
 }
 
+// TestDrive9MountAuditsUnpackedOverlaySymlinks covers the reported gap: mount-time
+// auto/explicit unpack must run the same overlay symlink audit as
+// unpack-file-system, remove the escaping link, and not leave a mount running.
+func TestDrive9MountAuditsUnpackedOverlaySymlinks(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	localRoot := filepath.Join(t.TempDir(), "local")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TI_FAKE_MOUNT_ESCAPE_SYMLINK", "1")
+	t.Setenv("TI_FAKE_ESCAPE_TARGET", outside)
+
+	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, MountProfile: "portable", LocalRoot: localRoot,
+	})
+	if apperr.CodeFor(err) != "fs.unsafe_pack_symlink" {
+		t.Fatalf("escaping overlay symlink error = %v", err)
+	}
+	if _, statErr := os.Lstat(filepath.Join(localRoot, "overlay", "evil")); !os.IsNotExist(statErr) {
+		t.Fatalf("escaping symlink was not removed: %v", statErr)
+	}
+	requireFakeDrive9Call(t, recordPath, "umount")
+	if data, readErr := os.ReadFile(outside); readErr != nil || string(data) != "victim" {
+		t.Fatalf("audit changed the escape target: %q, %v", data, readErr)
+	}
+}
+
+// TestDrive9MountDerivesOverlayRootForAudit proves the derived default overlay is
+// passed to the companion and audited, so an auto-unpack without an explicit
+// --local-root is covered too.
+func TestDrive9MountDerivesOverlayRootForAudit(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TI_FAKE_MOUNT_ESCAPE_SYMLINK", "1")
+	t.Setenv("TI_FAKE_ESCAPE_TARGET", outside)
+
+	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, MountProfile: "coding-agent", PackPaths: []string{"/"},
+	})
+	if apperr.CodeFor(err) != "fs.unsafe_pack_symlink" {
+		t.Fatalf("derived overlay audit error = %v", err)
+	}
+	call := requireFakeDrive9Call(t, recordPath, "mount")
+	root := recordedFlagValue(call.Args, "--local-root")
+	if root == "" || !filepath.IsAbs(root) {
+		t.Fatalf("derived local root not passed to the companion: %#v", call.Args)
+	}
+	if !strings.Contains(root, filepath.Join(".ti", "local", "fs")) {
+		t.Fatalf("derived local root = %q, want the ti local overlay root", root)
+	}
+}
+
+// TestDrive9MountRejectsUnpackWithoutOverlayProfile refuses an unpack target that
+// cannot be audited instead of skipping the audit.
+func TestDrive9MountRejectsUnpackWithoutOverlayProfile(t *testing.T) {
+	companion, _ := buildFakeDrive9(t)
+	service := testCompanionService(t.TempDir(), companion)
+	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "mnt"), MountProfile: "none",
+		UnpackArchivePath: "/workspace/backup.tgz",
+	})
+	if apperr.CodeFor(err) != "fs.mount_unpack_requires_profile" {
+		t.Fatalf("unpack without overlay profile error = %v", err)
+	}
+}
+
+// TestDrive9MountKeepsDefaultFlagShape pins that a plain mount still passes no
+// --local-root, so the audit change does not alter ordinary mounts.
+func TestDrive9MountKeepsDefaultFlagShape(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	service.mountPointActive = trueMountEvidence
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, ReadyTimeout: time.Second,
+	}); err != nil {
+		t.Fatalf("plain mount failed: %v", err)
+	}
+	call := requireFakeDrive9Call(t, recordPath, "mount")
+	for i, arg := range call.Args {
+		if arg == "--local-root" {
+			t.Fatalf("plain mount passed --local-root %q", call.Args[i+1])
+		}
+	}
+}
+
 func TestDrive9MountSuppressesCompanionSuccessChatter(t *testing.T) {
 	home := t.TempDir()
 	companion, _ := buildFakeDrive9(t)
@@ -929,6 +1026,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 )
 
 type callRecord struct {
@@ -1003,6 +1101,12 @@ func main() {
 		if mountPath := args[len(args)-1]; len(args) >= 2 && len(mountPath) > 0 && mountPath[0] != '-' {
 			_ = os.MkdirAll(mountPath, 0o755)
 			_ = os.WriteFile(mountPath+string(os.PathSeparator)+".drive9-mounted", []byte("fake mount ready\n"), 0o644)
+		}
+		if os.Getenv("TI_FAKE_MOUNT_ESCAPE_SYMLINK") == "1" {
+			if root := flagValue(args, "--local-root"); root != "" {
+				_ = os.MkdirAll(filepath.Join(root, "overlay"), 0o755)
+				_ = os.Symlink(os.Getenv("TI_FAKE_ESCAPE_TARGET"), filepath.Join(root, "overlay", "evil"))
+			}
 		}
 		fmt.Fprintln(os.Stderr, "drive9: mount running in background")
 		fmt.Fprintln(os.Stderr, "drive9: unmount with drive9 umount /workspace")
@@ -1174,6 +1278,15 @@ func readFakeDrive9Calls(t *testing.T, recordPath string) []fakeDrive9Call {
 		t.Fatalf("scan fake companion record: %v", err)
 	}
 	return calls
+}
+
+func recordedFlagValue(args []string, name string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == name {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 func requireFakeDrive9Call(t *testing.T, recordPath string, prefix ...string) fakeDrive9Call {

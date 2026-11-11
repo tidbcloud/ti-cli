@@ -631,6 +631,64 @@ func (s Service) mountOverlayInputs(opts MountFileSystemOptions, homeDir string,
 	return profileConfig.Name, localRoot, packPaths, nil
 }
 
+// mountOverlayAudit resolves the local overlay the companion may unpack into for
+// this mount, and whether an unpack can happen at all. The reported vulnerability
+// was that mount-time auto/explicit unpack skipped the symlink audit that
+// unpack-file-system enforces; the audit can only run when ti knows the overlay
+// the companion writes, so an unresolvable unpack target is refused instead of
+// silently skipped. A mount that neither unpacks nor names a local root keeps its
+// previous flag shape (no --local-root).
+func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath string) (string, bool, error) {
+	if opts.Profile == nil {
+		return "", false, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
+	}
+	profileConfig, err := loadPackProfileConfig(opts.MountProfile)
+	if err != nil {
+		return "", false, err
+	}
+	unpackRequested := strings.TrimSpace(opts.UnpackArchivePath) != ""
+	explicitRoot := strings.TrimSpace(opts.LocalRoot)
+	if profileConfig.Name == noneMountProfile {
+		if unpackRequested {
+			return "", false, apperr.New("fs.mount_unpack_requires_profile", "usage", 2, "--unpack-archive-path requires --mount-profile coding-agent or portable, so the unpacked overlay can be audited")
+		}
+		if explicitRoot != "" {
+			return "", false, apperr.New("fs.invalid_mount_profile", "usage", 2, "--local-root and --pack-path require --mount-profile coding-agent or portable")
+		}
+		return "", false, nil
+	}
+	packPaths := mergeMountPackPaths(profileConfig.PackPaths, opts.PackPaths)
+	unpackPossible := unpackRequested || len(packPaths) > 0
+	if !unpackPossible && explicitRoot == "" {
+		return "", false, nil
+	}
+	fileSystemName := strings.TrimSpace(opts.FileSystemName)
+	if fileSystemName == "" {
+		fileSystemName = opts.Profile.FSResourceName
+	}
+	if fileSystemName == "" {
+		return "", false, apperr.New("fs.missing_file_system_id", "usage", 2, "--file-system-id is required unless an FS token identifies the file system")
+	}
+	mountPath, err := mountstate.CanonicalMountPath(opts.MountPath)
+	if err != nil {
+		return "", false, apperr.New("fs.missing_mount_path", "usage", 2, "--mount-path is required")
+	}
+	homeDir, err := s.homeDir()
+	if err != nil {
+		return "", false, err
+	}
+	endpoint, err := s.resolveFS(opts.Profile)
+	if err != nil {
+		return "", false, err
+	}
+	identity := mountCacheIdentity(opts.Profile, fileSystemName, mountPath, remotePath, endpoint)
+	_, localRoot, _, err := s.mountOverlayInputs(opts, homeDir, identity)
+	if err != nil {
+		return "", false, err
+	}
+	return localRoot, unpackPossible, nil
+}
+
 func defaultMountLocalRoot(homeDir string, identity MountCacheIdentity) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		identity.Profile,
