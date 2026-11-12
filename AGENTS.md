@@ -1137,15 +1137,26 @@ command and should follow Drive9 public CLI behavior.
 mount consumption path.
 
 Mount-time overlay unpack is a security boundary. `ti fs mount-file-system`
-with a `coding-agent`/`portable` mount profile, `--pack-path`, or
-`--unpack-archive-path` lets the companion write a local overlay from a remote
-archive, so it must run the same overlay symlink audit as
-`ti fs unpack-file-system`: resolve the local overlay before the companion runs
-(refuse an unresolvable unpack target instead of skipping the audit), snapshot
-it, audit after the companion returns (including on failure), remove escaping
-links, and stop the mount before reporting the error. Ordinary mounts must keep
-their flag shape, so only a mount that actually unpacks or names `--local-root`
-gets a resolved `--local-root`.
+unpacks a local overlay when auto-unpack is enabled with a
+`coding-agent`/`portable` mount profile or `--pack-path`, or when
+`--unpack-archive-path` is given, so it must run the same overlay symlink audit
+as `ti fs unpack-file-system`: resolve the local overlay before the companion
+runs (refuse an unresolvable unpack target instead of skipping the audit), pin
+it with `--local-root` so both sides write the same directory, snapshot it, and
+audit it at the point unpack is observably finished - after the mount path is
+readable, and again when readiness times out (the timeout path leaves the mount
+running, so it must still be audited and stopped on violation). Never audit only
+right after the foreground mount command returns; the companion daemon may still
+be unpacking. Readiness means the mount path is readable and per the unpack
+contract that implies unpack is complete. Unpack is not atomic, so also audit
+when the companion reported failure. A failed cleanup after an audit rejection
+must say the mount may still be running and keep the mount locator so
+`ti fs unmount-file-system` can retry. `mountOverlayInputs` is the single owner
+of profile eligibility, the effective local root, and the effective pack paths;
+`--no-auto-unpack` disables only the profile/pack-path driven unpack, not an
+explicit `--unpack-archive-path`. Ordinary mounts must keep their flag shape, so
+only a mount that actually unpacks or names `--local-root` gets a resolved
+`--local-root`, and a mount that does not unpack is not audited.
 
 `ti fs drain-file-system` is meaningful only for FUSE mounts where the
 companion records a drain control socket. WebDAV mounts flush through normal

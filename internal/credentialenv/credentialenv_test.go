@@ -51,7 +51,7 @@ func TestScrubRemovesOnlyCredentials(t *testing.T) {
 		"NOT_A_PAIR",
 	}
 	got := Scrub(env)
-	want := []string{"PATH=/usr/bin", "TI_TEST_RUNTIME_RECORD=/tmp/record", "NOT_A_PAIR"}
+	want := []string{"PATH=/usr/bin", "TI_TEST_RUNTIME_RECORD=/tmp/record"}
 	if len(got) != len(want) {
 		t.Fatalf("scrubbed env = %#v, want %#v", got, want)
 	}

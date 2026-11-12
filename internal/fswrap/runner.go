@@ -255,10 +255,10 @@ func (r Runner) drive9Env(homeDir string, opts RunOptions) ([]string, error) {
 			env = append(env, entry)
 			continue
 		}
-		// Windows resolves these names case-insensitively too; the scoped
-		// HOME/USERPROFILE values are appended below.
-		switch strings.ToUpper(key) {
-		case "HOME", "USERPROFILE":
+		// The scoped HOME/USERPROFILE values are appended below. Windows resolves
+		// these names case-insensitively; Unix keeps case-distinct names.
+		if key == "HOME" || key == "USERPROFILE" ||
+			(runtime.GOOS == "windows" && (strings.EqualFold(key, "HOME") || strings.EqualFold(key, "USERPROFILE"))) {
 			continue
 		}
 		if credentialenv.IsCredential(key) {

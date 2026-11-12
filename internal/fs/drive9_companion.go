@@ -1429,29 +1429,33 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	}
 	args = append(args, drive9Remote(remotePath), opts.MountPath)
 	result, runErr := s.drive9Run(ctx, opts.Profile, args, true)
-	var auditErr error
-	if unpackPossible {
-		// The audit also runs when the companion reported failure: unpack is not
-		// atomic, so a partial install can already have written an escaping link.
-		auditErr = auditUnpackedOverlaySymlinks(auditRoot, overlayBefore)
-	}
-	if auditErr != nil {
-		// Never leave a mount exposing an overlay with an escaping link.
-		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
-		if runErr != nil {
-			return MountResult{}, apperr.New("fs.mount_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", runErr, auditErr))
-		}
-		return MountResult{}, auditErr
-	}
 	if runErr != nil {
+		if unpackPossible {
+			// Unpack is not atomic, so a partial install can already have written
+			// an escaping link even though the companion reported failure.
+			if auditErr := auditUnpackedOverlaySymlinks(auditRoot, overlayBefore); auditErr != nil {
+				return MountResult{}, apperr.New("fs.mount_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", runErr, auditErr))
+			}
+		}
 		return MountResult{}, runErr
 	}
 	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", opts); err != nil {
 		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
 		return MountResult{}, err
 	}
-	if err := s.waitForMountReady(ctx, opts.MountPath, opts.ReadyTimeout, fmt.Sprintf("; to stop it run: ti fs unmount-file-system --mount-path %q", opts.MountPath)); err != nil {
-		return MountResult{}, err
+	// The foreground mount command returns before the companion daemon finishes
+	// its startup work, so the unpack may only complete during the readiness
+	// wait. Once the mount path is readable, unpack is finished, which is the
+	// point where the audit is meaningful; it also runs when readiness timed out
+	// so a slow archive cannot slip past it.
+	readyErr := s.waitForMountReady(ctx, opts.MountPath, opts.ReadyTimeout, fmt.Sprintf("; to stop it run: ti fs unmount-file-system --mount-path %q", opts.MountPath))
+	if unpackPossible {
+		if auditErr := auditUnpackedOverlaySymlinks(auditRoot, overlayBefore); auditErr != nil {
+			return MountResult{}, s.stopMountAfterUnsafeAudit(ctx, opts, auditErr)
+		}
+	}
+	if readyErr != nil {
+		return MountResult{}, readyErr
 	}
 	endpoint, _ := s.resolveFS(opts.Profile)
 	driver := drive9MountedDriver(result.Stderr, opts.Driver)
@@ -1459,6 +1463,20 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		driver = "auto"
 	}
 	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: opts.LocalRoot, PackPaths: opts.PackPaths, WriteBackCache: opts.WriteBackCache, LayerRef: opts.LayerRef, CheckpointID: opts.CheckpointID, ReadOnly: opts.ReadOnly}, nil
+}
+
+// stopMountAfterUnsafeAudit tears down a mount whose overlay failed the audit. It
+// keeps the locator when the unmount fails so the user can retry through ti, and
+// says so in the error.
+func (s Service) stopMountAfterUnsafeAudit(ctx context.Context, opts MountFileSystemOptions, auditErr error) error {
+	_, umountErr := s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
+	if umountErr != nil {
+		return apperr.New(apperr.CodeFor(auditErr), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped: %v; retry ti fs unmount-file-system --mount-path %q", auditErr, opts.MountPath, umountErr, opts.MountPath))
+	}
+	if homeDir, err := s.homeDir(); err == nil {
+		_ = mountlocator.Remove(homeDir, opts.MountPath)
+	}
+	return auditErr
 }
 
 func (s Service) drive9DrainFileSystem(ctx context.Context, opts DrainFileSystemOptions) (DrainResult, error) {

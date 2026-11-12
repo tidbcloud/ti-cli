@@ -642,25 +642,8 @@ func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath strin
 	if opts.Profile == nil {
 		return "", false, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
-	profileConfig, err := loadPackProfileConfig(opts.MountProfile)
-	if err != nil {
+	if _, err := loadPackProfileConfig(opts.MountProfile); err != nil {
 		return "", false, err
-	}
-	unpackRequested := strings.TrimSpace(opts.UnpackArchivePath) != ""
-	explicitRoot := strings.TrimSpace(opts.LocalRoot)
-	if profileConfig.Name == noneMountProfile {
-		if unpackRequested {
-			return "", false, apperr.New("fs.mount_unpack_requires_profile", "usage", 2, "--unpack-archive-path requires --mount-profile coding-agent or portable, so the unpacked overlay can be audited")
-		}
-		if explicitRoot != "" {
-			return "", false, apperr.New("fs.invalid_mount_profile", "usage", 2, "--local-root and --pack-path require --mount-profile coding-agent or portable")
-		}
-		return "", false, nil
-	}
-	packPaths := mergeMountPackPaths(profileConfig.PackPaths, opts.PackPaths)
-	unpackPossible := unpackRequested || len(packPaths) > 0
-	if !unpackPossible && explicitRoot == "" {
-		return "", false, nil
 	}
 	fileSystemName := strings.TrimSpace(opts.FileSystemName)
 	if fileSystemName == "" {
@@ -682,9 +665,25 @@ func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath strin
 		return "", false, err
 	}
 	identity := mountCacheIdentity(opts.Profile, fileSystemName, mountPath, remotePath, endpoint)
-	_, localRoot, _, err := s.mountOverlayInputs(opts, homeDir, identity)
+	// mountOverlayInputs is the single owner of profile eligibility, the
+	// effective local root, and the effective pack paths, so the live path and
+	// the dry-run path cannot reject different flag combinations.
+	mountProfile, localRoot, packPaths, err := s.mountOverlayInputs(opts, homeDir, identity)
 	if err != nil {
 		return "", false, err
+	}
+	unpackRequested := strings.TrimSpace(opts.UnpackArchivePath) != ""
+	if mountProfile == noneMountProfile {
+		if unpackRequested {
+			return "", false, apperr.New("fs.mount_unpack_requires_profile", "usage", 2, "--unpack-archive-path requires --mount-profile coding-agent or portable, so the unpacked overlay can be audited")
+		}
+		return "", false, nil
+	}
+	// --no-auto-unpack disables the profile/pack-path driven unpack, but an
+	// explicit --unpack-archive-path still unpacks and must be audited.
+	unpackPossible := unpackRequested || (!opts.NoAutoUnpack && len(packPaths) > 0)
+	if !unpackPossible && strings.TrimSpace(opts.LocalRoot) == "" {
+		return "", false, nil
 	}
 	return localRoot, unpackPossible, nil
 }

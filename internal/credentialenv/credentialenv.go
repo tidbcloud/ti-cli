@@ -37,13 +37,17 @@ func IsCredential(key string) bool {
 	return false
 }
 
-// Scrub returns a copy of env without credential variables. Entries that are
-// not KEY=VALUE pairs are preserved.
+// Scrub returns a copy of env without credential variables. Entries that are not
+// KEY=VALUE pairs are dropped, matching the mergeEnv consumer: they cannot name a
+// credential and both spawn paths build a map keyed by name.
 func Scrub(env []string) []string {
 	out := make([]string, 0, len(env))
 	for _, entry := range env {
 		key, _, ok := strings.Cut(entry, "=")
-		if ok && IsCredential(key) {
+		if !ok {
+			continue
+		}
+		if IsCredential(key) {
 			continue
 		}
 		out = append(out, entry)
