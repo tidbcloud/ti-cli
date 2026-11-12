@@ -1141,9 +1141,8 @@ unpacks a local overlay when auto-unpack is enabled and the effective pack-path
 set is non-empty (`portable` supplies `/` by default; `--pack-path` adds more),
 or when `--unpack-archive-path` is given, so it must run the same overlay symlink
 audit as `ti fs unpack-file-system`: resolve the local overlay before the companion
-runs (refuse an unresolvable unpack target instead of skipping the audit), pin
-it with `--local-root` so both sides write the same directory, snapshot it, and
-audit it at the point unpack is observably finished - after the mount path is
+runs (refuse an unresolvable unpack target instead of skipping the audit),
+snapshot it, and audit it at the point unpack is observably finished - after the mount path is
 readable, and also when readiness times out. Never audit only right after the
 foreground mount command returns; the companion daemon may still be unpacking.
 Readiness means the mount path is readable and per the unpack contract that
@@ -1162,14 +1161,24 @@ local root, the effective pack paths, and the none-profile `--unpack-archive-pat
 rule; live execution and `--dry-run` must both go through it.
 `--no-auto-unpack` disables only the profile/pack-path driven unpack, not an
 explicit `--unpack-archive-path`. Ordinary mounts must keep their flag shape, so
-only a mount that actually unpacks or names `--local-root` gets a resolved
-`--local-root`, and a mount that does not unpack is not audited. In ti's model
-only `portable` carries default pack paths, so a bare `coding-agent` mount is not
-audited. That relies on three companion behaviours that are not tested here and
-must be confirmed with the drive9 side: the companion derives the same default
-root as `defaultMountLocalRoot` when `--local-root` is absent (ti pins it anyway),
-honours `--no-auto-unpack` exactly, and does not unpack on its own for a bare
-`coding-agent` profile.
+only an explicit `--local-root` is forwarded to the companion, and a mount that
+does not unpack is not audited. Without an explicit root, the audited directory
+is the companion's own default root, replicated in `companionMountLocalRoot`
+from drive9's `defaultMountLocalRoot`:
+`os.UserCacheDir()/drive9/mounts/<safe-label(remote)>-<sha256(server\nremoteRoot\ncredential-key)[:8]>`
+evaluated with the companion HOME, where the credential key is
+`sha256(apiKey)[:8]`. Never pin ti's own `defaultMountLocalRoot` for a
+companion mount: it is a different path and would relocate existing overlays.
+
+The companion assumptions are confirmed against drive9 source
+(`cmd/drive9/cli/{mount,profile,pack}.go`, `v0.10.0`) and its binary: the default
+root derivation matches (observed `root-26d2b529bbcb6733` for server
+`https://drive9.example`, remote `/`, credential `sk-test`),
+`autoUnpack := overlayProfile && len(effectivePackPaths) > 0 && !*noAutoUnpack`
+honours `--no-auto-unpack` exactly, and the builtin `coding-agent` profile has no
+pack paths while `portable` supplies `/`. Residual: a profile file placed inside
+the companion HOME could add pack paths that ti does not know about; ti owns that
+HOME, so keep it out of user-writable configuration.
 
 `ti fs drain-file-system` is meaningful only for FUSE mounts where the
 companion records a drain control socket. WebDAV mounts flush through normal

@@ -613,72 +613,66 @@ func mountCacheIdentity(profile *config.Profile, fileSystemName, mountPath, remo
 	return identity
 }
 
-func (s Service) mountOverlayInputs(opts MountFileSystemOptions, homeDir string, identity MountCacheIdentity) (string, string, []string, error) {
+// mountOverlayPolicy is the single owner of overlay eligibility: the mount
+// profile, the effective pack paths, the explicit local root, and the
+// none-profile rules. Both the native mount inputs and the companion audit use
+// it, so live execution and --dry-run cannot reject different flag combinations.
+func mountOverlayPolicy(opts MountFileSystemOptions) (string, string, []string, error) {
 	profileConfig, err := loadPackProfileConfig(opts.MountProfile)
 	if err != nil {
 		return "", "", nil, err
 	}
 	packPaths := mergeMountPackPaths(profileConfig.PackPaths, opts.PackPaths)
 	localRoot := strings.TrimSpace(opts.LocalRoot)
-	if profileConfig.Name != noneMountProfile {
-		if localRoot == "" {
-			localRoot = defaultMountLocalRoot(homeDir, identity)
-		}
-		var err error
-		localRoot, err = validatePackLocalRoot(localRoot, "--local-root")
-		if err != nil {
-			return "", "", nil, err
-		}
-		if err := os.MkdirAll(filepath.Join(localRoot, "overlay"), 0o755); err != nil {
-			return "", "", nil, apperr.Wrap("fs.mount_prepare_local_root", "runtime", 1, fmt.Sprintf("prepare local overlay root %q", localRoot), err)
-		}
-	} else {
+	if profileConfig.Name == noneMountProfile {
 		if localRoot != "" || len(packPaths) > 0 {
 			return "", "", nil, apperr.New("fs.invalid_mount_profile", "usage", 2, "--local-root and --pack-path require --mount-profile coding-agent or portable")
 		}
 		if strings.TrimSpace(opts.UnpackArchivePath) != "" {
 			return "", "", nil, apperr.New("fs.mount_unpack_requires_profile", "usage", 2, "--unpack-archive-path requires --mount-profile coding-agent or portable, so the unpacked overlay can be audited")
 		}
+		return profileConfig.Name, "", packPaths, nil
+	}
+	if localRoot != "" {
+		localRoot, err = validatePackLocalRoot(localRoot, "--local-root")
+		if err != nil {
+			return "", "", nil, err
+		}
 	}
 	return profileConfig.Name, localRoot, packPaths, nil
+}
+
+func (s Service) mountOverlayInputs(opts MountFileSystemOptions, homeDir string, identity MountCacheIdentity) (string, string, []string, error) {
+	mountProfile, localRoot, packPaths, err := mountOverlayPolicy(opts)
+	if err != nil {
+		return "", "", nil, err
+	}
+	if mountProfile == noneMountProfile {
+		return mountProfile, "", packPaths, nil
+	}
+	if localRoot == "" {
+		localRoot = defaultMountLocalRoot(homeDir, identity)
+	}
+	if localRoot, err = validatePackLocalRoot(localRoot, "--local-root"); err != nil {
+		return "", "", nil, err
+	}
+	if err := os.MkdirAll(filepath.Join(localRoot, "overlay"), 0o755); err != nil {
+		return "", "", nil, apperr.Wrap("fs.mount_prepare_local_root", "runtime", 1, fmt.Sprintf("prepare local overlay root %q", localRoot), err)
+	}
+	return mountProfile, localRoot, packPaths, nil
 }
 
 // mountOverlayAudit resolves the local overlay the companion may unpack into for
 // this mount, and whether an unpack can happen at all. The reported vulnerability
 // was that mount-time auto/explicit unpack skipped the symlink audit that
-// unpack-file-system enforces; the audit can only run when ti knows the overlay
-// the companion writes, so an unresolvable unpack target is refused instead of
-// silently skipped. A mount that neither unpacks nor names a local root keeps its
-// previous flag shape (no --local-root).
+// unpack-file-system enforces. An explicit --local-root is audited as given and
+// passed through; otherwise ti audits the companion's own default root so
+// existing overlays keep their location (see companionMountLocalRoot).
 func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath string) (string, bool, error) {
 	if opts.Profile == nil {
 		return "", false, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
-	fileSystemName := strings.TrimSpace(opts.FileSystemName)
-	if fileSystemName == "" {
-		fileSystemName = opts.Profile.FSResourceName
-	}
-	if fileSystemName == "" {
-		return "", false, apperr.New("fs.missing_file_system_id", "usage", 2, "--file-system-id is required unless an FS token identifies the file system")
-	}
-	mountPath, err := mountstate.CanonicalMountPath(opts.MountPath)
-	if err != nil {
-		return "", false, apperr.New("fs.missing_mount_path", "usage", 2, "--mount-path is required")
-	}
-	homeDir, err := s.homeDir()
-	if err != nil {
-		return "", false, err
-	}
-	endpoint, err := s.resolveFS(opts.Profile)
-	if err != nil {
-		return "", false, err
-	}
-	identity := mountCacheIdentity(opts.Profile, fileSystemName, mountPath, remotePath, endpoint)
-	// mountOverlayInputs is the single owner of profile eligibility, the
-	// effective local root, the effective pack paths, and the
-	// --unpack-archive-path/profile rule, so the live path and --dry-run cannot
-	// reject different flag combinations.
-	mountProfile, localRoot, packPaths, err := s.mountOverlayInputs(opts, homeDir, identity)
+	mountProfile, localRoot, packPaths, err := mountOverlayPolicy(opts)
 	if err != nil {
 		return "", false, err
 	}
@@ -688,10 +682,17 @@ func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath strin
 	// --no-auto-unpack disables the profile/pack-path driven unpack, but an
 	// explicit --unpack-archive-path still unpacks and must be audited.
 	unpackPossible := strings.TrimSpace(opts.UnpackArchivePath) != "" || (!opts.NoAutoUnpack && len(packPaths) > 0)
-	if !unpackPossible && strings.TrimSpace(opts.LocalRoot) == "" {
+	if !unpackPossible && localRoot == "" {
 		return "", false, nil
 	}
-	return localRoot, unpackPossible, nil
+	if localRoot != "" {
+		return localRoot, unpackPossible, nil
+	}
+	root, err := s.companionMountLocalRoot(opts.Profile, remotePath)
+	if err != nil {
+		return "", false, err
+	}
+	return root, unpackPossible, nil
 }
 
 func defaultMountLocalRoot(homeDir string, identity MountCacheIdentity) string {

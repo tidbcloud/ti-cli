@@ -735,29 +735,54 @@ func TestDrive9MountAuditsUnpackedOverlaySymlinks(t *testing.T) {
 func TestDrive9MountDerivesOverlayRootForAudit(t *testing.T) {
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
-	service := testCompanionService(t.TempDir(), companion)
+	home := t.TempDir()
+	service := testCompanionService(home, companion)
 	service.mountPointActive = trueMountEvidence
 	mountPath := filepath.Join(t.TempDir(), "mnt")
 	outside := filepath.Join(t.TempDir(), "outside.txt")
 	if err := os.WriteFile(outside, []byte("victim"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	root, err := service.companionMountLocalRoot(dataProfile(), "/")
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("TI_FAKE_MOUNT_ESCAPE_SYMLINK", "1")
 	t.Setenv("TI_FAKE_ESCAPE_TARGET", outside)
+	t.Setenv("TI_FAKE_ESCAPE_ROOT", root)
 
-	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
 		Profile: dataProfile(), MountPath: mountPath, MountProfile: "coding-agent", PackPaths: []string{"/"},
-	})
-	if apperr.CodeFor(err) != "fs.unsafe_pack_symlink" {
+	}); apperr.CodeFor(err) != "fs.unsafe_pack_symlink" {
 		t.Fatalf("derived overlay audit error = %v", err)
 	}
 	call := requireFakeDrive9Call(t, recordPath, "mount")
-	root := recordedFlagValue(call.Args, "--local-root")
-	if root == "" || !filepath.IsAbs(root) {
-		t.Fatalf("derived local root not passed to the companion: %#v", call.Args)
+	if recordedFlagValue(call.Args, "--local-root") != "" {
+		t.Fatalf("derived root must not be pinned to the companion: %#v", call.Args)
 	}
-	if !strings.Contains(root, filepath.Join(".ti", "local", "fs")) {
-		t.Fatalf("derived local root = %q, want the ti local overlay root", root)
+	if _, statErr := os.Lstat(filepath.Join(root, "overlay", "evil")); !os.IsNotExist(statErr) {
+		t.Fatalf("escaping symlink at the companion root was not removed: %v", statErr)
+	}
+}
+
+// TestCompanionMountLocalRootMatchesDrive9 pins the replica of drive9's default
+// root derivation, including the value observed from the real companion binary
+// (server https://drive9.example, remote /, credential sk-test).
+func TestCompanionMountLocalRootMatchesDrive9(t *testing.T) {
+	home := filepath.Join(t.TempDir(), "companion-home")
+	root, err := companionMountLocalRootAt(home, "https://drive9.example", "/", "sk-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := filepath.Join(home, ".cache", "drive9", "mounts", "root-26d2b529bbcb6733")
+	if runtime.GOOS == "darwin" {
+		want = filepath.Join(home, "Library", "Caches", "drive9", "mounts", "root-26d2b529bbcb6733")
+	}
+	if root != want {
+		t.Fatalf("companion mount root = %q, want %q", root, want)
+	}
+	if got, err := companionMountLocalRootAt(home, "https://drive9.example", "/workspace/repo", "sk-test"); err != nil || !strings.HasPrefix(filepath.Base(got), "repo-") {
+		t.Fatalf("label derivation for a nested root = %q, %v", got, err)
 	}
 }
 
@@ -1348,7 +1373,11 @@ func main() {
 			_ = os.WriteFile(mountPath+string(os.PathSeparator)+".drive9-mounted", []byte("fake mount ready\n"), 0o644)
 		}
 		if os.Getenv("TI_FAKE_MOUNT_ESCAPE_SYMLINK") == "1" {
-			if root := flagValue(args, "--local-root"); root != "" {
+			root := flagValue(args, "--local-root")
+			if root == "" {
+				root = os.Getenv("TI_FAKE_ESCAPE_ROOT")
+			}
+			if root != "" {
 				_ = os.MkdirAll(filepath.Join(root, "overlay"), 0o755)
 				_ = os.Symlink(os.Getenv("TI_FAKE_ESCAPE_TARGET"), filepath.Join(root, "overlay", "evil"))
 			}
