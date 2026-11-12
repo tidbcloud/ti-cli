@@ -1156,9 +1156,10 @@ be running and keep the mount locator so `ti fs unmount-file-system` can retry.
 Audit attribution is snapshot-based, so a link that lands outside an audited run
 window is treated as pre-existing local state by later audits.
 
-`mountOverlayInputs` is the single owner of profile eligibility, the effective
+`mountOverlayPolicy` is the single owner of profile eligibility, the effective
 local root, the effective pack paths, and the none-profile `--unpack-archive-path`
-rule; live execution and `--dry-run` must both go through it.
+rule; live execution and `--dry-run` must both go through it, and neither may
+create ti's own overlay directory on the companion path.
 `--no-auto-unpack` disables only the profile/pack-path driven unpack, not an
 explicit `--unpack-archive-path`. Ordinary mounts must keep their flag shape, so
 only an explicit `--local-root` is forwarded to the companion, and a mount that
@@ -1171,14 +1172,25 @@ evaluated with the companion HOME, where the credential key is
 companion mount: it is a different path and would relocate existing overlays.
 
 The companion assumptions are confirmed against drive9 source
-(`cmd/drive9/cli/{mount,profile,pack}.go`, `v0.10.0`) and its binary: the default
-root derivation matches (observed `root-26d2b529bbcb6733` for server
-`https://drive9.example`, remote `/`, credential `sk-test`),
-`autoUnpack := overlayProfile && len(effectivePackPaths) > 0 && !*noAutoUnpack`
-honours `--no-auto-unpack` exactly, and the builtin `coding-agent` profile has no
-pack paths while `portable` supplies `/`. Residual: a profile file placed inside
-the companion HOME could add pack paths that ti does not know about; ti owns that
-HOME, so keep it out of user-writable configuration.
+(`cmd/drive9/cli/{mount,profile,pack}.go`, `v0.10.0`) and its binary. The replica
+is pinned by vectors observed from the real companion (server
+`https://drive9.example`, credential `sk-test`):
+`/` -> `root-26d2b529bbcb6733`, `/workspace/repo` and `/workspace/repo/` ->
+`repo-60c459977811d6a0` (drive9 drops the trailing slash before hashing),
+`/café` -> `caf-23458cc75cc9d02d` (label sanitization is per rune, the trimmed
+label drops the trailing `-`), and `/工作区/repo` -> `repo-993cccf97afe07b6`.
+The cache root mirrors `os.UserCacheDir` exactly: `companionHome/.cache` on the
+default Unix branch with a non-empty `XDG_CACHE_HOME` used verbatim (no trim, no
+absolute-path filter, so a relative value makes the audit fail loudly), darwin
+always `companionHome/Library/Caches`, Windows `os.UserCacheDir()` (LOCALAPPDATA
+is not overridden), plan9 `companionHome/lib/cache`. Length caps are not applied;
+the empty-credential fingerprint case is unreachable because a mount always
+carries a filesystem token. `autoUnpack := overlayProfile &&
+len(effectivePackPaths) > 0 && !*noAutoUnpack` honours `--no-auto-unpack`
+exactly, and the builtin `coding-agent` profile has no pack paths while
+`portable` supplies `/`. Residual: a profile file placed inside the companion
+HOME could add pack paths that ti does not know about; ti owns that HOME, so keep
+it out of user-writable configuration.
 
 `ti fs drain-file-system` is meaningful only for FUSE mounts where the
 companion records a drain control socket. WebDAV mounts flush through normal

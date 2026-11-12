@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 )
@@ -25,7 +26,7 @@ import (
 // credential "sk-test" produce root-26d2b529bbcb6733 under the companion home.
 func (s Service) companionMountLocalRoot(profile *config.Profile, remotePath string) (string, error) {
 	if profile == nil {
-		return "", nil
+		return "", apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
 	homeDir, err := s.homeDir()
 	if err != nil {
@@ -47,6 +48,12 @@ func companionMountLocalRootAt(companionHome, server, remotePath, credential str
 	if err != nil {
 		return "", err
 	}
+	// drive9 normalizes the remote root before hashing and drops a trailing
+	// slash (verified: /workspace/repo and /workspace/repo/ derive the same
+	// directory), while ti's normalizer preserves it.
+	if trimmed := strings.TrimSuffix(remoteRoot, "/"); trimmed != "" {
+		remoteRoot = trimmed
+	}
 	fingerprint := ""
 	if strings.TrimSpace(credential) != "" {
 		sum := sha256.Sum256([]byte(strings.TrimSpace(credential)))
@@ -57,23 +64,30 @@ func companionMountLocalRootAt(companionHome, server, remotePath, credential str
 	return filepath.Join(companionCacheRoot(companionHome), "drive9", "mounts", companionMountRootLabel(remoteRoot)+"-"+hash), nil
 }
 
-// companionCacheRoot is os.UserCacheDir as the companion sees it. On Unix the
-// companion runs with HOME set to the resource-scoped companion home, so its
-// cache lives under that home; XDG_CACHE_HOME is inherited. On Windows the cache
-// still comes from LOCALAPPDATA, which the companion does not change.
+// companionCacheRoot mirrors os.UserCacheDir exactly as the companion resolves
+// it. The companion runs with HOME (and USERPROFILE) set to the resource-scoped
+// companion home, so the Unix and darwin branches resolve under that home;
+// Windows reads LOCALAPPDATA, which ti does not change. XDG_CACHE_HOME applies
+// only to the default Unix branch and is used verbatim: a relative value must
+// flow through so scanOverlayEntries rejects the non-absolute root loudly instead
+// of auditing a plausible but wrong directory.
 func companionCacheRoot(companionHome string) string {
-	if xdg := strings.TrimSpace(os.Getenv("XDG_CACHE_HOME")); xdg != "" && filepath.IsAbs(xdg) {
-		return xdg
-	}
 	switch runtime.GOOS {
 	case "windows":
-		if dir, err := os.UserCacheDir(); err == nil && strings.TrimSpace(dir) != "" {
+		if dir, err := os.UserCacheDir(); err == nil && dir != "" {
 			return dir
 		}
 		return filepath.Join(companionHome, ".cache")
 	case "darwin":
 		return filepath.Join(companionHome, "Library", "Caches")
+	case "plan9":
+		return filepath.Join(companionHome, "lib", "cache")
+	case "js":
+		return "/cache"
 	default:
+		if xdg := os.Getenv("XDG_CACHE_HOME"); xdg != "" {
+			return xdg
+		}
 		return filepath.Join(companionHome, ".cache")
 	}
 }

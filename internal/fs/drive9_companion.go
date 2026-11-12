@@ -1354,7 +1354,7 @@ func (s Service) unpackAuditLocalRoot(opts UnpackFileSystemOptions) (string, err
 			return filepath.Clean(localRoot), nil
 		}
 	}
-	return "", apperr.New("fs.unpack_unknown_local_root", "runtime", 1, fmt.Sprintf("cannot determine the local overlay root for mount %q, so the unpacked symlinks cannot be audited; pass --local-root with the same overlay the companion uses", mountPath))
+	return "", apperr.New("fs.unpack_unknown_local_root", "runtime", 1, fmt.Sprintf("cannot determine the local overlay root for mount %q, so the unpacked symlinks cannot be audited; pass --local-root with the local_root value reported by ti fs mount-file-system for that mount", mountPath))
 }
 
 func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystemOptions) (MountResult, error) {
@@ -1434,6 +1434,9 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 				stopErr := s.stopMountAfterUnsafeAudit(ctx, opts, auditErr)
 				return MountResult{}, apperr.New("fs.mount_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", runErr, apperr.MessageFor(stopErr)))
 			}
+			// The daemon can outlive its failing foreground client and keep
+			// unpacking, so stop it even when the audit was clean.
+			_ = s.umountMount(ctx, opts)
 		}
 		return MountResult{}, runErr
 	}
@@ -1496,10 +1499,10 @@ func (s Service) stopMountAfterUnsafeAudit(ctx context.Context, opts MountFileSy
 func (s Service) stopMountAfterReadyTimeout(ctx context.Context, opts MountFileSystemOptions, readyErr error) error {
 	umountErr := s.umountMount(ctx, opts)
 	if umountErr != nil {
-		return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("%v; the mount was stopped because an unpack may still be running, but it could not be stopped: %v; retry ti fs unmount-file-system --mount-path %q", readyErr, umountErr, opts.MountPath))
+		return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("the mount at %q did not become readable and could not be stopped (%v) while an unpack may still be running; retry ti fs unmount-file-system --mount-path %q", opts.MountPath, umountErr, opts.MountPath))
 	}
 	s.removeMountLocator(opts)
-	return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("%v; the mount was stopped because an unpack may still be running and would otherwise stay unaudited", readyErr))
+	return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("the mount at %q did not become readable and was stopped because an unpack may still be running and would otherwise stay unaudited", opts.MountPath))
 }
 
 func (s Service) umountMount(ctx context.Context, opts MountFileSystemOptions) error {

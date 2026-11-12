@@ -470,7 +470,7 @@ func (s Service) mountInputs(opts MountFileSystemOptions) (mountInputs, error) {
 	if readCacheTTL < 0 {
 		return mountInputs{}, apperr.New("fs.invalid_read_cache_ttl", "usage", 2, "--read-cache-ttl must be non-negative")
 	}
-	mountProfile, localRoot, packPaths, err := s.mountOverlayInputs(opts, homeDir, identity)
+	mountProfile, localRoot, packPaths, err := mountOverlayPolicy(opts)
 	if err != nil {
 		return mountInputs{}, err
 	}
@@ -640,26 +640,6 @@ func mountOverlayPolicy(opts MountFileSystemOptions) (string, string, []string, 
 		}
 	}
 	return profileConfig.Name, localRoot, packPaths, nil
-}
-
-func (s Service) mountOverlayInputs(opts MountFileSystemOptions, homeDir string, identity MountCacheIdentity) (string, string, []string, error) {
-	mountProfile, localRoot, packPaths, err := mountOverlayPolicy(opts)
-	if err != nil {
-		return "", "", nil, err
-	}
-	if mountProfile == noneMountProfile {
-		return mountProfile, "", packPaths, nil
-	}
-	if localRoot == "" {
-		localRoot = defaultMountLocalRoot(homeDir, identity)
-	}
-	if localRoot, err = validatePackLocalRoot(localRoot, "--local-root"); err != nil {
-		return "", "", nil, err
-	}
-	if err := os.MkdirAll(filepath.Join(localRoot, "overlay"), 0o755); err != nil {
-		return "", "", nil, apperr.Wrap("fs.mount_prepare_local_root", "runtime", 1, fmt.Sprintf("prepare local overlay root %q", localRoot), err)
-	}
-	return mountProfile, localRoot, packPaths, nil
 }
 
 // mountOverlayAudit resolves the local overlay the companion may unpack into for

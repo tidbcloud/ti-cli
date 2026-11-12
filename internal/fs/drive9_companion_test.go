@@ -729,9 +729,9 @@ func TestDrive9MountAuditsUnpackedOverlaySymlinks(t *testing.T) {
 	}
 }
 
-// TestDrive9MountDerivesOverlayRootForAudit proves the derived default overlay is
-// passed to the companion and audited, so an auto-unpack without an explicit
-// --local-root is covered too.
+// TestDrive9MountDerivesOverlayRootForAudit proves the companion's own default
+// overlay root is audited without being pinned, so an auto-unpack without an
+// explicit --local-root is covered too.
 func TestDrive9MountDerivesOverlayRootForAudit(t *testing.T) {
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
@@ -766,23 +766,90 @@ func TestDrive9MountDerivesOverlayRootForAudit(t *testing.T) {
 }
 
 // TestCompanionMountLocalRootMatchesDrive9 pins the replica of drive9's default
-// root derivation, including the value observed from the real companion binary
-// (server https://drive9.example, remote /, credential sk-test).
+// root derivation against directories observed from the real companion binary
+// (server https://drive9.example, credential sk-test): `/`, a nested root, the
+// same root with a trailing slash, and a non-ASCII root. The cache root itself is
+// covered separately by TestCompanionCacheRootMatchesUserCacheDir.
 func TestCompanionMountLocalRootMatchesDrive9(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", "")
 	home := filepath.Join(t.TempDir(), "companion-home")
+	for _, tc := range []struct{ remote, dir string }{
+		{"/", "root-26d2b529bbcb6733"},
+		{"/workspace/repo", "repo-60c459977811d6a0"},
+		{"/workspace/repo/", "repo-60c459977811d6a0"},
+		{"/café", "caf-23458cc75cc9d02d"},
+		{"/工作区/repo", "repo-993cccf97afe07b6"},
+	} {
+		root, err := companionMountLocalRootAt(home, "https://drive9.example", tc.remote, "sk-test")
+		if err != nil {
+			t.Fatalf("%s: %v", tc.remote, err)
+		}
+		want := filepath.Join(companionCacheRoot(home), "drive9", "mounts", tc.dir)
+		if root != want {
+			t.Fatalf("%s: companion mount root = %q, want %q", tc.remote, root, want)
+		}
+	}
+}
+
+// TestCompanionCacheRootMatchesUserCacheDir pins the cache root against
+// os.UserCacheDir semantics, which the companion inherits: XDG_CACHE_HOME applies
+// only on the default Unix branch (not darwin or Windows), and a relative value is
+// used verbatim so the audit fails loudly instead of checking a wrong directory.
+func TestCompanionCacheRootMatchesUserCacheDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("XDG_CACHE_HOME", "")
+	if got, want := companionCacheRoot(home), filepath.Join(home, ".cache"); runtime.GOOS != "darwin" && runtime.GOOS != "windows" && got != want {
+		t.Fatalf("default cache root = %q, want %q", got, want)
+	}
+	if runtime.GOOS == "darwin" {
+		if got, want := companionCacheRoot(home), filepath.Join(home, "Library", "Caches"); got != want {
+			t.Fatalf("darwin cache root = %q, want %q", got, want)
+		}
+	}
+
+	xdg := filepath.Join(t.TempDir(), "xdg-cache")
+	t.Setenv("XDG_CACHE_HOME", xdg)
 	root, err := companionMountLocalRootAt(home, "https://drive9.example", "/", "sk-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(home, ".cache", "drive9", "mounts", "root-26d2b529bbcb6733")
-	if runtime.GOOS == "darwin" {
-		want = filepath.Join(home, "Library", "Caches", "drive9", "mounts", "root-26d2b529bbcb6733")
+	switch runtime.GOOS {
+	case "darwin":
+		if !strings.HasPrefix(root, filepath.Join(home, "Library", "Caches")) {
+			t.Fatalf("darwin ignored Library/Caches in favour of XDG: %q", root)
+		}
+	case "windows":
+		// Windows uses LOCALAPPDATA, not XDG_CACHE_HOME.
+		if strings.HasPrefix(root, xdg) {
+			t.Fatalf("windows honoured XDG_CACHE_HOME: %q", root)
+		}
+	default:
+		if !strings.HasPrefix(root, xdg) {
+			t.Fatalf("unix branch did not honour XDG_CACHE_HOME: %q", root)
+		}
 	}
-	if root != want {
-		t.Fatalf("companion mount root = %q, want %q", root, want)
+
+	t.Setenv("XDG_CACHE_HOME", "relative-cache")
+	root, err = companionMountLocalRootAt(home, "https://drive9.example", "/", "sk-test")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got, err := companionMountLocalRootAt(home, "https://drive9.example", "/workspace/repo", "sk-test"); err != nil || !strings.HasPrefix(filepath.Base(got), "repo-") {
-		t.Fatalf("label derivation for a nested root = %q, %v", got, err)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
+		if filepath.IsAbs(root) {
+			t.Fatalf("relative XDG_CACHE_HOME was not used verbatim: %q", root)
+		}
+		if _, _, auditErr := scanOverlayEntries(root); apperr.CodeFor(auditErr) != "fs.unpack_unknown_local_root" {
+			t.Fatalf("relative root audit error = %v", auditErr)
+		}
+	}
+}
+
+// TestCompanionMountLocalRootRejectsMissingProfile keeps the security linchpin
+// from silently succeeding without a profile.
+func TestCompanionMountLocalRootRejectsMissingProfile(t *testing.T) {
+	service := Service{HomeDir: t.TempDir()}
+	if _, err := service.companionMountLocalRoot(nil, "/"); apperr.CodeFor(err) != "fs.missing_profile" {
+		t.Fatalf("nil profile error = %v", err)
 	}
 }
 
@@ -822,7 +889,7 @@ func TestDrive9MountTrimsUnpackArchivePath(t *testing.T) {
 }
 
 // TestDrive9MountRejectsPackFlagsWithoutProfile keeps the live path aligned with
-// --dry-run: mountOverlayInputs is the single eligibility owner.
+// --dry-run: mountOverlayPolicy is the single eligibility owner.
 func TestDrive9MountRejectsPackFlagsWithoutProfile(t *testing.T) {
 	companion, _ := buildFakeDrive9(t)
 	service := testCompanionService(t.TempDir(), companion)
@@ -926,6 +993,25 @@ func TestDrive9MountAuditsWhenMountFailsAfterUnpack(t *testing.T) {
 	if _, statErr := os.Lstat(filepath.Join(localRoot, "overlay", "evil")); !os.IsNotExist(statErr) {
 		t.Fatalf("escaping symlink was not removed: %v", statErr)
 	}
+}
+
+// TestDrive9MountStopsDaemonAfterFailedMountWithCleanAudit covers the case where
+// the foreground client failed but the daemon may still be unpacking: the mount
+// is stopped even when the audit is clean.
+func TestDrive9MountStopsDaemonAfterFailedMountWithCleanAudit(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	localRoot := filepath.Join(t.TempDir(), "local")
+	t.Setenv("TI_FAKE_DRIVE9_MOUNT_FAIL", "1")
+
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, MountProfile: "portable", LocalRoot: localRoot,
+	}); err == nil {
+		t.Fatal("failed mount reported success")
+	}
+	requireFakeDrive9Call(t, recordPath, "umount")
 }
 
 // TestDrive9MountNoAutoUnpackKeepsOldFlagShape covers the eligibility predicate:
