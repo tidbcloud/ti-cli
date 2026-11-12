@@ -1137,26 +1137,39 @@ command and should follow Drive9 public CLI behavior.
 mount consumption path.
 
 Mount-time overlay unpack is a security boundary. `ti fs mount-file-system`
-unpacks a local overlay when auto-unpack is enabled with a
-`coding-agent`/`portable` mount profile or `--pack-path`, or when
-`--unpack-archive-path` is given, so it must run the same overlay symlink audit
-as `ti fs unpack-file-system`: resolve the local overlay before the companion
+unpacks a local overlay when auto-unpack is enabled and the effective pack-path
+set is non-empty (`portable` supplies `/` by default; `--pack-path` adds more),
+or when `--unpack-archive-path` is given, so it must run the same overlay symlink
+audit as `ti fs unpack-file-system`: resolve the local overlay before the companion
 runs (refuse an unresolvable unpack target instead of skipping the audit), pin
 it with `--local-root` so both sides write the same directory, snapshot it, and
 audit it at the point unpack is observably finished - after the mount path is
-readable, and again when readiness times out (the timeout path leaves the mount
-running, so it must still be audited and stopped on violation). Never audit only
-right after the foreground mount command returns; the companion daemon may still
-be unpacking. Readiness means the mount path is readable and per the unpack
-contract that implies unpack is complete. Unpack is not atomic, so also audit
-when the companion reported failure. A failed cleanup after an audit rejection
-must say the mount may still be running and keep the mount locator so
-`ti fs unmount-file-system` can retry. `mountOverlayInputs` is the single owner
-of profile eligibility, the effective local root, and the effective pack paths;
+readable, and also when readiness times out. Never audit only right after the
+foreground mount command returns; the companion daemon may still be unpacking.
+Readiness means the mount path is readable and per the unpack contract that
+implies unpack is complete. Unpack is not atomic, so also audit when the
+companion reported failure, and audit before tearing down a mount whose locator
+write failed. If an unpack-capable mount times out before readiness it must be
+stopped even though an ordinary timed-out mount is left running: an unreadable
+mount may still finish unpacking after ti returns, which would leave the escape
+unaudited. A failed cleanup after an audit rejection must say the mount may still
+be running and keep the mount locator so `ti fs unmount-file-system` can retry.
+Audit attribution is snapshot-based, so a link that lands outside an audited run
+window is treated as pre-existing local state by later audits.
+
+`mountOverlayInputs` is the single owner of profile eligibility, the effective
+local root, the effective pack paths, and the none-profile `--unpack-archive-path`
+rule; live execution and `--dry-run` must both go through it.
 `--no-auto-unpack` disables only the profile/pack-path driven unpack, not an
 explicit `--unpack-archive-path`. Ordinary mounts must keep their flag shape, so
 only a mount that actually unpacks or names `--local-root` gets a resolved
-`--local-root`, and a mount that does not unpack is not audited.
+`--local-root`, and a mount that does not unpack is not audited. In ti's model
+only `portable` carries default pack paths, so a bare `coding-agent` mount is not
+audited. That relies on three companion behaviours that are not tested here and
+must be confirmed with the drive9 side: the companion derives the same default
+root as `defaultMountLocalRoot` when `--local-root` is absent (ti pins it anyway),
+honours `--no-auto-unpack` exactly, and does not unpack on its own for a bare
+`coding-agent` profile.
 
 `ti fs drain-file-system` is meaningful only for FUSE mounts where the
 companion records a drain control socket. WebDAV mounts flush through normal

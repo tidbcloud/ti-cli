@@ -138,16 +138,23 @@ type MountRuntimeCheck struct {
 
 func (s Service) MountFileSystem(ctx context.Context, opts MountFileSystemOptions) (MountResult, error) {
 	var err error
-	opts, err = normalizeLayerMountOptions(opts)
+	opts, err = normalizeMountOptions(opts)
 	if err != nil {
 		return MountResult{}, err
 	}
 	return s.drive9MountFileSystem(ctx, opts)
 }
 
+// normalizeMountOptions trims the flag values the unpack predicate and the
+// companion argv must agree on, then applies the layer rules.
+func normalizeMountOptions(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
+	opts.UnpackArchivePath = strings.TrimSpace(opts.UnpackArchivePath)
+	return normalizeLayerMountOptions(opts)
+}
+
 func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, opts MountFileSystemOptions) (dryrun.Result, error) {
 	var err error
-	opts, err = normalizeLayerMountOptions(opts)
+	opts, err = normalizeMountOptions(opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -625,8 +632,13 @@ func (s Service) mountOverlayInputs(opts MountFileSystemOptions, homeDir string,
 		if err := os.MkdirAll(filepath.Join(localRoot, "overlay"), 0o755); err != nil {
 			return "", "", nil, apperr.Wrap("fs.mount_prepare_local_root", "runtime", 1, fmt.Sprintf("prepare local overlay root %q", localRoot), err)
 		}
-	} else if localRoot != "" || len(packPaths) > 0 {
-		return "", "", nil, apperr.New("fs.invalid_mount_profile", "usage", 2, "--local-root and --pack-path require --mount-profile coding-agent or portable")
+	} else {
+		if localRoot != "" || len(packPaths) > 0 {
+			return "", "", nil, apperr.New("fs.invalid_mount_profile", "usage", 2, "--local-root and --pack-path require --mount-profile coding-agent or portable")
+		}
+		if strings.TrimSpace(opts.UnpackArchivePath) != "" {
+			return "", "", nil, apperr.New("fs.mount_unpack_requires_profile", "usage", 2, "--unpack-archive-path requires --mount-profile coding-agent or portable, so the unpacked overlay can be audited")
+		}
 	}
 	return profileConfig.Name, localRoot, packPaths, nil
 }
@@ -641,9 +653,6 @@ func (s Service) mountOverlayInputs(opts MountFileSystemOptions, homeDir string,
 func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath string) (string, bool, error) {
 	if opts.Profile == nil {
 		return "", false, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
-	}
-	if _, err := loadPackProfileConfig(opts.MountProfile); err != nil {
-		return "", false, err
 	}
 	fileSystemName := strings.TrimSpace(opts.FileSystemName)
 	if fileSystemName == "" {
@@ -666,22 +675,19 @@ func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath strin
 	}
 	identity := mountCacheIdentity(opts.Profile, fileSystemName, mountPath, remotePath, endpoint)
 	// mountOverlayInputs is the single owner of profile eligibility, the
-	// effective local root, and the effective pack paths, so the live path and
-	// the dry-run path cannot reject different flag combinations.
+	// effective local root, the effective pack paths, and the
+	// --unpack-archive-path/profile rule, so the live path and --dry-run cannot
+	// reject different flag combinations.
 	mountProfile, localRoot, packPaths, err := s.mountOverlayInputs(opts, homeDir, identity)
 	if err != nil {
 		return "", false, err
 	}
-	unpackRequested := strings.TrimSpace(opts.UnpackArchivePath) != ""
 	if mountProfile == noneMountProfile {
-		if unpackRequested {
-			return "", false, apperr.New("fs.mount_unpack_requires_profile", "usage", 2, "--unpack-archive-path requires --mount-profile coding-agent or portable, so the unpacked overlay can be audited")
-		}
 		return "", false, nil
 	}
 	// --no-auto-unpack disables the profile/pack-path driven unpack, but an
 	// explicit --unpack-archive-path still unpacks and must be audited.
-	unpackPossible := unpackRequested || (!opts.NoAutoUnpack && len(packPaths) > 0)
+	unpackPossible := strings.TrimSpace(opts.UnpackArchivePath) != "" || (!opts.NoAutoUnpack && len(packPaths) > 0)
 	if !unpackPossible && strings.TrimSpace(opts.LocalRoot) == "" {
 		return "", false, nil
 	}

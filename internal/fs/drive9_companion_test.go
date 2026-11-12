@@ -761,6 +761,41 @@ func TestDrive9MountDerivesOverlayRootForAudit(t *testing.T) {
 	}
 }
 
+// TestDrive9MountDryRunMatchesLiveUnpackEligibility keeps --dry-run and real
+// execution on the same eligibility owner for the none-profile unpack rule.
+func TestDrive9MountDryRunMatchesLiveUnpackEligibility(t *testing.T) {
+	service := testCompanionService(t.TempDir(), filepath.Join(t.TempDir(), "ti-drive9"))
+	opts := MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "mnt"),
+		MountProfile: "none", UnpackArchivePath: "/workspace/backup.tgz",
+	}
+	if _, err := service.DryRunMountFileSystem(context.Background(), "ti fs mount-file-system", opts); apperr.CodeFor(err) != "fs.mount_unpack_requires_profile" {
+		t.Fatalf("dry-run unpack eligibility error = %v", err)
+	}
+	if _, err := service.MountFileSystem(context.Background(), opts); apperr.CodeFor(err) != "fs.mount_unpack_requires_profile" {
+		t.Fatalf("live unpack eligibility error = %v", err)
+	}
+}
+
+// TestDrive9MountTrimsUnpackArchivePath keeps a whitespace-only flag from
+// reaching the companion while ti treats it as absent.
+func TestDrive9MountTrimsUnpackArchivePath(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	service.mountPointActive = trueMountEvidence
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, MountProfile: "coding-agent", UnpackArchivePath: "   ",
+	}); err != nil {
+		t.Fatalf("whitespace unpack mount failed: %v", err)
+	}
+	call := requireFakeDrive9Call(t, recordPath, "mount")
+	if containsArg(call.Args, "--unpack") || containsArg(call.Args, "--local-root") {
+		t.Fatalf("whitespace unpack path was forwarded: %#v", call.Args)
+	}
+}
+
 // TestDrive9MountRejectsPackFlagsWithoutProfile keeps the live path aligned with
 // --dry-run: mountOverlayInputs is the single eligibility owner.
 func TestDrive9MountRejectsPackFlagsWithoutProfile(t *testing.T) {
@@ -773,6 +808,98 @@ func TestDrive9MountRejectsPackFlagsWithoutProfile(t *testing.T) {
 		if _, err := service.MountFileSystem(context.Background(), opts); apperr.CodeFor(err) != "fs.invalid_mount_profile" {
 			t.Fatalf("mount profile eligibility error = %v for %#v", err, opts)
 		}
+	}
+}
+
+// TestDrive9MountAuditsLinkInstalledDuringReadinessWait discriminates the audit
+// placement: the fake companion installs the escaping link only after the
+// foreground mount command returned, so an audit placed before the readiness wait
+// would miss it and report a clean mount.
+func TestDrive9MountAuditsLinkInstalledDuringReadinessWait(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	localRoot := filepath.Join(t.TempDir(), "local")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evil := filepath.Join(localRoot, "overlay", "evil")
+	service.mountPointActive = func(string) (bool, error) {
+		_, statErr := os.Lstat(evil)
+		return statErr == nil, nil
+	}
+	t.Setenv("TI_FAKE_ESCAPE_TARGET", outside)
+	t.Setenv("TI_FAKE_MOUNT_ESCAPE_DELAY_MS", "200")
+
+	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, MountProfile: "portable", LocalRoot: localRoot,
+		ReadyTimeout: 5 * time.Second,
+	})
+	if apperr.CodeFor(err) != "fs.unsafe_pack_symlink" {
+		t.Fatalf("link installed during readiness was not audited: %v", err)
+	}
+	if _, statErr := os.Lstat(evil); !os.IsNotExist(statErr) {
+		t.Fatalf("escaping symlink was not removed: %v", statErr)
+	}
+	requireFakeDrive9Call(t, recordPath, "umount")
+}
+
+// TestDrive9MountStopsUnpackMountOnReadyTimeout covers the residual window: a
+// clean audit at the timeout point does not prove unpack finished, so an
+// unpack-capable mount is stopped instead of being left running.
+func TestDrive9MountStopsUnpackMountOnReadyTimeout(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	home := t.TempDir()
+	service := testCompanionService(home, companion)
+	service.mountPointActive = func(string) (bool, error) { return false, nil }
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	localRoot := filepath.Join(t.TempDir(), "local")
+
+	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, MountProfile: "portable", LocalRoot: localRoot,
+		ReadyTimeout: 50 * time.Millisecond,
+	})
+	if apperr.CodeFor(err) != "fs.mount_ready_timeout" {
+		t.Fatalf("unpack ready-timeout error = %v", err)
+	}
+	if !strings.Contains(apperr.MessageFor(err), "stopped") {
+		t.Fatalf("timeout error does not explain the teardown: %v", err)
+	}
+	requireFakeDrive9Call(t, recordPath, "umount")
+	if _, _, locatorErr := mountlocator.Read(home, mountPath); !os.IsNotExist(locatorErr) {
+		t.Fatalf("locator left behind after the timeout teardown: %v", locatorErr)
+	}
+}
+
+// TestDrive9MountAuditsWhenMountFailsAfterUnpack covers the companion-failure
+// branch: a partial unpack can install the link even though mount reported an
+// error, and the mount must still be torn down.
+func TestDrive9MountAuditsWhenMountFailsAfterUnpack(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	localRoot := filepath.Join(t.TempDir(), "local")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TI_FAKE_MOUNT_ESCAPE_SYMLINK", "1")
+	t.Setenv("TI_FAKE_ESCAPE_TARGET", outside)
+	t.Setenv("TI_FAKE_DRIVE9_MOUNT_FAIL_AFTER_UNPACK", "1")
+
+	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, MountProfile: "portable", LocalRoot: localRoot,
+	})
+	if apperr.CodeFor(err) != "fs.mount_failed_unsafe_overlay" {
+		t.Fatalf("mount-failure audit error = %v", err)
+	}
+	requireFakeDrive9Call(t, recordPath, "umount")
+	if _, statErr := os.Lstat(filepath.Join(localRoot, "overlay", "evil")); !os.IsNotExist(statErr) {
+		t.Fatalf("escaping symlink was not removed: %v", statErr)
 	}
 }
 
@@ -1128,7 +1255,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"time"
 )
 
 type callRecord struct {
@@ -1137,6 +1267,14 @@ type callRecord struct {
 }
 
 func main() {
+	if os.Getenv("TI_FAKE_ESCAPE_WORKER") == "1" {
+		ms, _ := strconv.Atoi(os.Getenv("TI_FAKE_MOUNT_ESCAPE_DELAY_MS"))
+		time.Sleep(time.Duration(ms) * time.Millisecond)
+		root := os.Getenv("TI_FAKE_ESCAPE_ROOT")
+		_ = os.MkdirAll(filepath.Join(root, "overlay"), 0o755)
+		_ = os.Symlink(os.Getenv("TI_FAKE_ESCAPE_TARGET"), filepath.Join(root, "overlay", "evil"))
+		return
+	}
 	args := os.Args[1:]
 	record(args)
 	if len(args) > 0 && args[0] == "--help" {
@@ -1214,6 +1352,20 @@ func main() {
 				_ = os.MkdirAll(filepath.Join(root, "overlay"), 0o755)
 				_ = os.Symlink(os.Getenv("TI_FAKE_ESCAPE_TARGET"), filepath.Join(root, "overlay", "evil"))
 			}
+		}
+		if os.Getenv("TI_FAKE_MOUNT_ESCAPE_DELAY_MS") != "" {
+			if root := flagValue(args, "--local-root"); root != "" && os.Getenv("TI_FAKE_ESCAPE_TARGET") != "" {
+				// The mount command is a foreground client for a daemon, so the
+				// delayed write must survive this process exiting: start a
+				// detached worker that installs the link later.
+				worker := exec.Command(os.Args[0])
+				worker.Env = append(os.Environ(), "TI_FAKE_ESCAPE_WORKER=1", "TI_FAKE_ESCAPE_ROOT="+root)
+				_ = worker.Start()
+			}
+		}
+		if os.Getenv("TI_FAKE_DRIVE9_MOUNT_FAIL_AFTER_UNPACK") == "1" {
+			fmt.Fprintln(os.Stderr, "mount: drive9 mount failed after unpack")
+			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stderr, "drive9: mount running in background")
 		fmt.Fprintln(os.Stderr, "drive9: unmount with drive9 umount /workspace")

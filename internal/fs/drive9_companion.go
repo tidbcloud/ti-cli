@@ -1434,12 +1434,22 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 			// Unpack is not atomic, so a partial install can already have written
 			// an escaping link even though the companion reported failure.
 			if auditErr := auditUnpackedOverlaySymlinks(auditRoot, overlayBefore); auditErr != nil {
-				return MountResult{}, apperr.New("fs.mount_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", runErr, auditErr))
+				stopErr := s.stopMountAfterUnsafeAudit(ctx, opts, auditErr)
+				return MountResult{}, apperr.New("fs.mount_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", runErr, apperr.MessageFor(stopErr)))
 			}
 		}
 		return MountResult{}, runErr
 	}
 	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", opts); err != nil {
+		// A partially completed unpack can leave an escaping link behind, and a
+		// later mount would record it as pre-existing state, so audit before
+		// deciding whether the failed mount can be torn down.
+		if unpackPossible {
+			if auditErr := auditUnpackedOverlaySymlinks(auditRoot, overlayBefore); auditErr != nil {
+				stopErr := s.stopMountAfterUnsafeAudit(ctx, opts, auditErr)
+				return MountResult{}, apperr.New("fs.mount_failed_unsafe_overlay", "runtime", 1, fmt.Sprintf("%v; %v", err, apperr.MessageFor(stopErr)))
+			}
+		}
 		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
 		return MountResult{}, err
 	}
@@ -1455,6 +1465,11 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		}
 	}
 	if readyErr != nil {
+		if unpackPossible {
+			// Readiness never completed, so unpack may still be running; leaving
+			// the mount up would leave that unpack permanently unaudited.
+			return MountResult{}, s.stopMountAfterReadyTimeout(ctx, opts, readyErr)
+		}
 		return MountResult{}, readyErr
 	}
 	endpoint, _ := s.resolveFS(opts.Profile)
@@ -1469,14 +1484,36 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 // keeps the locator when the unmount fails so the user can retry through ti, and
 // says so in the error.
 func (s Service) stopMountAfterUnsafeAudit(ctx context.Context, opts MountFileSystemOptions, auditErr error) error {
-	_, umountErr := s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
+	umountErr := s.umountMount(ctx, opts)
 	if umountErr != nil {
 		return apperr.New(apperr.CodeFor(auditErr), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped: %v; retry ti fs unmount-file-system --mount-path %q", auditErr, opts.MountPath, umountErr, opts.MountPath))
 	}
+	s.removeMountLocator(opts)
+	return auditErr
+}
+
+// stopMountAfterReadyTimeout tears down an unpack-capable mount whose readiness
+// timed out. The availability contract leaves a timed-out mount running, but an
+// unreadable mount may still be unpacking, so an escaping link could be installed
+// after ti returns; this is the documented exception.
+func (s Service) stopMountAfterReadyTimeout(ctx context.Context, opts MountFileSystemOptions, readyErr error) error {
+	umountErr := s.umountMount(ctx, opts)
+	if umountErr != nil {
+		return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("%v; the mount was stopped because an unpack may still be running, but it could not be stopped: %v; retry ti fs unmount-file-system --mount-path %q", readyErr, umountErr, opts.MountPath))
+	}
+	s.removeMountLocator(opts)
+	return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("%v; the mount was stopped because an unpack may still be running and would otherwise stay unaudited", readyErr))
+}
+
+func (s Service) umountMount(ctx context.Context, opts MountFileSystemOptions) error {
+	_, err := s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
+	return err
+}
+
+func (s Service) removeMountLocator(opts MountFileSystemOptions) {
 	if homeDir, err := s.homeDir(); err == nil {
 		_ = mountlocator.Remove(homeDir, opts.MountPath)
 	}
-	return auditErr
 }
 
 func (s Service) drive9DrainFileSystem(ctx context.Context, opts DrainFileSystemOptions) (DrainResult, error) {
