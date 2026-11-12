@@ -61,16 +61,25 @@ func companionMountLocalRootAt(companionHome, server, remotePath, credential str
 	}
 	sum := sha256.Sum256([]byte(strings.TrimSpace(server) + "\n" + remoteRoot + "\n" + fingerprint))
 	hash := hex.EncodeToString(sum[:8])
-	return filepath.Join(companionCacheRoot(companionHome), "drive9", "mounts", companionMountRootLabel(remoteRoot)+"-"+hash), nil
+	root := filepath.Join(companionCacheRoot(companionHome), "drive9", "mounts", companionMountRootLabel(remoteRoot)+"-"+hash)
+	if !filepath.IsAbs(root) {
+		return "", apperr.New("fs.unpack_unknown_local_root", "runtime", 1, "the companion cache root is not absolute, so the unpacked overlay cannot be audited; check XDG_CACHE_HOME="+strings.TrimSpace(os.Getenv("XDG_CACHE_HOME")))
+	}
+	return root, nil
 }
 
-// companionCacheRoot mirrors os.UserCacheDir exactly as the companion resolves
-// it. The companion runs with HOME (and USERPROFILE) set to the resource-scoped
-// companion home, so the Unix and darwin branches resolve under that home;
-// Windows reads LOCALAPPDATA, which ti does not change. XDG_CACHE_HOME applies
-// only to the default Unix branch and is used verbatim: a relative value must
-// flow through so scanOverlayEntries rejects the non-absolute root loudly instead
-// of auditing a plausible but wrong directory.
+// companionCacheRoot mirrors os.UserCacheDir as the companion resolves it on the
+// shipped platforms: darwin always uses $HOME/Library/Caches, Windows reads
+// LOCALAPPDATA (which ti does not override), and every other platform uses the
+// Unix rule (XDG_CACHE_HOME when set, otherwise $HOME/.cache). The companion runs
+// with HOME and USERPROFILE set to the resource-scoped companion home, so those
+// branches resolve under it.
+//
+// One deliberate deviation: XDG_CACHE_HOME is used verbatim, without trimming and
+// without an absolute-path check. Current Go releases make os.UserCacheDir return
+// an error for a relative value; passing it through here makes
+// companionMountLocalRootAt reject the root with an actionable error instead of
+// silently auditing a plausible but wrong directory.
 func companionCacheRoot(companionHome string) string {
 	switch runtime.GOOS {
 	case "windows":
@@ -80,10 +89,6 @@ func companionCacheRoot(companionHome string) string {
 		return filepath.Join(companionHome, ".cache")
 	case "darwin":
 		return filepath.Join(companionHome, "Library", "Caches")
-	case "plan9":
-		return filepath.Join(companionHome, "lib", "cache")
-	case "js":
-		return "/cache"
 	default:
 		if xdg := os.Getenv("XDG_CACHE_HOME"); xdg != "" {
 			return xdg

@@ -779,6 +779,11 @@ func TestCompanionMountLocalRootMatchesDrive9(t *testing.T) {
 		{"/workspace/repo/", "repo-60c459977811d6a0"},
 		{"/café", "caf-23458cc75cc9d02d"},
 		{"/工作区/repo", "repo-993cccf97afe07b6"},
+		// A mid-segment rune discriminates the per-rune label rule from a
+		// byte-wise one (a-b vs a--b), which the trimmed vectors above cannot.
+		{"/aéb", "a-b-c2e2dc4f153648d1"},
+		{"/.hidden", "hidden-654418136e00c6da"},
+		{"/x.y", "x.y-114815b006fbfd7c"},
 	} {
 		root, err := companionMountLocalRootAt(home, "https://drive9.example", tc.remote, "sk-test")
 		if err != nil {
@@ -830,17 +835,13 @@ func TestCompanionCacheRootMatchesUserCacheDir(t *testing.T) {
 	}
 
 	t.Setenv("XDG_CACHE_HOME", "relative-cache")
-	root, err = companionMountLocalRootAt(home, "https://drive9.example", "/", "sk-test")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if runtime.GOOS != "darwin" && runtime.GOOS != "windows" {
-		if filepath.IsAbs(root) {
-			t.Fatalf("relative XDG_CACHE_HOME was not used verbatim: %q", root)
+	_, err = companionMountLocalRootAt(home, "https://drive9.example", "/", "sk-test")
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		if err != nil {
+			t.Fatalf("XDG_CACHE_HOME must be ignored on this platform: %v", err)
 		}
-		if _, _, auditErr := scanOverlayEntries(root); apperr.CodeFor(auditErr) != "fs.unpack_unknown_local_root" {
-			t.Fatalf("relative root audit error = %v", auditErr)
-		}
+	} else if apperr.CodeFor(err) != "fs.unpack_unknown_local_root" || !strings.Contains(apperr.MessageFor(err), "XDG_CACHE_HOME") {
+		t.Fatalf("relative XDG_CACHE_HOME error = %v", err)
 	}
 }
 

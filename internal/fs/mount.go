@@ -675,18 +675,6 @@ func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath strin
 	return root, unpackPossible, nil
 }
 
-func defaultMountLocalRoot(homeDir string, identity MountCacheIdentity) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		identity.Profile,
-		identity.FileSystemName,
-		identity.TenantID,
-		identity.Endpoint,
-		identity.RemotePath,
-		identity.APIKeyFingerprint,
-	}, "\x00")))
-	return filepath.Join(homeDir, ".ti", "local", "fs", hex.EncodeToString(sum[:8]))
-}
-
 func mergeMountPackPaths(groups ...[]string) []string {
 	seen := map[string]struct{}{}
 	var out []string
