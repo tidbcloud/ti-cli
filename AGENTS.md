@@ -1153,6 +1153,11 @@ stopped even though an ordinary timed-out mount is left running: an unreadable
 mount may still finish unpacking after ti returns, which would leave the escape
 unaudited. A failed cleanup after an audit rejection must say the mount may still
 be running and keep the mount locator so `ti fs unmount-file-system` can retry.
+Before the locator exists (foreground failure, locator-write failure, or an
+audit rejection on the runErr branch) there is nothing to keep, so the stop
+advice must be locator-aware: point at `HOME=<resource-scoped companion home>
+ti-drive9 umount <mount-path>` instead of the ti unmount command, which would
+fail with `fs.mount_locator_not_found`. Tests pin both advice branches.
 Audit attribution is snapshot-based, so a link that lands outside an audited run
 window is treated as pre-existing local state by later audits.
 
@@ -1179,11 +1184,12 @@ is pinned by vectors observed from the real companion (server
 `repo-60c459977811d6a0` (drive9 drops the trailing slash before hashing),
 `/café` -> `caf-23458cc75cc9d02d` (label sanitization is per rune, the trimmed
 label drops the trailing `-`), and `/工作区/repo` -> `repo-993cccf97afe07b6`.
-The cache root mirrors `os.UserCacheDir` exactly: `companionHome/.cache` on the
-default Unix branch with a non-empty `XDG_CACHE_HOME` used verbatim (no trim, no
-absolute-path filter, so a relative value makes the audit fail loudly), darwin
-always `companionHome/Library/Caches`, Windows `os.UserCacheDir()` (LOCALAPPDATA
-is not overridden), plan9 `companionHome/lib/cache`. Length caps are not applied;
+The cache root mirrors `os.UserCacheDir` on the shipped platforms:
+`companionHome/.cache` on the default Unix branch with a non-empty
+`XDG_CACHE_HOME` used verbatim (deliberate deviation: no trim and no
+absolute-path filter, so a relative value fails with an actionable error naming
+the variable), darwin always `companionHome/Library/Caches`, and Windows
+`os.UserCacheDir()` (LOCALAPPDATA is not overridden). Length caps are not applied;
 the empty-credential fingerprint case is unreachable because a mount always
 carries a filesystem token. `autoUnpack := overlayProfile &&
 len(effectivePackPaths) > 0 && !*noAutoUnpack` honours `--no-auto-unpack`

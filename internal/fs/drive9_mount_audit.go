@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
@@ -120,7 +121,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 			// The daemon can outlive its failing foreground client and keep
 			// unpacking, so stop it even when the audit was clean.
 			if umountErr := s.umountMount(ctx, opts); umountErr != nil {
-				return MountResult{}, apperr.New(apperr.CodeFor(runErr), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped (%v) while an unpack may still be in progress; %s", runErr, opts.MountPath, umountErr, s.mountStopHint(opts)))
+				return MountResult{}, apperr.New(apperr.CodeFor(runErr), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped (%v) while an unpack may still be in progress; %s", runErr, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system")))
 			}
 		}
 		return MountResult{}, runErr
@@ -136,7 +137,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 			}
 		}
 		if umountErr := s.umountMount(ctx, opts); umountErr != nil {
-			return MountResult{}, apperr.New(apperr.CodeFor(err), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped (%v) while an unpack may still be in progress; %s", err, opts.MountPath, umountErr, s.mountStopHint(opts)))
+			return MountResult{}, apperr.New(apperr.CodeFor(err), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped (%v) while an unpack may still be in progress; %s", err, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system")))
 		}
 		return MountResult{}, err
 	}
@@ -173,7 +174,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 func (s Service) stopMountAfterUnsafeAudit(ctx context.Context, opts MountFileSystemOptions, auditErr error) error {
 	umountErr := s.umountMount(ctx, opts)
 	if umountErr != nil {
-		return apperr.New(apperr.CodeFor(auditErr), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped: %v; %s", auditErr, opts.MountPath, umountErr, s.mountStopHint(opts)))
+		return apperr.New(apperr.CodeFor(auditErr), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped: %v; %s", auditErr, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system")))
 	}
 	s.removeMountLocator(opts)
 	return auditErr
@@ -186,7 +187,7 @@ func (s Service) stopMountAfterUnsafeAudit(ctx context.Context, opts MountFileSy
 func (s Service) stopMountAfterReadyTimeout(ctx context.Context, opts MountFileSystemOptions, readyErr error) error {
 	umountErr := s.umountMount(ctx, opts)
 	if umountErr != nil {
-		return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("the mount at %q did not become readable and could not be stopped (%v) while an unpack may still be running; %s", opts.MountPath, umountErr, s.mountStopHint(opts)))
+		return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("the mount at %q did not become readable and could not be stopped (%v) while an unpack may still be running; %s", opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system")))
 	}
 	s.removeMountLocator(opts)
 	return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("the mount at %q did not become readable and was stopped because an unpack may still be running and would otherwise stay unaudited", opts.MountPath))
@@ -196,18 +197,18 @@ func (s Service) stopMountAfterReadyTimeout(ctx context.Context, opts MountFileS
 // resolves through the locator, which exists only after a successful foreground
 // mount, so before that it points at the companion's own umount with the
 // resource-scoped HOME.
-func (s Service) mountStopHint(opts MountFileSystemOptions) string {
+func (s Service) mountStopHint(profile *config.Profile, mountPath, tiUnmountCommand string) string {
 	if homeDir, err := s.homeDir(); err == nil {
-		if _, _, locatorErr := mountlocator.Read(homeDir, opts.MountPath); locatorErr == nil {
-			return fmt.Sprintf("retry ti fs unmount-file-system --mount-path %q", opts.MountPath)
+		if _, _, locatorErr := mountlocator.Read(homeDir, mountPath); locatorErr == nil {
+			return fmt.Sprintf("retry %s --mount-path %q", tiUnmountCommand, mountPath)
 		}
-		if opts.Profile != nil {
-			if companionHome, companionErr := fscred.CompanionHome(homeDir, opts.Profile.Name, opts.Profile.FSResourceName); companionErr == nil {
-				return fmt.Sprintf("stop it with HOME=%q ti-drive9 umount %q", companionHome, opts.MountPath)
+		if profile != nil {
+			if companionHome, companionErr := fscred.CompanionHome(homeDir, profile.Name, profile.FSResourceName); companionErr == nil {
+				return fmt.Sprintf("stop it with HOME=%q ti-drive9 umount %q", companionHome, mountPath)
 			}
 		}
 	}
-	return fmt.Sprintf("retry ti fs unmount-file-system --mount-path %q", opts.MountPath)
+	return fmt.Sprintf("retry %s --mount-path %q", tiUnmountCommand, mountPath)
 }
 
 func (s Service) umountMount(ctx context.Context, opts MountFileSystemOptions) error {

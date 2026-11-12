@@ -21,8 +21,8 @@ import (
 // normalized remote root, and the credential fingerprint.
 //
 // ti must not pass --local-root for this case: doing so would relocate existing
-// overlays, because ti's own default (defaultMountLocalRoot) is a different path.
-// Verified against drive9 v0.10.0: server https://drive9.example, remote "/", and
+// overlays, because the mount runtime's own default overlay path was a different
+// one. Verified against drive9 v0.10.0: server https://drive9.example, remote "/", and
 // credential "sk-test" produce root-26d2b529bbcb6733 under the companion home.
 func (s Service) companionMountLocalRoot(profile *config.Profile, remotePath string) (string, error) {
 	if profile == nil {

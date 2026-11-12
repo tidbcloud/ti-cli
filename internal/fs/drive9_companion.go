@@ -1248,7 +1248,9 @@ func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (
 		return MountResult{}, err
 	}
 	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "vault"); err != nil {
-		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
+		if umountErr := s.umountMount(ctx, MountFileSystemOptions{Profile: opts.Profile, MountPath: opts.MountPath}); umountErr != nil {
+			return MountResult{}, fmt.Errorf("%w; the vault mount at %q may still be running and could not be stopped (%v); %s", err, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs-vault unmount-vault"))
+		}
 		return MountResult{}, err
 	}
 	if err := s.waitForMountReady(ctx, opts.MountPath, opts.ReadyTimeout, fmt.Sprintf("; to stop it run: ti fs-vault unmount-vault --mount-path %q", opts.MountPath)); err != nil {

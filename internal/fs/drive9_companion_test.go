@@ -1015,6 +1015,120 @@ func TestDrive9MountStopsDaemonAfterFailedMountWithCleanAudit(t *testing.T) {
 	requireFakeDrive9Call(t, recordPath, "umount")
 }
 
+// TestMountStopHintMatchesLocatorState pins the advice to observed state: with a
+// locator the ti unmount works, without one it must fall back to the companion.
+func TestMountStopHintMatchesLocatorState(t *testing.T) {
+	home := t.TempDir()
+	service := testCompanionService(home, filepath.Join(t.TempDir(), "ti-drive9"))
+	profile := dataProfile()
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	companionHome, err := fscred.CompanionHome(home, profile.Name, profile.FSResourceName)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hint := service.mountStopHint(profile, mountPath, "ti fs unmount-file-system")
+	if !strings.Contains(hint, "ti-drive9 umount") || !strings.Contains(hint, companionHome) {
+		t.Fatalf("no-locator hint = %q, want the companion umount with its HOME", hint)
+	}
+
+	locator, err := mountlocator.New(profile.Name, profile.FSResourceName, profile.FSPlacementRegionCode, companionHome, mountPath, "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mountlocator.Write(home, locator); err != nil {
+		t.Fatal(err)
+	}
+	hint = service.mountStopHint(profile, mountPath, "ti fs unmount-file-system")
+	if !strings.Contains(hint, "ti fs unmount-file-system") || strings.Contains(hint, "ti-drive9") {
+		t.Fatalf("locator hint = %q, want the ti unmount command", hint)
+	}
+}
+
+// TestDrive9MountPreLocatorTeardownFailureAdvisesCompanion covers the
+// failed-foreground double failure: no locator exists yet, so the only working
+// stop advice is the companion's own umount.
+func TestDrive9MountPreLocatorTeardownFailureAdvisesCompanion(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	t.Setenv("TI_FAKE_DRIVE9_MOUNT_FAIL", "1")
+	t.Setenv("TI_FAKE_UMOUNT_FAIL", "1")
+
+	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "mnt"), MountProfile: "portable",
+		LocalRoot: filepath.Join(t.TempDir(), "local"),
+	})
+	if err == nil {
+		t.Fatal("failed mount reported success")
+	}
+	message := apperr.MessageFor(err)
+	if !strings.Contains(message, "may still be running") || !strings.Contains(message, "ti-drive9 umount") {
+		t.Fatalf("teardown failure message = %q, want companion umount advice", message)
+	}
+	if strings.Contains(message, "unmount-file-system") {
+		t.Fatalf("teardown failure message points at a locator that does not exist: %q", message)
+	}
+}
+
+// TestDrive9MountLocatorWriteFailureTeardownAdvisesCompanion covers the second
+// pre-locator double failure: the locator write failed and the teardown failed.
+func TestDrive9MountLocatorWriteFailureTeardownAdvisesCompanion(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(home, companion)
+	// A file where the locator directory belongs makes the locator write fail.
+	if err := os.MkdirAll(filepath.Join(home, ".ti"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ti", "mounts"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TI_FAKE_UMOUNT_FAIL", "1")
+
+	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "mnt"), MountProfile: "portable",
+		LocalRoot: filepath.Join(t.TempDir(), "local"),
+	})
+	if err == nil {
+		t.Fatal("mount with a failing locator write reported success")
+	}
+	message := apperr.MessageFor(err)
+	if !strings.Contains(message, "may still be running") || !strings.Contains(message, "ti-drive9 umount") {
+		t.Fatalf("locator failure message = %q, want companion umount advice", message)
+	}
+}
+
+// TestDrive9MountUnsafeAuditPreLocatorTeardownAdvisesCompanion covers the
+// runErr + audit-violation branch when its teardown also fails before a locator
+// exists.
+func TestDrive9MountUnsafeAuditPreLocatorTeardownAdvisesCompanion(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(t.TempDir(), companion)
+	localRoot := filepath.Join(t.TempDir(), "local")
+	outside := filepath.Join(t.TempDir(), "outside.txt")
+	if err := os.WriteFile(outside, []byte("victim"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TI_FAKE_MOUNT_ESCAPE_SYMLINK", "1")
+	t.Setenv("TI_FAKE_ESCAPE_TARGET", outside)
+	t.Setenv("TI_FAKE_DRIVE9_MOUNT_FAIL_AFTER_UNPACK", "1")
+	t.Setenv("TI_FAKE_UMOUNT_FAIL", "1")
+
+	_, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "mnt"), MountProfile: "portable",
+		LocalRoot: localRoot,
+	})
+	if apperr.CodeFor(err) != "fs.mount_failed_unsafe_overlay" {
+		t.Fatalf("unsafe audit teardown error = %v", err)
+	}
+	if message := apperr.MessageFor(err); !strings.Contains(message, "ti-drive9 umount") || strings.Contains(message, "unmount-file-system") {
+		t.Fatalf("unsafe audit teardown message = %q, want companion umount advice", message)
+	}
+}
+
 // TestDrive9MountNoAutoUnpackKeepsOldFlagShape covers the eligibility predicate:
 // --no-auto-unpack disables the profile-driven unpack, so no root is pinned and
 // no audit runs.
