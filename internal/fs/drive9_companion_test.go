@@ -1393,6 +1393,37 @@ func TestDryRunDeleteFileSystemReportsCredentialFile(t *testing.T) {
 	}
 }
 
+// TestDrive9VaultMountLocatorWriteFailureTeardownAdvisesCompanion mirrors the fs
+// mount case for vault mounts, and asserts through apperr.MessageFor because that
+// is what the CLI renders: a fmt.Errorf wrapper would hide the advice.
+func TestDrive9VaultMountLocatorWriteFailureTeardownAdvisesCompanion(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(home, companion)
+	if err := os.MkdirAll(filepath.Join(home, ".ti"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ti", "mounts"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TI_FAKE_UMOUNT_FAIL", "1")
+
+	_, err := service.MountVault(context.Background(), VaultMountOptions{
+		Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "vault"), VaultToken: "vault-token",
+	})
+	if err == nil {
+		t.Fatal("vault mount with a failing locator write reported success")
+	}
+	message := apperr.MessageFor(err)
+	if !strings.Contains(message, "may still be running") || !strings.Contains(message, "ti-drive9 umount") {
+		t.Fatalf("vault teardown message = %q, want running warning and companion stop advice", message)
+	}
+	if strings.Contains(message, "ti fs-vault unmount-vault") {
+		t.Fatalf("vault teardown message points at a locator that does not exist: %q", message)
+	}
+}
+
 func TestDrive9VaultHelpers(t *testing.T) {
 	scopes, err := drive9VaultGrantScopes([]string{"db-prod", "db-prod/DB_URL", "/n/vault/canonical/TOKEN"})
 	if err != nil {
