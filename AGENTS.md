@@ -1024,6 +1024,7 @@ Supported MVP placement values:
 | `aws-eu-central-1` | AWS | Frankfurt |
 | `aws-ap-northeast-1` | AWS | Tokyo |
 | `aws-ap-southeast-1` | AWS | Singapore |
+| `aws-sa-east-1` | AWS | São Paulo |
 | `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
 | `gcp-us-east1` | Google Cloud | South Carolina |
 | `azure-centralus` | Microsoft Azure | Central US |
