@@ -927,8 +927,7 @@ Hidden test and developer controls are not supported user configuration:
 - `TI_TEST_TELEMETRY_ENDPOINT` overrides the telemetry endpoint;
 - `TI_RELEASE_API_BASE_URL` overrides the `ti update` release metadata origin,
   and only to an https URL or plain http to localhost;
-- `TI_DRIVE9_BIN` selects the companion binary, and `TI_ALLOW_STANDALONE_DRIVE9=1`
-  allows a bare `drive9` from `PATH`;
+- `TI_DRIVE9_BIN` selects the companion binary;
 - `TI_TEST_FAKE_MOUNT_READY=1` skips the mount evidence check for the fake e2e
   companion. It is compiled only with the `ti_test_controls` build tag.
 
@@ -1114,7 +1113,17 @@ overlay commands, or legacy vault token commands unless Drive9 exposes a
 matching public command and the ti command surface is intentionally updated in
 README, specs, tests, and AGENTS. Use `TI_DRIVE9_BIN` only as a developer/test
 override for a compatible companion (a hidden control, local builds only; see
-above); normal installs should rely on the installer-managed `ti-drive9`.
+above); normal installs should rely on the installer-managed `ti-drive9`. The
+override must be an absolute path to an executable that is not world writable,
+and the companion still runs with the TiDB Cloud private key, the filesystem
+bearer token, and vault tokens, so ti refuses untrusted companions. ti never
+resolves the companion from `$PATH`; the only implicit candidates are ti's own
+directory and `~/.ti/bin`, and symlinked installs are resolved before the
+ownership and permission checks, including the directory that actually contains
+the binary. Those POSIX mode and ownership checks apply only on Unix: Windows
+derives permission bits from the read-only attribute and controls access with
+ACLs, so the shared platform seam skips them there instead of rejecting every
+normal install.
 
 `ti fs create-directory --mode` is a compatibility flag only in the Drive9
 companion path: validate the octal value, but do not emulate directory chmod
@@ -1127,6 +1136,68 @@ command and should follow Drive9 public CLI behavior.
 `delete-secret`, grants, audit, and `run-with-secret`, but not for the vault
 mount consumption path.
 
+Mount-time overlay unpack is a security boundary. `ti fs mount-file-system`
+unpacks a local overlay when auto-unpack is enabled and the effective pack-path
+set is non-empty (`portable` supplies `/` by default; `--pack-path` adds more),
+or when `--unpack-archive-path` is given, so it must run the same overlay symlink
+audit as `ti fs unpack-file-system`: resolve the local overlay before the companion
+runs (refuse an unresolvable unpack target instead of skipping the audit),
+snapshot it, and audit it at the point unpack is observably finished - after the mount path is
+readable, and also when readiness times out. Never audit only right after the
+foreground mount command returns; the companion daemon may still be unpacking.
+Readiness means the mount path is readable and per the unpack contract that
+implies unpack is complete. Unpack is not atomic, so also audit when the
+companion reported failure, and audit before tearing down a mount whose locator
+write failed. If an unpack-capable mount times out before readiness it must be
+stopped even though an ordinary timed-out mount is left running: an unreadable
+mount may still finish unpacking after ti returns, which would leave the escape
+unaudited. A failed cleanup after an audit rejection must say the mount may still
+be running and keep the mount locator so `ti fs unmount-file-system` can retry.
+Before the locator exists (foreground failure, locator-write failure, or an
+audit rejection on the runErr branch) there is nothing to keep, so the stop
+advice must be locator-aware: point at `HOME=<resource-scoped companion home>
+ti-drive9 umount <mount-path>` instead of the ti unmount command, which would
+fail with `fs.mount_locator_not_found`. Tests pin both advice branches.
+Audit attribution is snapshot-based, so a link that lands outside an audited run
+window is treated as pre-existing local state by later audits.
+
+`mountOverlayPolicy` is the single owner of profile eligibility, the effective
+local root, the effective pack paths, and the none-profile `--unpack-archive-path`
+rule; live execution and `--dry-run` must both go through it, and neither may
+create ti's own overlay directory on the companion path.
+`--no-auto-unpack` disables only the profile/pack-path driven unpack, not an
+explicit `--unpack-archive-path`. Ordinary mounts must keep their flag shape, so
+only an explicit `--local-root` is forwarded to the companion, and a mount that
+does not unpack is not audited. Without an explicit root, the audited directory
+is the companion's own default root, replicated in `companionMountLocalRoot`
+from drive9's `defaultMountLocalRoot`:
+`os.UserCacheDir()/drive9/mounts/<safe-label(remote)>-<sha256(server\nremoteRoot\ncredential-key)[:8]>`
+evaluated with the companion HOME, where the credential key is
+`sha256(apiKey)[:8]`. Never pin ti's own `defaultMountLocalRoot` for a
+companion mount: it is a different path and would relocate existing overlays.
+
+The companion assumptions are confirmed against drive9 source
+(`cmd/drive9/cli/{mount,profile,pack}.go`, `v0.10.0`) and its binary. The replica
+is pinned by vectors observed from the real companion (server
+`https://drive9.example`, credential `sk-test`):
+`/` -> `root-26d2b529bbcb6733`, `/workspace/repo` and `/workspace/repo/` ->
+`repo-60c459977811d6a0` (drive9 drops the trailing slash before hashing),
+`/café` -> `caf-23458cc75cc9d02d` (label sanitization is per rune, the trimmed
+label drops the trailing `-`), and `/工作区/repo` -> `repo-993cccf97afe07b6`.
+The cache root mirrors `os.UserCacheDir` on the shipped platforms:
+`companionHome/.cache` on the default Unix branch with a non-empty
+`XDG_CACHE_HOME` used verbatim (deliberate deviation: no trim and no
+absolute-path filter, so a relative value fails with an actionable error naming
+the variable), darwin always `companionHome/Library/Caches`, and Windows
+`os.UserCacheDir()` (LOCALAPPDATA is not overridden). Length caps are not applied;
+the empty-credential fingerprint case is unreachable because a mount always
+carries a filesystem token. `autoUnpack := overlayProfile &&
+len(effectivePackPaths) > 0 && !*noAutoUnpack` honours `--no-auto-unpack`
+exactly, and the builtin `coding-agent` profile has no pack paths while
+`portable` supplies `/`. Residual: a profile file placed inside the companion
+HOME could add pack paths that ti does not know about; ti owns that HOME, so keep
+it out of user-writable configuration.
+
 `ti fs drain-file-system` is meaningful only for FUSE mounts where the
 companion records a drain control socket. WebDAV mounts flush through normal
 file close semantics and should not be expected to support drain.
@@ -1138,7 +1209,12 @@ canonical resource region, `DRIVE9_API_KEY` from its per-resource credentials,
 and TiDB Cloud public/private keys only for remote inventory/create/describe/delete flows. Strip
 inherited `DRIVE9_*` values so user shell state cannot override ti selection.
 Debug and error output must redact TiDB Cloud keys, ti fs API keys, vault tokens, SQL
-credentials, file contents, and secret values.
+credentials, file contents, and secret values. One canonical credential-env
+denylist (`internal/credentialenv`) covers the `TIDB_CLOUD_*`, `TDC_*`,
+`DRIVE9_*`, `TI_FS_*`, and `TI_VAULT_*` families; both the companion environment
+builder and the `ti fs-vault run-with-secret` child environment must scrub
+through it, so non-credential `TI_*` variables such as `TI_PROFILE` and test
+controls stay inherited.
 
 `ti db format-db-connection-string` and `ti db execute-sql-statement` use
 read-write credentials by default. `--read-write`, `--read-only`, and `--admin`

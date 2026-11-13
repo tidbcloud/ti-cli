@@ -20,7 +20,6 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/config/region"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
-	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 	"github.com/tidbcloud/ti-cli/internal/fswrap"
 )
 
@@ -1203,17 +1202,40 @@ func (s Service) drive9ListVaultAuditEvents(ctx context.Context, opts VaultAudit
 	return out, nil
 }
 
+// drive9RunWithVaultSecret reads the requested secret through the companion and
+// then runs the user command from ti itself.
+//
+// Security (secret protection): the companion needs the filesystem API key to
+// read the secret, so handing it the child command as well would let the child
+// inherit that bearer token (and the vault token) if the companion forwards its
+// environment. Reading the secret here and spawning the child from ti keeps the
+// credentials out of the untrusted process: the child only receives scrubbed
+// environment plus the secret fields.
 func (s Service) drive9RunWithVaultSecret(ctx context.Context, opts VaultRunWithSecretOptions) error {
 	if len(opts.Command) == 0 {
 		return apperr.New("vault.missing_command", "usage", 2, "run-with-secret requires `--` followed by a command")
 	}
-	args := append([]string{"vault", "with", opts.SecretPath, "--"}, opts.Command...)
-	runner := s.drive9Runner()
-	runner.Stdin = opts.Stdin
-	runner.Stdout = opts.Stdout
-	runner.Stderr = opts.Stderr
-	_, err := runner.Run(ctx, fswrap.RunOptions{Profile: opts.Profile, Args: args, IncludeFSAPIKey: true, VaultToken: opts.VaultToken})
-	return err
+	name, err := parseVaultPath(strings.TrimSpace(opts.SecretPath))
+	if err != nil {
+		return err
+	}
+	read, err := s.drive9ReadVaultSecret(ctx, VaultReadSecretOptions{
+		Profile:    opts.Profile,
+		SecretName: name,
+		Format:     "json",
+		VaultToken: opts.VaultToken,
+	})
+	if err != nil {
+		return err
+	}
+	// Drive9 returns field maps for the json format without a field selector.
+	// The assertion guards any future caller that reads a single field or raw
+	// value instead of silently injecting an empty environment.
+	result, ok := read.(VaultReadSecretResult)
+	if !ok || len(result.Fields) == 0 {
+		return apperr.New("vault.empty_secret", "runtime", 1, fmt.Sprintf("vault secret %q has no fields to inject", name))
+	}
+	return runVaultSecretCommand(ctx, opts, result.Fields)
 }
 
 func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (MountResult, error) {
@@ -1226,7 +1248,12 @@ func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (
 		return MountResult{}, err
 	}
 	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "vault"); err != nil {
-		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
+		if umountErr := s.umountMount(ctx, MountFileSystemOptions{Profile: opts.Profile, MountPath: opts.MountPath}); umountErr != nil {
+			// Compose an apperr error: the CLI renders apperr.MessageFor, which
+			// reads only the embedded apperr message, so a fmt.Errorf wrapper would
+			// hide the teardown warning and stop hint from the user.
+			return MountResult{}, mountError(err, "%v; the vault mount at %q may still be running and could not be stopped (%v); %s", err, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs-vault unmount-vault"))
+		}
 		return MountResult{}, err
 	}
 	if err := s.waitForMountReady(ctx, opts.MountPath, opts.ReadyTimeout, fmt.Sprintf("; to stop it run: ti fs-vault unmount-vault --mount-path %q", opts.MountPath)); err != nil {
@@ -1305,100 +1332,6 @@ func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSyst
 		return UnpackFileSystemResult{}, auditErr
 	}
 	return UnpackFileSystemResult{Status: "unpacked", ArchivePath: archivePath, LocalRoot: localRoot, RemoteRoot: opts.RemoteRoot, MountProfile: opts.MountProfile, Replaced: !opts.NoReplace, CreatedAt: time.Now().UTC()}, nil
-}
-
-// unpackAuditLocalRoot returns the local root whose overlay the companion
-// unpack writes. An explicit --local-root wins. A mount path only resolves when
-// the mount recorded its local root, because the companion derives the overlay
-// itself; an undeterminable overlay is an error rather than a silent skip.
-func (s Service) unpackAuditLocalRoot(opts UnpackFileSystemOptions) (string, error) {
-	if localRoot := strings.TrimSpace(opts.LocalRoot); localRoot != "" {
-		if !filepath.IsAbs(localRoot) {
-			return "", apperr.New("fs.invalid_local_root", "usage", 2, "--local-root must be an absolute path")
-		}
-		return filepath.Clean(localRoot), nil
-	}
-	mountPath := strings.TrimSpace(opts.MountPath)
-	if mountPath == "" {
-		return "", apperr.New("fs.missing_local_root", "usage", 2, "unpack-file-system requires --local-root or --mount-path")
-	}
-	homeDir, err := s.homeDir()
-	if err != nil {
-		return "", err
-	}
-	if state, _, readErr := mountstate.Read(homeDir, mountPath); readErr == nil {
-		if localRoot := strings.TrimSpace(state.LocalRoot); localRoot != "" && filepath.IsAbs(localRoot) {
-			return filepath.Clean(localRoot), nil
-		}
-	}
-	return "", apperr.New("fs.unpack_unknown_local_root", "runtime", 1, fmt.Sprintf("cannot determine the local overlay root for mount %q, so the unpacked symlinks cannot be audited; pass --local-root with the same overlay the companion uses", mountPath))
-}
-
-func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystemOptions) (MountResult, error) {
-	remotePath, err := normalizeRemotePath(defaultRemotePath(opts.RemotePath))
-	if err != nil {
-		return MountResult{}, err
-	}
-	args := []string{"mount"}
-	if opts.Driver != "" {
-		args = append(args, "--mode", opts.Driver)
-	}
-	if opts.ReadOnly {
-		args = append(args, "--read-only")
-	}
-	if opts.LayerRef != "" {
-		capabilities := []string{drive9CapabilityLayerMount}
-		if opts.CheckpointID != "" {
-			capabilities = append(capabilities, drive9CapabilityCheckpointMount)
-		}
-		if err := s.requireDrive9Capabilities(ctx, opts.Profile, capabilities...); err != nil {
-			return MountResult{}, err
-		}
-		appendFlagValue(&args, "--layer", opts.LayerRef)
-		appendFlagValue(&args, "--checkpoint", opts.CheckpointID)
-	}
-	fuseRequested := strings.TrimSpace(opts.Driver) == "fuse"
-	if fuseRequested {
-		appendFlagValue(&args, "--cache-dir", opts.CacheDir)
-		if opts.ReadCacheMB > 0 {
-			args = append(args, "--cache-size", strconv.FormatInt(opts.ReadCacheMB, 10))
-		}
-		if opts.ReadCacheFileMB > 0 {
-			args = append(args, "--read-cache-max-file-mb", strconv.FormatInt(opts.ReadCacheFileMB, 10))
-		}
-		if opts.ReadCacheTTL > 0 {
-			args = append(args, "--read-cache-ttl", opts.ReadCacheTTL.String())
-		}
-		if opts.WriteBackCache {
-			args = append(args, "--durability", "interactive")
-		}
-	}
-	appendFlagValue(&args, "--profile", opts.MountProfile)
-	appendFlagValue(&args, "--local-root", opts.LocalRoot)
-	if opts.UnpackArchivePath != "" {
-		args = append(args, "--unpack", drive9RemoteMust(opts.UnpackArchivePath))
-	}
-	if opts.NoAutoUnpack {
-		args = append(args, "--no-auto-unpack")
-	}
-	args = append(args, drive9Remote(remotePath), opts.MountPath)
-	result, err := s.drive9Run(ctx, opts.Profile, args, true)
-	if err != nil {
-		return MountResult{}, err
-	}
-	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", opts); err != nil {
-		_, _ = s.drive9Run(ctx, opts.Profile, []string{"umount", opts.MountPath}, false)
-		return MountResult{}, err
-	}
-	if err := s.waitForMountReady(ctx, opts.MountPath, opts.ReadyTimeout, fmt.Sprintf("; to stop it run: ti fs unmount-file-system --mount-path %q", opts.MountPath)); err != nil {
-		return MountResult{}, err
-	}
-	endpoint, _ := s.resolveFS(opts.Profile)
-	driver := drive9MountedDriver(result.Stderr, opts.Driver)
-	if driver == "" {
-		driver = "auto"
-	}
-	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: opts.LocalRoot, PackPaths: opts.PackPaths, WriteBackCache: opts.WriteBackCache, LayerRef: opts.LayerRef, CheckpointID: opts.CheckpointID, ReadOnly: opts.ReadOnly}, nil
 }
 
 func (s Service) drive9DrainFileSystem(ctx context.Context, opts DrainFileSystemOptions) (DrainResult, error) {

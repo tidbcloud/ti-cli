@@ -44,10 +44,10 @@ func (i Info) String() string {
 }
 
 // TestControlsAllowed reports whether hidden test and developer controls
-// (TI_TEST_*, TI_RELEASE_API_BASE_URL, TI_DRIVE9_BIN and
-// TI_ALLOW_STANDALONE_DRIVE9) may apply. They do only in a local build, which
-// only make build stamps, with TI_ALLOW_TEST_ENDPOINTS=1; release builds
-// (installSource=archive), go install and go test binaries always ignore them.
+// (TI_TEST_*, TI_RELEASE_API_BASE_URL and TI_DRIVE9_BIN) may apply. They do only
+// in a local build, which only make build stamps, with
+// TI_ALLOW_TEST_ENDPOINTS=1; release builds (installSource=archive), go install
+// and go test binaries always ignore them.
 func (i Info) TestControlsAllowed() bool {
 	return i.InstallSource == "local" && os.Getenv("TI_ALLOW_TEST_ENDPOINTS") == "1"
 }

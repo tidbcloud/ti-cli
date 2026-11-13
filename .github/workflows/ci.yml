@@ -53,5 +53,13 @@ jobs:
       - name: Build
         run: make build
 
+      - name: Cross-compile and type-check other platforms
+        run: |
+          set -euo pipefail
+          # go vet type-checks _test.go files too, so platform-gated tests
+          # cannot silently rot while CI only runs tests on ubuntu.
+          GOOS=windows GOARCH=amd64 go vet ./...
+          GOOS=darwin GOARCH=arm64 go vet ./...
+
       - name: Build telemetry backend
         run: make build-telemetry-backend build-telemetry-migrator

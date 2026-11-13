@@ -3,17 +3,12 @@ package fs
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"net"
-	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"text/tabwriter"
 	"time"
 
@@ -26,7 +21,6 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/fs/mountcontrol"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountdriver"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
-	"golang.org/x/net/webdav"
 )
 
 const (
@@ -144,16 +138,23 @@ type MountRuntimeCheck struct {
 
 func (s Service) MountFileSystem(ctx context.Context, opts MountFileSystemOptions) (MountResult, error) {
 	var err error
-	opts, err = normalizeLayerMountOptions(opts)
+	opts, err = normalizeMountOptions(opts)
 	if err != nil {
 		return MountResult{}, err
 	}
 	return s.drive9MountFileSystem(ctx, opts)
 }
 
+// normalizeMountOptions trims the flag values the unpack predicate and the
+// companion argv must agree on, then applies the layer rules.
+func normalizeMountOptions(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
+	opts.UnpackArchivePath = strings.TrimSpace(opts.UnpackArchivePath)
+	return normalizeLayerMountOptions(opts)
+}
+
 func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, opts MountFileSystemOptions) (dryrun.Result, error) {
 	var err error
-	opts, err = normalizeLayerMountOptions(opts)
+	opts, err = normalizeMountOptions(opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -187,10 +188,7 @@ func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, 
 	if opts.CheckpointID != "" {
 		checks = append(checks, dryrun.Check{Name: "checkpoint_view", Status: "passed", Message: opts.CheckpointID + " (read-only)"})
 	}
-	description := "normal execution starts a local ti fs FUSE runtime and mounts it at the requested path"
-	if inputs.driver.Name() == "webdav" {
-		description = "normal execution starts a local WebDAV bridge and mounts it at the requested path"
-	}
+	description := "normal execution starts the ti-drive9 companion mount and returns once the requested path is readable"
 	return dryrun.New(
 		commandPath,
 		"mount_file_system",
@@ -472,7 +470,7 @@ func (s Service) mountInputs(opts MountFileSystemOptions) (mountInputs, error) {
 	if readCacheTTL < 0 {
 		return mountInputs{}, apperr.New("fs.invalid_read_cache_ttl", "usage", 2, "--read-cache-ttl must be non-negative")
 	}
-	mountProfile, localRoot, packPaths, err := s.mountOverlayInputs(opts, homeDir, identity)
+	mountProfile, localRoot, packPaths, err := mountOverlayPolicy(opts)
 	if err != nil {
 		return mountInputs{}, err
 	}
@@ -508,8 +506,6 @@ func (s Service) mountForeground(ctx context.Context, inputs mountInputs, remote
 	switch inputs.driver.Name() {
 	case "fuse":
 		return s.mountFUSEForeground(ctx, inputs, remote, checks)
-	case "webdav":
-		return s.mountWebDAVForeground(ctx, inputs, remote, checks)
 	default:
 		return MountResult{}, apperr.New("fs.invalid_mount_driver", "usage", 2, fmt.Sprintf("unsupported ti fs mount driver %q", inputs.driver.Name()))
 	}
@@ -553,84 +549,6 @@ func (s Service) autoUnpackMount(ctx context.Context, inputs mountInputs) (strin
 		return "", err
 	}
 	return fmt.Sprintf("restored %d entries from %s", len(manifest.Entries), archivePath), nil
-}
-
-func (s Service) mountWebDAVForeground(ctx context.Context, inputs mountInputs, remote apifs.StatusResponse, checks []MountRuntimeCheck) (MountResult, error) {
-	prefix, err := randomWebDAVPrefix()
-	if err != nil {
-		return MountResult{}, apperr.Wrap("fs.mount_nonce", "runtime", 1, "create local WebDAV mount prefix", err)
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return MountResult{}, apperr.Wrap("fs.mount_listen", "runtime", 1, "start local ti fs WebDAV bridge", err)
-	}
-	defer listener.Close()
-
-	handler := &webdav.Handler{
-		Prefix:     prefix,
-		FileSystem: newRemoteWebDAVFS(inputs.client, inputs.remotePath, inputs.readOnly),
-		LockSystem: webdav.NewMemLS(),
-	}
-	server := &http.Server{Handler: handler}
-	serverErr := make(chan error, 1)
-	go func() {
-		serverErr <- server.Serve(listener)
-	}()
-
-	addr := listener.Addr().(*net.TCPAddr)
-	serverURL := fmt.Sprintf("http://127.0.0.1:%d%s/", addr.Port, prefix)
-	if err := os.MkdirAll(inputs.mountPath, 0o755); err != nil {
-		_ = server.Close()
-		return MountResult{}, apperr.Wrap("fs.create_mount_path", "runtime", 1, fmt.Sprintf("create mount path %q", inputs.mountPath), err)
-	}
-	mountCtx, cancelMount := context.WithTimeout(ctx, inputs.timeout)
-	if err := inputs.driver.Mount(mountCtx, serverURL, inputs.mountPath); err != nil {
-		cancelMount()
-		_ = server.Close()
-		return MountResult{}, apperr.Wrap("fs.mount_driver", "runtime", 1, err.Error(), err)
-	}
-	cancelMount()
-
-	state, err := mountstate.New(inputs.profile.Name, inputs.fileSystemName, inputs.mountPath, inputs.remotePath, inputs.driver.Name(), inputs.endpoint.BaseURL, os.Getpid(), inputs.readOnly, time.Now().UTC())
-	if err != nil {
-		_ = inputs.driver.Unmount(context.Background(), inputs.mountPath)
-		_ = server.Close()
-		return MountResult{}, apperr.Wrap("fs.mount_state", "runtime", 1, fmt.Sprintf("create mount state for %q", inputs.mountPath), err)
-	}
-	state.MountProfile = inputs.mountProfile
-	state.LocalRoot = inputs.localRoot
-	state.PackPaths = append([]string(nil), inputs.packPaths...)
-	stateFile, err := mountstate.Write(inputs.homeDir, state)
-	if err != nil {
-		_ = inputs.driver.Unmount(context.Background(), inputs.mountPath)
-		_ = server.Close()
-		return MountResult{}, apperr.Wrap("fs.write_mount_state", "runtime", 1, fmt.Sprintf("write mount state for %q", inputs.mountPath), err)
-	}
-	defer func() {
-		_ = mountstate.Remove(inputs.homeDir, inputs.mountPath)
-	}()
-
-	signalCh := make(chan os.Signal, 2)
-	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(signalCh)
-	go func() {
-		select {
-		case <-ctx.Done():
-		case <-signalCh:
-		}
-		_ = inputs.driver.Unmount(context.Background(), inputs.mountPath)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = server.Shutdown(shutdownCtx)
-	}()
-
-	err = <-serverErr
-	if err != nil && err != http.ErrServerClosed {
-		_ = inputs.driver.Unmount(context.Background(), inputs.mountPath)
-		return MountResult{}, apperr.Wrap("fs.mount_server", "runtime", 1, "ti fs WebDAV bridge stopped unexpectedly", err)
-	}
-	checks = append(checks, MountRuntimeCheck{Name: "mount_state", Status: "passed", Message: stateFile})
-	return mountResult("unmounted", inputs, remote, checks, os.Getpid(), stateFile, ""), nil
 }
 
 func mountResult(status string, inputs mountInputs, remote apifs.StatusResponse, checks []MountRuntimeCheck, pid int, stateFile, logFile string) MountResult {
@@ -695,41 +613,66 @@ func mountCacheIdentity(profile *config.Profile, fileSystemName, mountPath, remo
 	return identity
 }
 
-func (s Service) mountOverlayInputs(opts MountFileSystemOptions, homeDir string, identity MountCacheIdentity) (string, string, []string, error) {
+// mountOverlayPolicy is the single owner of overlay eligibility: the mount
+// profile, the effective pack paths, the explicit local root, and the
+// none-profile rules. Both the native mount inputs and the companion audit use
+// it, so live execution and --dry-run cannot reject different flag combinations.
+func mountOverlayPolicy(opts MountFileSystemOptions) (string, string, []string, error) {
 	profileConfig, err := loadPackProfileConfig(opts.MountProfile)
 	if err != nil {
 		return "", "", nil, err
 	}
 	packPaths := mergeMountPackPaths(profileConfig.PackPaths, opts.PackPaths)
 	localRoot := strings.TrimSpace(opts.LocalRoot)
-	if profileConfig.Name != noneMountProfile {
-		if localRoot == "" {
-			localRoot = defaultMountLocalRoot(homeDir, identity)
+	if profileConfig.Name == noneMountProfile {
+		if localRoot != "" || len(packPaths) > 0 {
+			return "", "", nil, apperr.New("fs.invalid_mount_profile", "usage", 2, "--local-root and --pack-path require --mount-profile coding-agent or portable")
 		}
-		var err error
+		if strings.TrimSpace(opts.UnpackArchivePath) != "" {
+			return "", "", nil, apperr.New("fs.mount_unpack_requires_profile", "usage", 2, "--unpack-archive-path requires --mount-profile coding-agent or portable, so the unpacked overlay can be audited")
+		}
+		return profileConfig.Name, "", packPaths, nil
+	}
+	if localRoot != "" {
 		localRoot, err = validatePackLocalRoot(localRoot, "--local-root")
 		if err != nil {
 			return "", "", nil, err
 		}
-		if err := os.MkdirAll(filepath.Join(localRoot, "overlay"), 0o755); err != nil {
-			return "", "", nil, apperr.Wrap("fs.mount_prepare_local_root", "runtime", 1, fmt.Sprintf("prepare local overlay root %q", localRoot), err)
-		}
-	} else if localRoot != "" || len(packPaths) > 0 {
-		return "", "", nil, apperr.New("fs.invalid_mount_profile", "usage", 2, "--local-root and --pack-path require --mount-profile coding-agent or portable")
 	}
 	return profileConfig.Name, localRoot, packPaths, nil
 }
 
-func defaultMountLocalRoot(homeDir string, identity MountCacheIdentity) string {
-	sum := sha256.Sum256([]byte(strings.Join([]string{
-		identity.Profile,
-		identity.FileSystemName,
-		identity.TenantID,
-		identity.Endpoint,
-		identity.RemotePath,
-		identity.APIKeyFingerprint,
-	}, "\x00")))
-	return filepath.Join(homeDir, ".ti", "local", "fs", hex.EncodeToString(sum[:8]))
+// mountOverlayAudit resolves the local overlay the companion may unpack into for
+// this mount, and whether an unpack can happen at all. The reported vulnerability
+// was that mount-time auto/explicit unpack skipped the symlink audit that
+// unpack-file-system enforces. An explicit --local-root is audited as given and
+// passed through; otherwise ti audits the companion's own default root so
+// existing overlays keep their location (see companionMountLocalRoot).
+func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath string) (string, bool, error) {
+	if opts.Profile == nil {
+		return "", false, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
+	}
+	mountProfile, localRoot, packPaths, err := mountOverlayPolicy(opts)
+	if err != nil {
+		return "", false, err
+	}
+	if mountProfile == noneMountProfile {
+		return "", false, nil
+	}
+	// --no-auto-unpack disables the profile/pack-path driven unpack, but an
+	// explicit --unpack-archive-path still unpacks and must be audited.
+	unpackPossible := strings.TrimSpace(opts.UnpackArchivePath) != "" || (!opts.NoAutoUnpack && len(packPaths) > 0)
+	if !unpackPossible && localRoot == "" {
+		return "", false, nil
+	}
+	if localRoot != "" {
+		return localRoot, unpackPossible, nil
+	}
+	root, err := s.companionMountLocalRoot(opts.Profile, remotePath)
+	if err != nil {
+		return "", false, err
+	}
+	return root, unpackPossible, nil
 }
 
 func mergeMountPackPaths(groups ...[]string) []string {
@@ -759,14 +702,6 @@ func mountCacheBytes(value, fallback int64, flagName string) (int64, error) {
 		return fallback, nil
 	}
 	return value << 20, nil
-}
-
-func randomWebDAVPrefix() (string, error) {
-	var buf [16]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return "", err
-	}
-	return "/ti-" + hex.EncodeToString(buf[:]), nil
 }
 
 func statusMessage(value string) string {

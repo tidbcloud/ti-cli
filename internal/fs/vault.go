@@ -2,10 +2,13 @@ package fs
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -16,6 +19,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/authz"
 	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/credentialenv"
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountdriver"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
@@ -443,46 +447,66 @@ func readVaultFieldsDirectory(dir string) (map[string]string, error) {
 	return fields, nil
 }
 
+// normalizeVaultEnvKey converts a stored field name into an environment key
+// exactly like the companion's env export does: it walks UTF-8 bytes, upper-cases
+// ASCII letters, keeps digits (prefixing a leading one with '_'), keeps '_', and
+// replaces every other byte with '_'. Walking bytes rather than runes matters for
+// non-ASCII names ("café" exports as CAF__ because the accented letter is two
+// bytes), so read-secret and run-with-secret agree on both the key and on whether
+// two names collide.
 func normalizeVaultEnvKey(field string) (string, error) {
 	if field == "" {
 		return "", apperr.New("vault.invalid_field", "usage", 2, "field name is required")
 	}
 	var b strings.Builder
-	for i, r := range field {
+	for i := 0; i < len(field); i++ {
+		ch := field[i]
 		switch {
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r - 'a' + 'A')
-		case r >= '0' && r <= '9':
+		case ch >= 'A' && ch <= 'Z', ch == '_':
+			b.WriteByte(ch)
+		case ch >= 'a' && ch <= 'z':
+			b.WriteByte(ch - 'a' + 'A')
+		case ch >= '0' && ch <= '9':
 			if i == 0 {
 				b.WriteByte('_')
 			}
-			b.WriteRune(r)
+			b.WriteByte(ch)
 		default:
 			b.WriteByte('_')
 		}
 	}
-	key := b.String()
-	if key == "" {
-		return "", apperr.New("vault.invalid_field", "usage", 2, "field name cannot normalize to an empty env key")
-	}
-	return key, nil
+	return b.String(), nil
 }
 
-func renderVaultEnv(fields map[string]string) (string, error) {
+// normalizedVaultFieldMap converts field names to environment keys and rejects
+// names that collide, so the export path and the injection path cannot diverge.
+// Colliding names are reported in sorted order to keep the message stable across
+// map iteration.
+func normalizedVaultFieldMap(fields map[string]string) (map[string]string, error) {
 	env := make(map[string]string, len(fields))
 	owners := make(map[string]string, len(fields))
 	for field, value := range fields {
 		key, err := normalizeVaultEnvKey(field)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		if previous, exists := owners[key]; exists {
-			return "", apperr.New("vault.env_collision", "usage", 2, fmt.Sprintf("secret fields %q and %q both normalize to %q", previous, field, key))
+			first, second := previous, field
+			if first > second {
+				first, second = second, first
+			}
+			return nil, apperr.New("vault.env_collision", "usage", 2, fmt.Sprintf("secret fields %q and %q both normalize to %q", first, second, key))
 		}
 		owners[key] = field
 		env[key] = value
+	}
+	return env, nil
+}
+
+func renderVaultEnv(fields map[string]string) (string, error) {
+	env, err := normalizedVaultFieldMap(fields)
+	if err != nil {
+		return "", err
 	}
 	keys := make([]string, 0, len(env))
 	for key := range env {
@@ -499,37 +523,21 @@ func renderVaultEnv(fields map[string]string) (string, error) {
 	return out.String(), nil
 }
 
+// validateVaultEnvFields maps secret field names to child environment keys using
+// the same normalization as `read-secret --format env`, so a secret that command
+// accepts is also injectable here. Field names that normalize to the same key are
+// rejected instead of silently overwriting each other.
 func validateVaultEnvFields(fields map[string]string) (map[string]string, error) {
-	env := make(map[string]string, len(fields))
-	for key, value := range fields {
-		if !isValidVaultEnvKey(key) {
-			return nil, apperr.New("vault.invalid_env_key", "usage", 2, fmt.Sprintf("secret key %q violates @env charset [A-Z_][A-Z0-9_]*", key))
-		}
+	env, err := normalizedVaultFieldMap(fields)
+	if err != nil {
+		return nil, err
+	}
+	for key, value := range env {
 		if idx := indexOfForbiddenVaultEnvByte(value); idx >= 0 {
 			return nil, apperr.New("vault.invalid_env_value", "usage", 2, fmt.Sprintf("secret value for key %q contains forbidden control byte 0x%02x at offset %d", key, value[idx], idx))
 		}
-		env[key] = value
 	}
 	return env, nil
-}
-
-func isValidVaultEnvKey(key string) bool {
-	if key == "" {
-		return false
-	}
-	for i := 0; i < len(key); i++ {
-		ch := key[i]
-		switch {
-		case ch >= 'A' && ch <= 'Z', ch == '_':
-		case ch >= '0' && ch <= '9':
-			if i == 0 {
-				return false
-			}
-		default:
-			return false
-		}
-	}
-	return true
 }
 
 func indexOfForbiddenVaultEnvByte(value string) int {
@@ -540,25 +548,6 @@ func indexOfForbiddenVaultEnvByte(value string) int {
 		}
 	}
 	return -1
-}
-
-func scrubTICredEnv(base []string) []string {
-	out := make([]string, 0, len(base))
-	for _, entry := range base {
-		key, _, ok := strings.Cut(entry, "=")
-		if !ok {
-			out = append(out, entry)
-			continue
-		}
-		switch key {
-		case "TIDB_CLOUD_PRIVATE_KEY", "TIDB_CLOUD_PUBLIC_KEY", "TI_VAULT_TOKEN", "TI_FS_TOKEN", "TI_FS_API_KEY",
-			"TDC_PRIVATE_KEY", "TDC_PUBLIC_KEY", "TDC_VAULT_TOKEN", "TDC_FS_TOKEN",
-			"DRIVE9_PRIVATE_KEY", "DRIVE9_PUBLIC_KEY", "DRIVE9_VAULT_TOKEN", "DRIVE9_API_KEY":
-			continue
-		}
-		out = append(out, entry)
-	}
-	return out
 }
 
 func mergeEnv(base []string, overrides map[string]string) []string {
@@ -658,4 +647,79 @@ func (r VaultAuditResult) Human() string {
 	}
 	_ = writer.Flush()
 	return strings.TrimRight(out.String(), "\n")
+}
+
+// runVaultSecretCommand runs the user command with the vault fields injected into
+// an environment scrubbed of ti's credentials. It is the only place a
+// run-with-secret child is spawned, and it never receives the filesystem bearer
+// token or the vault token.
+func runVaultSecretCommand(ctx context.Context, opts VaultRunWithSecretOptions, fields map[string]string) error {
+	env, err := vaultSecretChildEnv(os.Environ(), fields)
+	if err != nil {
+		return err
+	}
+	command := append([]string(nil), opts.Command...)
+	cmd := exec.CommandContext(ctx, command[0], command[1:]...)
+	cmd.Env = env
+	cmd.Stdin = opts.Stdin
+	cmd.Stdout = opts.Stdout
+	cmd.Stderr = opts.Stderr
+	if err := cmd.Run(); err != nil {
+		exitCode := 1
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() > 0 {
+			exitCode = exitErr.ExitCode()
+		}
+		return apperr.Wrap("vault.command_failed", "runtime", exitCode, fmt.Sprintf("vault command %q failed", command[0]), err)
+	}
+	return nil
+}
+
+// vaultSecretChildEnv builds the child environment: every ti credential family
+// (TIDB_CLOUD_*, TDC_*, DRIVE9_*, TI_FS_*, TI_VAULT_*) is removed by the shared
+// credentialenv denylist, then the validated vault fields are added. Secret
+// fields win over any inherited variable with the same name.
+func vaultSecretChildEnv(base []string, fields map[string]string) ([]string, error) {
+	secretEnv, err := validateVaultEnvFields(fields)
+	if err != nil {
+		return nil, err
+	}
+	return mergeEnv(dropShadowedEnvKeys(credentialenv.Scrub(base), secretEnv), secretEnv), nil
+}
+
+// envKeysFoldCase reports whether environment names compare case-insensitively
+// on this platform. Windows resolves them that way and keeps the last duplicate
+// when exec builds the block, so an ambient db_url would otherwise shadow the
+// injected DB_URL. Unix keeps case-distinct names (for example http_proxy next to
+// HTTP_PROXY), so the deduplication must not fold there.
+var envKeysFoldCase = runtime.GOOS == "windows"
+
+// dropShadowedEnvKeys removes inherited entries that would be overridden by an
+// injected secret field under the target platform's name equality.
+func dropShadowedEnvKeys(base []string, overrides map[string]string) []string {
+	out := make([]string, 0, len(base))
+	for _, entry := range base {
+		key, _, ok := strings.Cut(entry, "=")
+		if ok && envKeyShadowed(key, overrides) {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
+func envKeyShadowed(key string, overrides map[string]string) bool {
+	for override := range overrides {
+		if envKeysEqual(key, override) {
+			return true
+		}
+	}
+	return false
+}
+
+func envKeysEqual(a, b string) bool {
+	if envKeysFoldCase {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }

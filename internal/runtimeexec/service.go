@@ -62,7 +62,7 @@ func (s Service) Exec(ctx context.Context, opts Options) error {
 // intentionally supplies no profile, endpoint, or credential and accepts the
 // command's exit status as the contract instead of parsing human help text.
 func (s Service) Preflight(ctx context.Context) (ReadyService, error) {
-	runner := fswrap.Runner{CompanionPath: s.CompanionPath}
+	runner := fswrap.Runner{HomeDir: s.HomeDir, CompanionPath: s.CompanionPath}
 	if err := requireExecCapability(ctx, runner, 10*time.Second); err != nil {
 		return ReadyService{}, err
 	}

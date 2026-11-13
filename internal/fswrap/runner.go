@@ -15,6 +15,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/credentialenv"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
 	"github.com/tidbcloud/ti-cli/internal/interrupt"
 	"github.com/tidbcloud/ti-cli/internal/version"
@@ -23,13 +24,11 @@ import (
 const (
 	defaultCompanionName = "ti-drive9"
 	envCompanionBin      = "TI_DRIVE9_BIN"
-	envAllowDrive9       = "TI_ALLOW_STANDALONE_DRIVE9"
 )
 
-// testControlsAllowed gates TI_DRIVE9_BIN and TI_ALLOW_STANDALONE_DRIVE9. The
-// companion they select receives the TiDB Cloud key pair and FS credentials, so
-// only local builds that opt in may use them. It is a variable so tests can
-// turn the controls on.
+// testControlsAllowed gates TI_DRIVE9_BIN. The companion it selects receives the
+// TiDB Cloud key pair and FS credentials, so only local builds that opt in may
+// use it. It is a variable so tests can turn the control on.
 var testControlsAllowed = func() bool { return version.Current().TestControlsAllowed() }
 
 type Runner struct {
@@ -256,13 +255,13 @@ func (r Runner) drive9Env(homeDir string, opts RunOptions) ([]string, error) {
 			env = append(env, entry)
 			continue
 		}
-		if strings.HasPrefix(key, "DRIVE9_") {
+		// The scoped HOME/USERPROFILE values are appended below. Windows resolves
+		// these names case-insensitively; Unix keeps case-distinct names.
+		if key == "HOME" || key == "USERPROFILE" ||
+			(runtime.GOOS == "windows" && (strings.EqualFold(key, "HOME") || strings.EqualFold(key, "USERPROFILE"))) {
 			continue
 		}
-		switch key {
-		case "HOME", "USERPROFILE",
-			"TIDB_CLOUD_PUBLIC_KEY", "TIDB_CLOUD_PRIVATE_KEY", "TI_FS_TOKEN", "TI_VAULT_TOKEN", "TI_FS_API_KEY",
-			"TDC_PUBLIC_KEY", "TDC_PRIVATE_KEY", "TDC_FS_TOKEN", "TDC_VAULT_TOKEN":
+		if credentialenv.IsCredential(key) {
 			continue
 		}
 		env = append(env, entry)
@@ -303,36 +302,137 @@ func (r Runner) drive9Env(homeDir string, opts RunOptions) ([]string, error) {
 	return env, nil
 }
 
+// locateCompanion resolves the ti-drive9 binary and refuses to run a candidate
+// that could be planted by another user: the companion receives the TiDB Cloud
+// private key, the filesystem API key and vault tokens, so a PATH hijack would
+// hand those to an attacker. $PATH is never consulted; the only implicit
+// candidates are ti's own directory and the installer-managed ~/.ti/bin, plus a
+// validated explicit path. Every candidate must be a regular, executable file
+// owned by the current user or root, must not be world writable, must not be
+// writable by a group the caller is not in, and must live in a directory with
+// the same properties (symlinks are resolved before that check).
 func (r Runner) locateCompanion() (string, error) {
-	candidates := make([]string, 0, 5)
+	// Explicit configuration is terminal: silently falling back to another
+	// binary would hide a stale or tampered setting on a path that receives
+	// credentials. Runner.CompanionPath is internal; TI_DRIVE9_BIN is a hidden
+	// test control that only local builds which opted in may use.
 	if strings.TrimSpace(r.CompanionPath) != "" {
-		candidates = append(candidates, strings.TrimSpace(r.CompanionPath))
+		return resolveExplicitCompanion(r.CompanionPath)
 	}
 	if testControlsAllowed() {
 		if env := strings.TrimSpace(os.Getenv(envCompanionBin)); env != "" {
-			candidates = append(candidates, env)
+			return resolveExplicitCompanion(env)
 		}
 	}
-	if exe, err := os.Executable(); err == nil && exe != "" {
-		candidates = append(candidates, filepath.Join(filepath.Dir(exe), companionBinaryName(defaultCompanionName)))
+
+	var attempts []string
+	reject := func(candidate string, err error) {
+		attempts = append(attempts, fmt.Sprintf("%s: %v", candidate, err))
 	}
-	candidates = append(candidates, companionBinaryName(defaultCompanionName))
-	if testControlsAllowed() && os.Getenv(envAllowDrive9) == "1" {
-		candidates = append(candidates, companionBinaryName("drive9"))
+	// ti's own directory and the installer-managed ~/.ti/bin are the only
+	// implicit candidates. $PATH is deliberately not consulted: a directory on
+	// PATH is outside ti's control, and this process receives the TiDB Cloud
+	// private key, the FS API key and vault tokens.
+	for _, dir := range r.trustedCompanionDirs() {
+		candidate := filepath.Join(dir, companionBinaryName(defaultCompanionName))
+		if err := validateCompanionBinary(candidate); err == nil {
+			return candidate, nil
+		} else if !errors.Is(err, os.ErrNotExist) {
+			reject(candidate, err)
+		}
 	}
-	for _, candidate := range candidates {
-		path := candidate
-		if strings.ContainsRune(candidate, os.PathSeparator) {
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				return candidate, nil
-			}
-			continue
-		}
-		if resolved, err := exec.LookPath(path); err == nil {
-			return resolved, nil
-		}
+	if len(attempts) > 0 {
+		return "", apperr.New("fs.companion_untrusted", "runtime", 1, fmt.Sprintf("refusing to run the Drive9 companion from an untrusted location: %s; install ti with its companion or use an absolute path owned by you", strings.Join(attempts, "; ")))
 	}
 	return "", apperr.New("fs.companion_missing", "runtime", 1, "ti requires the Drive9 companion binary; update or reinstall ti")
+}
+
+// resolveExplicitCompanion validates a configured companion path. Credentials are
+// handed to this process, so a missing or insecure explicit path is an error
+// rather than a cue to fall back to another binary.
+func resolveExplicitCompanion(candidate string) (string, error) {
+	candidate = strings.TrimSpace(candidate)
+	if !filepath.IsAbs(candidate) {
+		return "", apperr.New("fs.companion_untrusted", "runtime", 1, fmt.Sprintf("ti fs companion path %q must be absolute", candidate))
+	}
+	if err := validateCompanionBinary(candidate); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", apperr.New("fs.companion_missing", "runtime", 1, fmt.Sprintf("ti requires the Drive9 companion binary: configured path %q does not exist; update or reinstall ti", candidate))
+		}
+		return "", apperr.New("fs.companion_untrusted", "runtime", 1, fmt.Sprintf("refusing to run the Drive9 companion %q: %v", candidate, err))
+	}
+	return candidate, nil
+}
+
+var errCompanionPathNotAbsolute = errors.New("path must be absolute")
+
+// trustedCompanionDirs lists the directories ti owns and trusts implicitly.
+func (r Runner) trustedCompanionDirs() []string {
+	dirs := make([]string, 0, 2)
+	if exe, err := os.Executable(); err == nil && exe != "" {
+		dirs = append(dirs, filepath.Dir(exe))
+	}
+	home := strings.TrimSpace(r.HomeDir)
+	if home == "" {
+		if resolved, err := os.UserHomeDir(); err == nil {
+			home = resolved
+		}
+	}
+	if home != "" {
+		dirs = append(dirs, filepath.Join(home, ".ti", "bin"))
+	}
+	return dirs
+}
+
+// validateCompanionBinary rejects companion binaries another account could
+// replace: it must be an absolute, regular, executable file that is not world
+// writable, not writable by an unrelated group, and owned by the current user or
+// root. Group-writable files stay usable when the group is one of the caller's
+// own groups, so a umask of 002 does not break every install. The directory that
+// actually contains the file must pass the same treatment; symlinks are resolved
+// first so a link cannot smuggle in a binary from a directory another account can
+// rewrite.
+func validateCompanionBinary(path string) error {
+	if !filepath.IsAbs(path) {
+		return errCompanionPathNotAbsolute
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("not a regular file")
+	}
+	if err := validateCompanionFileMode(info); err != nil {
+		return err
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return err
+	}
+	if err := validateCompanionDir(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if filepath.Dir(resolved) != filepath.Dir(path) {
+		if err := validateCompanionDir(filepath.Dir(resolved)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateCompanionDir rejects a parent directory another account can use to
+// replace the binary, while allowing the group-writable installs a umask of 002
+// produces inside the user's own directories.
+func validateCompanionDir(dir string) error {
+	info, err := os.Stat(dir)
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("parent %s is not a directory", dir)
+	}
+	return validateCompanionDirMode(info, dir)
 }
 
 func (r Runner) homeDir(opts RunOptions) (string, error) {
