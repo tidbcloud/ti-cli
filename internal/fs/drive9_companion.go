@@ -1252,7 +1252,7 @@ func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (
 			// Compose an apperr error: the CLI renders apperr.MessageFor, which
 			// reads only the embedded apperr message, so a fmt.Errorf wrapper would
 			// hide the teardown warning and stop hint from the user.
-			return MountResult{}, apperr.New(apperr.CodeFor(err), "runtime", 1, fmt.Sprintf("%v; the vault mount at %q may still be running and could not be stopped (%v); %s", err, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs-vault unmount-vault")))
+			return MountResult{}, mountError(err, "%v; the vault mount at %q may still be running and could not be stopped (%v); %s", err, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs-vault unmount-vault"))
 		}
 		return MountResult{}, err
 	}

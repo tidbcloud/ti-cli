@@ -121,7 +121,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 			// The daemon can outlive its failing foreground client and keep
 			// unpacking, so stop it even when the audit was clean.
 			if umountErr := s.umountMount(ctx, opts); umountErr != nil {
-				return MountResult{}, apperr.New(apperr.CodeFor(runErr), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped (%v) while an unpack may still be in progress; %s", runErr, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system")))
+				return MountResult{}, mountError(runErr, "%v; the mount at %q may still be running and could not be stopped (%v) while an unpack may still be in progress; %s", runErr, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system"))
 			}
 		}
 		return MountResult{}, runErr
@@ -137,7 +137,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 			}
 		}
 		if umountErr := s.umountMount(ctx, opts); umountErr != nil {
-			return MountResult{}, apperr.New(apperr.CodeFor(err), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped (%v) while an unpack may still be in progress; %s", err, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system")))
+			return MountResult{}, mountError(err, "%v; the mount at %q may still be running and could not be stopped (%v) while an unpack may still be in progress; %s", err, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system"))
 		}
 		return MountResult{}, err
 	}
@@ -174,7 +174,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 func (s Service) stopMountAfterUnsafeAudit(ctx context.Context, opts MountFileSystemOptions, auditErr error) error {
 	umountErr := s.umountMount(ctx, opts)
 	if umountErr != nil {
-		return apperr.New(apperr.CodeFor(auditErr), "runtime", 1, fmt.Sprintf("%v; the mount at %q may still be running and could not be stopped: %v; %s", auditErr, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system")))
+		return mountError(auditErr, "%v; the mount at %q may still be running and could not be stopped: %v; %s", auditErr, opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system"))
 	}
 	s.removeMountLocator(opts)
 	return auditErr
@@ -187,10 +187,18 @@ func (s Service) stopMountAfterUnsafeAudit(ctx context.Context, opts MountFileSy
 func (s Service) stopMountAfterReadyTimeout(ctx context.Context, opts MountFileSystemOptions, readyErr error) error {
 	umountErr := s.umountMount(ctx, opts)
 	if umountErr != nil {
-		return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("the mount at %q did not become readable and could not be stopped (%v) while an unpack may still be running; %s", opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system")))
+		return mountError(readyErr, "the mount at %q did not become readable and could not be stopped (%v) while an unpack may still be running; %s", opts.MountPath, umountErr, s.mountStopHint(opts.Profile, opts.MountPath, "ti fs unmount-file-system"))
 	}
 	s.removeMountLocator(opts)
-	return apperr.New(apperr.CodeFor(readyErr), "runtime", 1, fmt.Sprintf("the mount at %q did not become readable and was stopped because an unpack may still be running and would otherwise stay unaudited", opts.MountPath))
+	return mountError(readyErr, "the mount at %q did not become readable and was stopped because an unpack may still be running and would otherwise stay unaudited", opts.MountPath)
+}
+
+// mountError composes a user-facing mount error that carries cause's code. The
+// CLI renders apperr.MessageFor, which only reads the embedded apperr message, so
+// a fmt.Errorf wrapper would silently hide the guidance built here. Every
+// teardown/stop message must go through this helper.
+func mountError(cause error, format string, args ...any) error {
+	return apperr.New(apperr.CodeFor(cause), "runtime", 1, fmt.Sprintf(format, args...))
 }
 
 // mountStopHint names a command that can actually stop the mount. ti's unmount
