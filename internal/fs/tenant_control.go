@@ -107,11 +107,20 @@ func (s Service) createFileSystem(ctx context.Context, opts CreateFileSystemOpti
 	if status == "" {
 		status = "provisioning"
 	}
+	regionCode := endpoint.RegionCode
+	if regionCode == "" {
+		regionCode = opts.Profile.PlacementRegionCode
+	}
 	result := FileSystemResult{
 		FileSystemID: fileSystemID, DisplayName: effectiveTenantDisplayName(fileSystemID, response.DisplayName), Labels: cloneLabels(response.Labels),
-		RegionCode: opts.Profile.PlacementRegionCode, FSToken: response.APIKey, Status: status,
+		RegionCode: regionCode, FSToken: response.APIKey, Status: status,
 	}
-	if _, storeErr := fscred.StoreCredential(homeDir, opts.Profile, fileSystemID, endpoint.RegionName, response.APIKey, false); storeErr != nil {
+	if _, storeErr := fscred.StoreCredentialRecord(homeDir, opts.Profile, fscred.Credential{
+		FileSystemID:   fileSystemID,
+		RegionCode:     regionCode,
+		ServiceAddress: endpoint.BaseURL,
+		APIKey:         response.APIKey,
+	}, false); storeErr != nil {
 		if s.Stderr != nil {
 			_, _ = fmt.Fprintf(s.Stderr, "ti [WARNING]: file system %s was created, but its one-time token could not be stored locally: %s\n", fileSystemID, apperr.MessageFor(storeErr))
 		}
@@ -271,7 +280,7 @@ func (s Service) adminDeleteInputs(opts DeleteFileSystemOptions) (string, *apifs
 	if err != nil {
 		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
-	endpoint, err := s.resolveFS(opts.Profile)
+	endpoint, err := s.resolveAdminFS(opts.Profile)
 	if err != nil {
 		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
@@ -299,7 +308,7 @@ func (s Service) adminTenantClient(profile *config.Profile, permission authz.Per
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
-	endpoint, err := s.resolveFS(profile)
+	endpoint, err := s.resolveAdminFS(profile)
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}

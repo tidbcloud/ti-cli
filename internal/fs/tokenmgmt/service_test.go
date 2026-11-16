@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"github.com/tidbcloud/ti-cli/internal/fsregion"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -485,7 +486,10 @@ func tokenTestService(home, baseURL string) (Service, *config.Profile) {
 		Name: "test", HomeDir: home, PlacementRegionCode: "aws-us-east-1", CloudProvider: "aws", RegionCode: "us-east-1",
 		TiDBCloudPublicKey: "public", TiDBCloudPrivateKey: "private",
 	}
-	resolver := endpoints.Resolver{FSBaseURLs: map[endpoints.ProviderRegion]string{{Provider: "aws", Region: "us-east-1"}: baseURL}}
+	resolver, err := testFSRegionResolver(baseURL)
+	if err != nil {
+		panic(err)
+	}
 	return Service{Resolver: resolver, HomeDir: home, Timeout: 2 * time.Second}, profile
 }
 
@@ -508,4 +512,44 @@ func jsonString(value string) string {
 func TestMain(m *testing.M) {
 	os.Unsetenv("TI_FS_TOKEN")
 	os.Exit(m.Run())
+}
+
+func testFSRegionResolver(baseURL string) (endpoints.Resolver, error) {
+	catalog, err := fsregion.Normalize([]fsregion.Entry{{
+		RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: baseURL, State: "ACTIVE",
+	}})
+	if err != nil {
+		return endpoints.Resolver{}, err
+	}
+	return endpoints.Resolver{FSRegions: &catalog}, nil
+}
+
+func TestResolveEndpointPrefersRecordedAddressThenDerives(t *testing.T) {
+	home := t.TempDir()
+	profile := &config.Profile{Name: "test", HomeDir: home}
+	service := Service{HomeDir: home}
+
+	derived, err := service.resolveEndpoint(profile, "aws-us-east-1", "fs-1")
+	if err != nil {
+		t.Fatalf("resolveEndpoint failed: %v", err)
+	}
+	if derived.BaseURL != "https://aws-us-east-1.drive9.ai" {
+		t.Fatalf("derived endpoint = %q", derived.BaseURL)
+	}
+
+	if _, err := fscred.StoreCredentialRecord(home, profile, fscred.Credential{
+		FileSystemID:   "fs-1",
+		RegionCode:     "aws-us-east-1",
+		ServiceAddress: "https://recorded.drive9.example",
+		APIKey:         "recorded-token",
+	}, false); err != nil {
+		t.Fatal(err)
+	}
+	recorded, err := service.resolveEndpoint(profile, "aws-us-east-1", "fs-1")
+	if err != nil {
+		t.Fatalf("resolveEndpoint failed: %v", err)
+	}
+	if recorded.BaseURL != "https://recorded.drive9.example" {
+		t.Fatalf("recorded endpoint = %q", recorded.BaseURL)
+	}
 }

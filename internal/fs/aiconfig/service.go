@@ -43,6 +43,16 @@ type Service struct {
 	DebugWriter io.Writer
 }
 
+func (s Service) resolver() endpoints.Resolver {
+	resolver := endpoints.NewResolver()
+	if !s.Resolver.IsZero() {
+		resolver = s.Resolver
+	}
+	resolver.Debug = s.Debug
+	resolver.DebugWriter = s.DebugWriter
+	return resolver
+}
+
 type DescribeExtractOptions struct {
 	Profile      *config.Profile
 	FileSystemID string
@@ -242,19 +252,7 @@ func (s Service) adminClient(profile *config.Profile, permission authz.Permissio
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, err
 	}
-	provider := profile.FSCloudProvider
-	regionCode := profile.FSRegionCode
-	if provider == "" {
-		provider = profile.CloudProvider
-	}
-	if regionCode == "" {
-		regionCode = profile.RegionCode
-	}
-	resolver := s.Resolver
-	if resolver.IsZero() {
-		resolver = endpoints.NewResolver()
-	}
-	endpoint, err := resolver.ResolveFS(provider, regionCode)
+	endpoint, err := s.resolver().ResolveFSProfile(profile)
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, err
 	}

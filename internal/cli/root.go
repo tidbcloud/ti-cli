@@ -243,7 +243,7 @@ func telemetryPlacement(cmd *cobra.Command) (string, string) {
 	if regionCode == "" {
 		return "", ""
 	}
-	placement, err := region.ParsePlacementCode(regionCode)
+	placement, err := region.ParseCanonicalCode(regionCode)
 	if err != nil {
 		return "unknown", "unknown"
 	}

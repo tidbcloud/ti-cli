@@ -1,12 +1,15 @@
 package endpoints
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/config/region"
 )
 
@@ -91,107 +94,183 @@ func TestResolveIAMTestOverrideRequiresOptIn(t *testing.T) {
 	}
 }
 
-func TestResolveFSWithTestOverrides(t *testing.T) {
-	resolver := NewResolver()
-	resolver.FSBaseURLs = map[ProviderRegion]string{
-		{Provider: region.ProviderAWS, Region: "us-east-1"}:               "https://fs.aws.test",
-		{Provider: region.ProviderAlibabaCloud, Region: "ap-southeast-1"}: "https://fs.alibaba.test",
-	}
+// testCatalogServer serves one Filesystem region catalog page and counts hits.
+func testCatalogServer(t *testing.T, regions string) (*httptest.Server, *int32) {
+	t.Helper()
+	var hits int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&hits, 1)
+		_, _ = w.Write([]byte(`{"regions":[` + regions + `],"totalSize":1,"nextPageToken":""}`))
+	}))
+	t.Cleanup(server.Close)
+	return server, &hits
+}
 
-	aws, err := resolver.ResolveFS(region.ProviderAWS, "us-east-1")
-	if err != nil {
-		t.Fatalf("ResolveFS aws failed: %v", err)
-	}
-	alibaba, err := resolver.ResolveFS(region.ProviderAlibabaCloud, "ap-southeast-1")
-	if err != nil {
-		t.Fatalf("ResolveFS alibaba failed: %v", err)
-	}
-	if aws.BaseURL != "https://fs.aws.test" || alibaba.BaseURL != "https://fs.alibaba.test" {
-		t.Fatalf("unexpected fs endpoints: %#v %#v", aws, alibaba)
+const activeUSPrivateEast1 = `{"regionId":"aws-us-east-1","cloudProvider":"aws","displayName":"N. Virginia (us-east-1)","serviceAddress":"https://aws-us-east-1.drive9.ai","state":"ACTIVE"}`
+
+func testProfileWithKeys(home string) *config.Profile {
+	return &config.Profile{
+		Name:                config.DefaultProfile,
+		HomeDir:             home,
+		TiDBCloudPublicKey:  "public",
+		TiDBCloudPrivateKey: "private",
 	}
 }
 
-func TestResolveFSFromRegionManifest(t *testing.T) {
-	resolver := Resolver{
-		FSManifest: &FSRegionManifest{
-			Default: &FSRegionManifestDefault{
-				RegionCode: "aws-ap-southeast-1",
-				Mode:       "tidb_cloud_starter",
-			},
-			Regions: []FSRegionManifestEntry{
-				{
-					RegionCode:    "aws-ap-southeast-1",
-					Mode:          "tidb_cloud_starter",
-					ServerURL:     "https://api.drive9.ai",
-					CloudProvider: "aws",
-					TiDBRegion:    "ap-southeast-1",
-				},
-				{
-					RegionCode:    "aws-us-east-1",
-					Mode:          DefaultFSMode,
-					ServerURL:     "https://aws-us-east-1.drive9.ai",
-					CloudProvider: "aws",
-					TiDBRegion:    "us-east-1",
-				},
-			},
-		},
-	}
-
-	endpoint, err := resolver.ResolveFS(region.ProviderAWS, "us-east-1")
+func TestResolveFSProfileFromCatalog(t *testing.T) {
+	server, hits := testCatalogServer(t, activeUSPrivateEast1)
+	profile := testProfileWithKeys(t.TempDir())
+	profile.FSPlacementRegionCode = "aws-us-east-1"
+	endpoint, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSProfile(profile)
 	if err != nil {
-		t.Fatalf("ResolveFS failed: %v", err)
+		t.Fatalf("ResolveFSProfile failed: %v", err)
+	}
+	if endpoint.BaseURL != "https://aws-us-east-1.drive9.ai" || endpoint.RegionCode != "aws-us-east-1" {
+		t.Fatalf("unexpected endpoint: %#v", endpoint)
+	}
+	if endpoint.Provider != region.ProviderAWS {
+		t.Fatalf("unexpected provider: %#v", endpoint)
+	}
+	if got := atomic.LoadInt32(hits); got != 1 {
+		t.Fatalf("catalog requests = %d, want 1", got)
+	}
+}
+
+func TestResolveFSRegionRejectsUnpublishedRegion(t *testing.T) {
+	server, _ := testCatalogServer(t, activeUSPrivateEast1)
+	profile := testProfileWithKeys(t.TempDir())
+	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(profile, "aws-us-west-2")
+	if err == nil {
+		t.Fatal("expected unsupported fs region to fail")
+	}
+	if got := apperr.ExitCodeFor(err); got != 2 {
+		t.Fatalf("expected exit 2, got %d", got)
+	}
+	if code := apperr.CodeFor(err); code != "api.fs_endpoint_unsupported" {
+		t.Fatalf("unexpected code %q", code)
+	}
+	message := apperr.MessageFor(err)
+	if !strings.Contains(message, "ti fs is not available") || !strings.Contains(message, "aws-us-east-1") {
+		t.Fatalf("unexpected message: %q", message)
+	}
+}
+
+func TestResolveFSRegionRejectsInactiveRegion(t *testing.T) {
+	server, _ := testCatalogServer(t, `{"regionId":"aws-us-west-2","cloudProvider":"aws","displayName":"Oregon (us-west-2)","serviceAddress":"https://aws-us-west-2.drive9.ai","state":"PENDING"}`)
+	profile := testProfileWithKeys(t.TempDir())
+	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(profile, "aws-us-west-2")
+	if err == nil {
+		t.Fatal("expected a non-ACTIVE region to fail")
+	}
+	if message := apperr.MessageFor(err); !strings.Contains(message, "pending") {
+		t.Fatalf("expected the inactive state in the message, got %q", message)
+	}
+}
+
+func TestResolveFSWithoutCredentialsFails(t *testing.T) {
+	_, err := NewResolver().ResolveFSProfile(&config.Profile{Name: config.DefaultProfile, FSPlacementRegionCode: "aws-us-east-1"})
+	if err == nil {
+		t.Fatal("expected resolution without credentials to fail")
+	}
+	if code := apperr.CodeFor(err); code != "fs.region_catalog_unavailable" {
+		t.Fatalf("unexpected code %q", code)
+	}
+	if got := apperr.ExitCodeFor(err); got != 2 {
+		t.Fatalf("expected exit 2, got %d", got)
+	}
+}
+
+func TestResolveFSCredentialEndpointUsesStoredAddress(t *testing.T) {
+	profile := &config.Profile{
+		Name:                  config.DefaultProfile,
+		FSTenantID:            "tenant-1",
+		FSPlacementRegionCode: "aws-us-east-1",
+		FSCloudProvider:       region.ProviderAWS,
+		FSServiceAddress:      "https://aws-us-east-1.drive9.ai/",
+	}
+	endpoint, err := NewResolver().ResolveFSCredentialEndpoint(profile)
+	if err != nil {
+		t.Fatalf("ResolveFSCredentialEndpoint failed: %v", err)
+	}
+	if endpoint.BaseURL != "https://aws-us-east-1.drive9.ai" || endpoint.RegionCode != "aws-us-east-1" {
+		t.Fatalf("unexpected endpoint: %#v", endpoint)
+	}
+}
+
+func TestResolveFSCredentialEndpointDerivesTheAddressWithoutARecordedOne(t *testing.T) {
+	profile := &config.Profile{Name: config.DefaultProfile, FSTenantID: "tenant-1", FSPlacementRegionCode: "aws-us-east-1"}
+	endpoint, err := NewResolver().ResolveFSCredentialEndpoint(profile)
+	if err != nil {
+		t.Fatalf("ResolveFSCredentialEndpoint failed: %v", err)
+	}
+	if endpoint.BaseURL != "https://aws-us-east-1.drive9.ai" || endpoint.RegionCode != "aws-us-east-1" {
+		t.Fatalf("unexpected endpoint: %#v", endpoint)
+	}
+}
+
+func TestResolveFSCredentialEndpointDerivesForUnpublishedRegions(t *testing.T) {
+	// Derivation is the offline fallback: it must work for any structurally
+	// valid canonical code without a catalog request.
+	profile := &config.Profile{Name: config.DefaultProfile, FSPlacementRegionCode: "aws-us-east-3"}
+	endpoint, err := NewResolver().ResolveFSCredentialEndpoint(profile)
+	if err != nil {
+		t.Fatalf("ResolveFSCredentialEndpoint failed: %v", err)
+	}
+	if endpoint.BaseURL != "https://aws-us-east-3.drive9.ai" {
+		t.Fatalf("unexpected endpoint: %#v", endpoint)
+	}
+}
+
+func TestResolveFSCredentialEndpointIgnoresAnUnusableRecordedAddress(t *testing.T) {
+	profile := &config.Profile{
+		Name:                  config.DefaultProfile,
+		FSTenantID:            "tenant-1",
+		FSPlacementRegionCode: "aws-us-east-1",
+		FSServiceAddress:      "http://aws-us-east-1.drive9.ai",
+	}
+	endpoint, err := NewResolver().ResolveFSCredentialEndpoint(profile)
+	if err != nil {
+		t.Fatalf("ResolveFSCredentialEndpoint failed: %v", err)
 	}
 	if endpoint.BaseURL != "https://aws-us-east-1.drive9.ai" {
-		t.Fatalf("unexpected fs endpoint: %#v", endpoint)
-	}
-	if endpoint.RegionName != "aws-us-east-1" {
-		t.Fatalf("unexpected fs region name: %#v", endpoint)
+		t.Fatalf("expected the derived address, got %#v", endpoint)
 	}
 }
 
-func TestResolveFSUsesBuiltInRegionMapping(t *testing.T) {
-	tests := []struct {
-		name       string
-		provider   string
-		regionCode string
-		baseURL    string
-		regionName string
-	}{
-		{name: "AWS N. Virginia", provider: region.ProviderAWS, regionCode: "us-east-1", baseURL: "https://aws-us-east-1.drive9.ai", regionName: "aws-us-east-1"},
-		{name: "AWS Singapore", provider: region.ProviderAWS, regionCode: "ap-southeast-1", baseURL: "https://aws-ap-southeast-1.drive9.ai", regionName: "aws-ap-southeast-1"},
-		{name: "AWS Oregon", provider: region.ProviderAWS, regionCode: "us-west-2", baseURL: "https://aws-us-west-2.drive9.ai", regionName: "aws-us-west-2"},
-		{name: "Alibaba Cloud Singapore", provider: region.ProviderAlibabaCloud, regionCode: "ap-southeast-1", baseURL: "https://alicloud-ap-southeast-1.drive9.ai", regionName: "alicloud-ap-southeast-1"},
-		{name: "GCP South Carolina", provider: region.ProviderGCP, regionCode: "us-east1", baseURL: "https://gcp-us-east1.drive9.ai", regionName: "gcp-us-east1"},
-		{name: "Azure Central US", provider: region.ProviderAzure, regionCode: "centralus", baseURL: "https://azure-centralus.drive9.ai", regionName: "azure-centralus"},
+func TestFetchFSRegionsReadsThePublishedCatalog(t *testing.T) {
+	server, hits := testCatalogServer(t, activeUSPrivateEast1)
+	profile := testProfileWithKeys(t.TempDir())
+	catalog, err := (Resolver{FSRegionsBaseURL: server.URL}).FetchFSRegions(context.Background(), profile)
+	if err != nil {
+		t.Fatalf("FetchFSRegions failed: %v", err)
 	}
-	resolver := NewResolver()
-	if resolver.FSManifestURL != "" {
-		t.Fatalf("production resolver has external manifest URL %q", resolver.FSManifestURL)
+	if len(catalog.Entries) != 1 || catalog.Entries[0].ServiceAddress != "https://aws-us-east-1.drive9.ai" {
+		t.Fatalf("unexpected catalog: %#v", catalog)
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			endpoint, err := resolver.ResolveFS(tt.provider, tt.regionCode)
-			if err != nil {
-				t.Fatalf("ResolveFS failed: %v", err)
-			}
-			if endpoint.BaseURL != tt.baseURL || endpoint.RegionName != tt.regionName {
-				t.Fatalf("endpoint = %#v, want base URL %q and region %q", endpoint, tt.baseURL, tt.regionName)
-			}
-		})
+	if got := atomic.LoadInt32(hits); got != 1 {
+		t.Fatalf("catalog requests = %d, want 1", got)
+	}
+}
+
+func TestFetchFSRegionsNeverFallsBackToLocalState(t *testing.T) {
+	profile := testProfileWithKeys(t.TempDir())
+	_, err := (Resolver{FSRegionsBaseURL: "http://127.0.0.1:1"}).FetchFSRegions(context.Background(), profile)
+	if err == nil || apperr.CodeFor(err) != "api.fs_regions_unavailable" {
+		t.Fatalf("expected a catalog fetch failure, got %v", err)
+	}
+}
+
+func TestResolveFSRejectsPlainHTTPCatalogAddress(t *testing.T) {
+	server, _ := testCatalogServer(t, `{"regionId":"aws-us-east-1","cloudProvider":"aws","displayName":"N. Virginia (us-east-1)","serviceAddress":"http://aws-us-east-1.drive9.ai","state":"ACTIVE"}`)
+	profile := testProfileWithKeys(t.TempDir())
+	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(profile, "aws-us-east-1")
+	if err == nil || apperr.CodeFor(err) != "api.fs_regions_invalid" {
+		t.Fatalf("expected the catalog to reject a plain http service address, got %v", err)
 	}
 }
 
 func TestResolveStarterRejectsFilesystemOnlyPlacement(t *testing.T) {
 	resolver := NewResolver()
-
-	endpoint, err := resolver.ResolveFS(region.ProviderAzure, "centralus")
-	if err != nil {
-		t.Fatalf("ResolveFS failed for the Filesystem-only placement: %v", err)
-	}
-	if endpoint.BaseURL != "https://azure-centralus.drive9.ai" || endpoint.RegionName != "azure-centralus" {
-		t.Fatalf("unexpected fs endpoint: %#v", endpoint)
-	}
-
 	for _, test := range []struct {
 		provider  string
 		region    string
@@ -201,9 +280,6 @@ func TestResolveStarterRejectsFilesystemOnlyPlacement(t *testing.T) {
 		{provider: region.ProviderAzure, region: "centralus", canonical: "azure-centralus"},
 	} {
 		t.Run(test.canonical, func(t *testing.T) {
-			if _, err := resolver.ResolveFS(test.provider, test.region); err != nil {
-				t.Fatalf("ResolveFS failed for the Filesystem-only placement: %v", err)
-			}
 			if _, err := resolver.ResolveStarter(test.provider, test.region); err == nil {
 				t.Fatal("expected Starter resolution to reject the Filesystem-only placement")
 			} else {
@@ -215,60 +291,6 @@ func TestResolveStarterRejectsFilesystemOnlyPlacement(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestResolveFSUnsupportedManifestRegion(t *testing.T) {
-	resolver := Resolver{
-		FSManifest: &FSRegionManifest{
-			Regions: []FSRegionManifestEntry{
-				{
-					RegionCode:    "aws-us-east-1",
-					Mode:          DefaultFSMode,
-					ServerURL:     "https://aws-us-east-1.drive9.ai",
-					CloudProvider: "aws",
-					TiDBRegion:    "us-east-1",
-				},
-			},
-		},
-	}
-
-	_, err := resolver.ResolveFS(region.ProviderAWS, "us-west-2")
-	if err == nil {
-		t.Fatal("expected unsupported fs region to fail")
-	}
-	if got := apperr.ExitCodeFor(err); got != 2 {
-		t.Fatalf("expected exit 2, got %d", got)
-	}
-	message := apperr.MessageFor(err)
-	if !strings.Contains(message, "ti fs is not available") || !strings.Contains(message, "aws-us-east-1") {
-		t.Fatalf("unexpected message: %q", message)
-	}
-}
-
-func TestResolveFSFetchesManifestURL(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{
-			"service": "drive9",
-			"regions": [
-				{
-					"region_code": "aws-us-east-1",
-					"mode": "tidb_cloud_native",
-					"server_url": "https://aws-us-east-1.drive9.ai",
-					"cloud_provider": "aws",
-					"tidb_region": "us-east-1"
-				}
-			]
-		}`))
-	}))
-	defer server.Close()
-
-	endpoint, err := (Resolver{FSManifestURL: server.URL}).ResolveFS(region.ProviderAWS, "us-east-1")
-	if err != nil {
-		t.Fatalf("ResolveFS failed: %v", err)
-	}
-	if endpoint.BaseURL != "https://aws-us-east-1.drive9.ai" {
-		t.Fatalf("unexpected endpoint: %#v", endpoint)
 	}
 }
 
@@ -311,22 +333,5 @@ func TestValidateBaseURLAllowsPlainHTTPOnlyForLoopback(t *testing.T) {
 		if !tc.ok && err == nil {
 			t.Fatalf("%s: expected an error", tc.value)
 		}
-	}
-}
-
-func TestResolveFSRejectsPlainHTTPManifestServer(t *testing.T) {
-	resolver := Resolver{
-		FSManifest: &FSRegionManifest{
-			Regions: []FSRegionManifestEntry{{
-				RegionCode:    "aws-us-east-1",
-				Mode:          DefaultFSMode,
-				ServerURL:     "http://aws-us-east-1.drive9.ai",
-				CloudProvider: "aws",
-				TiDBRegion:    "us-east-1",
-			}},
-		},
-	}
-	if _, err := resolver.ResolveFS(region.ProviderAWS, "us-east-1"); err == nil || apperr.CodeFor(err) != "api.invalid_endpoint" {
-		t.Fatalf("expected api.invalid_endpoint for a plain http manifest server, got %v", err)
 	}
 }

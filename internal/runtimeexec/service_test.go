@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/tidbcloud/ti-cli/internal/fsregion"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -205,9 +206,7 @@ func TestExecTreatsStreamFailureAsUnknownWithoutRetry(t *testing.T) {
 	t.Setenv("TI_TEST_RUNTIME_MODE", "success")
 	service := Service{
 		HomeDir: home, CompanionPath: companion, Stdout: failingWriter{}, Stderr: &bytes.Buffer{},
-		Resolver: endpoints.Resolver{FSBaseURLs: map[endpoints.ProviderRegion]string{
-			{Provider: "aws", Region: "us-east-1"}: "https://fs.test",
-		}},
+		Resolver: testFSRegionResolver(t, "https://fs.test"),
 	}
 	err := service.Exec(context.Background(), Options{
 		Profile: runtimeProfile(home), Command: []string{"run-once"},
@@ -236,16 +235,28 @@ func (failingWriter) Write([]byte) (int, error) {
 func testService(home, companion string, stdout, stderr *bytes.Buffer) Service {
 	return Service{
 		HomeDir: home, CompanionPath: companion, Stdout: stdout, Stderr: stderr,
-		Resolver: endpoints.Resolver{FSBaseURLs: map[endpoints.ProviderRegion]string{
-			{Provider: "aws", Region: "us-east-1"}: "https://fs.test",
-		}},
+		Resolver: testFSRegionResolver(nil, "https://fs.test"),
 	}
+}
+
+func testFSRegionResolver(t *testing.T, baseURL string) endpoints.Resolver {
+	if t != nil {
+		t.Helper()
+	}
+	catalog, err := fsregion.Normalize([]fsregion.Entry{{
+		RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: baseURL, State: "ACTIVE",
+	}})
+	if err != nil {
+		panic(err)
+	}
+	return endpoints.Resolver{FSRegions: &catalog}
 }
 
 func runtimeProfile(home string) *config.Profile {
 	return &config.Profile{
 		Name: "stage", HomeDir: home, FSResourceName: "tenant-runtime", FSTenantID: "tenant-runtime",
-		FSPlacementRegionCode: "aws-us-east-1", FSCloudProvider: "aws", FSRegionCode: "us-east-1", FSAPIKey: "selected-api-key",
+		FSPlacementRegionCode: "aws-us-east-1", FSCloudProvider: "aws", FSRegionCode: "us-east-1",
+		FSServiceAddress: "https://fs.test", FSAPIKey: "selected-api-key",
 	}
 }
 

@@ -13,10 +13,15 @@ import (
 const schema = "ti.fs.mount-locator/v1"
 
 type Locator struct {
-	Schema           string `json:"schema"`
-	Profile          string `json:"profile"`
-	FileSystemName   string `json:"file_system_name"`
-	RegionCode       string `json:"region_code"`
+	Schema         string `json:"schema"`
+	Profile        string `json:"profile"`
+	FileSystemName string `json:"file_system_name"`
+	RegionCode     string `json:"region_code"`
+	// ServiceAddress is the regional Filesystem endpoint resolved when the mount
+	// was created. It is a stable, non-secret placement property that lets drain
+	// and unmount rebuild the companion environment without fetching the region
+	// catalog. Older locators may omit it.
+	ServiceAddress   string `json:"service_address,omitempty"`
 	CompanionHome    string `json:"companion_home"`
 	MountPath        string `json:"mount_path"`
 	Kind             string `json:"kind,omitempty"`
@@ -60,6 +65,12 @@ func New(profile, fileSystemName, regionCode, companionHome, mountPath, kind str
 		MountPath:      canonical,
 		Kind:           strings.TrimSpace(kind),
 	}, nil
+}
+
+// WithServiceAddress records the resolved regional service address.
+func (l Locator) WithServiceAddress(address string) Locator {
+	l.ServiceAddress = strings.TrimSpace(address)
+	return l
 }
 
 func (l Locator) WithTokenCorrelation(fileSystemID, tokenID, fingerprint string) Locator {

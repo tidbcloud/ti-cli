@@ -514,7 +514,7 @@ func (s Service) refreshRemote(ctx context.Context, profile *config.Profile, res
 	if err != nil {
 		return RefreshResult{}, err
 	}
-	endpoint, err := s.resolveEndpoint(profile, resolved.regionCode)
+	endpoint, err := s.resolveEndpoint(profile, resolved.regionCode, resolved.fileSystemID)
 	if err != nil {
 		return RefreshResult{}, err
 	}
@@ -632,7 +632,7 @@ func tokenInputPresent(token string, explicit bool) (bool, error) {
 }
 
 func (s Service) bearerClient(profile *config.Profile, resolved bearerInput, permission authz.Permission, action string) (*apifs.Client, endpoints.Endpoint, error) {
-	endpoint, err := s.resolveEndpoint(profile, resolved.regionCode)
+	endpoint, err := s.resolveEndpoint(profile, resolved.regionCode, resolved.fileSystemID)
 	if err != nil {
 		return nil, endpoints.Endpoint{}, err
 	}
@@ -715,7 +715,7 @@ func (s Service) DryRunGenerateScoped(commandPath string, opts GenerateScopedOpt
 			return dryrun.Result{}, getErr
 		}
 	}
-	endpoint, err := s.resolveEndpoint(opts.Profile, resolved.regionCode)
+	endpoint, err := s.resolveEndpoint(opts.Profile, resolved.regionCode, resolved.fileSystemID)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -750,7 +750,7 @@ func (s Service) DryRunRefresh(commandPath string, opts RefreshOptions) (dryrun.
 	if err := s.guardTokenFingerprintMount(resolved.fileSystemID, tokenFingerprint(resolved.token)); err != nil {
 		return dryrun.Result{}, err
 	}
-	endpoint, err := s.resolveEndpoint(opts.Profile, resolved.regionCode)
+	endpoint, err := s.resolveEndpoint(opts.Profile, resolved.regionCode, resolved.fileSystemID)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -778,7 +778,7 @@ func (s Service) controlClient(profile *config.Profile, fileSystemID, regionOver
 			return nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, getErr
 		}
 	}
-	endpoint, err := s.resolveEndpoint(profile, placementCode)
+	endpoint, err := s.resolveEndpoint(profile, placementCode, fileSystemID)
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
@@ -797,7 +797,17 @@ func apiRedactor(secrets ...string) apitransport.Redactor {
 	return apitransport.Redactor{Secrets: secrets}
 }
 
-func (s Service) resolveEndpoint(profile *config.Profile, override string) (endpoints.Endpoint, error) {
+func (s Service) resolver() endpoints.Resolver {
+	resolver := endpoints.NewResolver()
+	if !s.Resolver.IsZero() {
+		resolver = s.Resolver
+	}
+	resolver.Debug = s.Debug
+	resolver.DebugWriter = s.DebugWriter
+	return resolver
+}
+
+func (s Service) resolveEndpoint(profile *config.Profile, override, fileSystemID string) (endpoints.Endpoint, error) {
 	placementCode := strings.TrimSpace(override)
 	if placementCode == "" && profile != nil {
 		placementCode = profile.PlacementRegionCode
@@ -805,15 +815,32 @@ func (s Service) resolveEndpoint(profile *config.Profile, override string) (endp
 	if placementCode == "" {
 		return endpoints.Endpoint{}, apperr.New("fs.missing_region", "config", 2, "ti fs region is required; pass --region, set TI_REGION_CODE, or configure a profile region")
 	}
-	placement, err := region.ParsePlacementCode(placementCode)
+	placement, err := region.ParseCanonicalCode(placementCode)
 	if err != nil {
 		return endpoints.Endpoint{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
-	resolver := s.Resolver
-	if resolver.IsZero() {
-		resolver = endpoints.NewResolver()
+	// Bearer token management runs without TiDB Cloud API keys, so it prefers
+	// the address already recorded for the managed File System and only falls
+	// back to the published catalog when no credential records it.
+	if address, ok := s.recordedServiceAddress(profile, fileSystemID, placement.Code); ok {
+		selected := *profile
+		selected.FSPlacementRegionCode = placement.Code
+		selected.FSServiceAddress = address
+		return s.resolver().ResolveFSCredentialEndpoint(&selected)
 	}
-	return resolver.ResolveFS(placement.Provider, placement.NativeCode)
+	if !profile.HasTiDBCloudCredentials() {
+		// Bearer token management runs without TiDB Cloud API keys, so it cannot
+		// request the published catalog. Fall back to the conventional regional
+		// address, exactly like data-plane routing.
+		selected := config.Profile{}
+		if profile != nil {
+			selected = *profile
+		}
+		selected.FSPlacementRegionCode = placement.Code
+		selected.FSServiceAddress = ""
+		return s.resolver().ResolveFSCredentialEndpoint(&selected)
+	}
+	return s.resolver().ResolveFSRegion(profile, placement.Code)
 }
 
 func (s Service) guardTokenIDMount(fileSystemID, tokenID string) error {
@@ -1173,4 +1200,23 @@ func formatTokenExpiry(expiresAt *time.Time) string {
 		return "never"
 	}
 	return expiresAt.UTC().Format(time.RFC3339)
+}
+
+// recordedServiceAddress returns the Filesystem service address recorded for the
+// managed File System or the selected profile when it matches regionCode.
+func (s Service) recordedServiceAddress(profile *config.Profile, fileSystemID, regionCode string) (string, bool) {
+	if profile != nil && strings.TrimSpace(profile.FSServiceAddress) != "" && profile.FSPlacementRegionCode == regionCode {
+		return strings.TrimSpace(profile.FSServiceAddress), true
+	}
+	if profile == nil || strings.TrimSpace(fileSystemID) == "" {
+		return "", false
+	}
+	credential, err := fscred.GetCredential(s.homeDir(profile), profileName(profile), fileSystemID)
+	if err != nil {
+		return "", false
+	}
+	if credential.RegionCode != regionCode || strings.TrimSpace(credential.ServiceAddress) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(credential.ServiceAddress), true
 }

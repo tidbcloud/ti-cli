@@ -50,13 +50,16 @@ func TestReleaseBuildIgnoresHiddenTestControls(t *testing.T) {
 	bin := installedLayout(t, buildReleaseStyleTI(t), companion)
 
 	starter, starterHits := countingServer(t, `{"clusters":[]}`)
-	manifest, manifestHits := countingServer(t, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":"https://fs-override.test","cloud_provider":"aws","tidb_region":"us-east-1"}]}`)
+	regions, regionsHits := countingServer(t, `{"regions":[{"regionId":"aws-us-east-1","cloudProvider":"aws","displayName":"N. Virginia (us-east-1)","serviceAddress":"https://fs-override.test","state":"ACTIVE"}],"totalSize":1,"nextPageToken":""}`)
 	telemetry, telemetryHits := countingServer(t, `{}`)
 	release, releaseHits := countingServer(t, `{"tag_name":"v99.0.0","assets":[]}`)
 
 	home := t.TempDir()
 	writeE2EFile(t, filepath.Join(home, ".ti", "config"), "[default]\nregion_code = 'aws-us-east-1'\nproject_id = 'project-1'\n", 0o600)
 	writeE2EFile(t, filepath.Join(home, ".ti", "credentials"), "[default]\ntidb_cloud_public_key = 'public'\ntidb_cloud_private_key = 'private'\n", 0o600)
+	// Data-plane routing comes from the recorded credential, so a release build
+	// reaches the companion without any hidden control.
+	seedFSCredential(t, home, "default", "tenant-sandbox", "aws-us-east-1", "https://aws-us-east-1.drive9.ai", drive9TestToken("tenant-sandbox"))
 	overrideRan := filepath.Join(t.TempDir(), "override-ran")
 	override := filepath.Join(t.TempDir(), "override-drive9")
 	if err := os.WriteFile(override, []byte("#!/bin/sh\ntouch '"+overrideRan+"'\nexit 1\n"), 0o755); err != nil {
@@ -76,7 +79,7 @@ func TestReleaseBuildIgnoresHiddenTestControls(t *testing.T) {
 		// No command here reaches IAM. The IAM override is covered by the
 		// endpoints unit tests, and every IAM client comes from NewResolver.
 		"TI_TEST_IAM_BASE_URL=http://127.0.0.1:1",
-		"TI_TEST_FS_MANIFEST_URL=" + manifest.URL,
+		"TI_TEST_FS_REGIONS_URL=" + regions.URL,
 		// Telemetry is off by default; turn it on so the override check can fail.
 		"TI_TELEMETRY=on",
 		"TI_TEST_TELEMETRY_ENDPOINT=" + telemetry.URL + "/v1/telemetry/batch",
@@ -100,7 +103,7 @@ func TestReleaseBuildIgnoresHiddenTestControls(t *testing.T) {
 		t.Fatal("the installed ti-drive9 companion did not run")
 	}
 	if got := calls[len(calls)-1].Server; got != "https://aws-us-east-1.drive9.ai" {
-		t.Fatalf("companion DRIVE9_SERVER = %q, want the built-in FS endpoint", got)
+		t.Fatalf("companion DRIVE9_SERVER = %q, want the recorded credential endpoint", got)
 	}
 
 	mount := runTIWithInput(t, bin, "", fsEnv, "fs", "mount-file-system", "--mount-path", filepath.Join(home, "mount"), "--ready-timeout", "2s")
@@ -113,7 +116,7 @@ func TestReleaseBuildIgnoresHiddenTestControls(t *testing.T) {
 		t.Fatalf("TI_DRIVE9_BIN override companion ran in a release build: %v", err)
 	}
 	for name, hits := range map[string]*atomic.Int32{
-		"Starter": starterHits, "FS manifest": manifestHits,
+		"Starter": starterHits, "FS regions": regionsHits,
 		"telemetry": telemetryHits, "release metadata": releaseHits,
 	} {
 		if got := hits.Load(); got != 0 {

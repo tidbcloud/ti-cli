@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	"io"
 	"os"
 	"path/filepath"
@@ -228,7 +229,11 @@ func (s Service) importFileSystemToken(ctx context.Context, opts ImportFileSyste
 			return ImportFileSystemTokenResult{}, apperr.New("fs.token_file_system_mismatch", "authentication", 3, fmt.Sprintf("FS token belongs to file system %q, not %q", tokenID, asserted))
 		}
 	}
-	placement, err := region.ParsePlacementCode(opts.Profile.PlacementRegionCode)
+	placement, err := region.ParseCanonicalCode(opts.Profile.PlacementRegionCode)
+	if err != nil {
+		return ImportFileSystemTokenResult{}, err
+	}
+	endpoint, err := s.importEndpoint(opts.Profile, placement.Code)
 	if err != nil {
 		return ImportFileSystemTokenResult{}, err
 	}
@@ -238,6 +243,7 @@ func (s Service) importFileSystemToken(ctx context.Context, opts ImportFileSyste
 	selected.FSPlacementRegionCode = placement.Code
 	selected.FSCloudProvider = placement.Provider
 	selected.FSRegionCode = placement.NativeCode
+	selected.FSServiceAddress = endpoint.BaseURL
 	selected.FSAPIKey = opts.Token
 	validationHome, err := os.MkdirTemp("", "ti-fs-token-validation-*")
 	if err != nil {
@@ -262,7 +268,12 @@ func (s Service) importFileSystemToken(ctx context.Context, opts ImportFileSyste
 		if err != nil {
 			return ImportFileSystemTokenResult{}, err
 		}
-		if _, err := fscred.StoreCredential(homeDir, opts.Profile, tokenID, placement.Code, opts.Token, opts.Replace); err != nil {
+		if _, err := fscred.StoreCredentialRecord(homeDir, opts.Profile, fscred.Credential{
+			FileSystemID:   tokenID,
+			RegionCode:     placement.Code,
+			ServiceAddress: endpoint.BaseURL,
+			APIKey:         opts.Token,
+		}, opts.Replace); err != nil {
 			return ImportFileSystemTokenResult{}, err
 		}
 		status = "imported"
@@ -1408,7 +1419,7 @@ func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kin
 	if err != nil {
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "construct ti fs mount locator", err)
 	}
-	locator = locator.WithTokenCorrelation(profile.FSTenantID, profile.FSTokenID, fsTokenFingerprint(profile.FSAPIKey))
+	locator = locator.WithTokenCorrelation(profile.FSTenantID, profile.FSTokenID, fsTokenFingerprint(profile.FSAPIKey)).WithServiceAddress(profile.FSServiceAddress)
 	if len(mountOpts) > 0 {
 		opts := mountOpts[0]
 		locator = locator.WithLayerView(opts.RemotePath, opts.LayerRef, opts.CheckpointID, opts.ReadOnly)
@@ -1438,7 +1449,7 @@ func (s Service) drive9MountLocatorProfile(base *config.Profile, mountPath strin
 	if filepath.Clean(expectedHome) != filepath.Clean(locator.CompanionHome) {
 		return nil, apperr.New("fs.mount_locator_invalid", "config", 2, "ti fs mount locator companion home does not match its profile and file system")
 	}
-	placement, err := region.ParsePlacementCode(locator.RegionCode)
+	placement, err := region.ParseCanonicalCode(locator.RegionCode)
 	if err != nil {
 		return nil, apperr.Wrap("fs.mount_locator_invalid", "config", 2, "ti fs mount locator has an invalid region", err)
 	}
@@ -1453,7 +1464,17 @@ func (s Service) drive9MountLocatorProfile(base *config.Profile, mountPath strin
 	profile.FSPlacementRegionCode = placement.Code
 	profile.FSCloudProvider = placement.Provider
 	profile.FSRegionCode = placement.NativeCode
+	profile.FSServiceAddress = locator.ServiceAddress
 	profile.FSAPIKey = ""
+	if profile.FSServiceAddress == "" {
+		// Locators written before the Filesystem region catalog existed do not
+		// carry an address. Prefer the address recorded on the File System
+		// credential; endpoint resolution derives the conventional address when
+		// that is missing too.
+		if credential, credentialErr := fscred.GetCredential(homeDir, locator.Profile, locator.FileSystemName); credentialErr == nil {
+			profile.FSServiceAddress = credential.ServiceAddress
+		}
+	}
 	return &profile, nil
 }
 
@@ -1729,4 +1750,33 @@ func sortedKeys(values map[string]string) []string {
 	}
 	sort.Strings(keys)
 	return keys
+}
+
+// isFSPlacementError reports placement and credential failures that a companion
+// capability probe must surface unchanged instead of reporting an outdated
+// companion.
+func isFSPlacementError(err error) bool {
+	switch apperr.CodeFor(err) {
+	case "fs.region_catalog_unavailable", "api.fs_endpoint_unsupported", "config.invalid_region":
+		return true
+	default:
+		return false
+	}
+}
+
+// importEndpoint selects the regional endpoint used to validate an imported
+// token. With TiDB Cloud API credentials the published catalog is authoritative;
+// without them ti falls back to the conventional regional address so that a
+// token-only machine can still register a File System.
+func (s Service) importEndpoint(profile *config.Profile, regionCode string) (endpoints.Endpoint, error) {
+	if profile != nil && profile.HasTiDBCloudCredentials() {
+		return s.resolver().ResolveFSRegion(profile, regionCode)
+	}
+	selected := config.Profile{}
+	if profile != nil {
+		selected = *profile
+	}
+	selected.FSPlacementRegionCode = regionCode
+	selected.FSServiceAddress = ""
+	return s.resolver().ResolveFSCredentialEndpoint(&selected)
 }

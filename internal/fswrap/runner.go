@@ -271,11 +271,11 @@ func (r Runner) drive9Env(homeDir string, opts RunOptions) ([]string, error) {
 		env = append(env, "USERPROFILE="+homeDir)
 	}
 	if profile := opts.Profile; profile != nil {
-		provider, regionCode, placementCode := fsPlacement(profile)
-		if provider == "" || regionCode == "" || placementCode == "" {
+		_, _, placementCode := fsPlacement(profile)
+		if placementCode == "" {
 			return nil, apperr.New("fs.resource_credentials_incomplete", "config", 2, fmt.Sprintf("ti fs resource placement is incomplete for profile %q", profile.Name))
 		}
-		endpoint, err := r.resolver().ResolveFS(provider, regionCode)
+		endpoint, err := r.resolver().ResolveFSCredentialEndpoint(profile)
 		if err != nil {
 			return nil, err
 		}
@@ -283,7 +283,7 @@ func (r Runner) drive9Env(homeDir string, opts RunOptions) ([]string, error) {
 			return nil, apperr.New("api.fs_endpoint_missing", "config", 2, fmt.Sprintf("ti fs endpoint is unavailable for %s", placementCode))
 		}
 		env = append(env, "DRIVE9_SERVER="+endpoint.BaseURL)
-		env = append(env, "DRIVE9_REGION_CODE="+placementCode)
+		env = append(env, "DRIVE9_REGION_CODE="+endpoint.RegionCode)
 		if opts.IncludeFSAPIKey && strings.TrimSpace(profile.FSAPIKey) != "" {
 			env = append(env, "DRIVE9_API_KEY="+strings.TrimSpace(profile.FSAPIKey))
 		}
@@ -456,10 +456,13 @@ func (r Runner) homeDir(opts RunOptions) (string, error) {
 }
 
 func (r Runner) resolver() endpoints.Resolver {
-	if r.Resolver.IsZero() {
-		return endpoints.NewResolver()
+	resolver := endpoints.NewResolver()
+	if !r.Resolver.IsZero() {
+		resolver = r.Resolver
 	}
-	return r.Resolver
+	resolver.Debug = r.Debug
+	resolver.DebugWriter = r.DebugWriter
+	return resolver
 }
 
 func prepareHome(homeDir string) error {

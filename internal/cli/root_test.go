@@ -860,6 +860,7 @@ func TestFSOperationalCommandsExposeResourceSelector(t *testing.T) {
 	root := NewRootCommand(testVersion())
 	excluded := map[string]bool{
 		"ti fs create-file-system":  true,
+		"ti fs list-regions":        true,
 		"ti fs list-file-systems":   true,
 		"ti fs drain-file-system":   true,
 		"ti fs unmount-file-system": true,
@@ -886,6 +887,7 @@ func TestFSRemoteCommandsExposeTokenFlag(t *testing.T) {
 	root := NewRootCommand(testVersion())
 	excluded := map[string]bool{
 		"ti fs create-file-system":                           true,
+		"ti fs list-regions":                                 true,
 		"ti fs list-file-systems":                            true,
 		"ti fs describe-file-system":                         true,
 		"ti fs delete-file-system":                           true,
@@ -1133,20 +1135,6 @@ func TestRegionOverrideWinsOverEnvironmentCredentials(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "aws ap-southeast-1") {
 		t.Fatalf("expected region override in endpoint check, got:\n%s", stdout)
-	}
-}
-
-func TestAzureFileSystemRegionOverride(t *testing.T) {
-	withConfigEnv(t)
-
-	stdout, _, err := executeForTest("--region", "azure-centralus", "fs", "create-file-system", "--dry-run")
-	if err != nil {
-		t.Fatalf("expected Azure file system dry-run to succeed: %v", err)
-	}
-	for _, want := range []string{"azure centralus", "/v1/admin/tenants"} {
-		if !strings.Contains(stdout, want) {
-			t.Fatalf("Azure dry-run missing %q:\n%s", want, stdout)
-		}
 	}
 }
 
@@ -1479,7 +1467,7 @@ func executeForTestWithInfo(info version.Info, args ...string) (string, string, 
 
 // testVersion is a local build, so commands in these tests honour the
 // telemetry and release overrides that use the Info passed in. Hidden controls
-// read without an Info (TI_TEST_*_BASE_URL, TI_TEST_FS_MANIFEST_URL,
+// read without an Info (TI_TEST_*_BASE_URL, TI_TEST_FS_REGIONS_URL,
 // TI_DRIVE9_BIN) see the go test binary, which is not local, so they stay off.
 func testVersion() version.Info {
 	return version.Info{

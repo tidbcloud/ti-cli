@@ -3,6 +3,7 @@ package aiconfig
 import (
 	"context"
 	"encoding/json"
+	"github.com/tidbcloud/ti-cli/internal/fsregion"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -196,9 +197,13 @@ func TestAIConfigurationResponseSources(t *testing.T) {
 }
 
 func testService(baseURL string) Service {
-	return Service{Resolver: endpoints.Resolver{FSManifest: &endpoints.FSRegionManifest{Regions: []endpoints.FSRegionManifestEntry{{
-		RegionCode: "aws-us-east-1", Mode: endpoints.DefaultFSMode, ServerURL: baseURL, CloudProvider: "aws", TiDBRegion: "us-east-1",
-	}}}}}
+	catalog, err := fsregion.Normalize([]fsregion.Entry{{
+		RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: baseURL, State: "ACTIVE",
+	}})
+	if err != nil {
+		panic(err)
+	}
+	return Service{Resolver: endpoints.Resolver{FSRegions: &catalog}}
 }
 
 func testProfile() *config.Profile {

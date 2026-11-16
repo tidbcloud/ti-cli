@@ -92,7 +92,7 @@ func TestLiveRuntimeExec(t *testing.T) {
 	}
 	bin := tiBinary(t)
 	profile := ensureLiveFSResource(t, bin, liveProfileName(t))
-	endpoint, err := endpoints.NewResolver().ResolveFS(profile.FSCloudProvider, profile.FSRegionCode)
+	endpoint, err := endpoints.NewResolver().ResolveFSCredentialEndpoint(profile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,11 +110,9 @@ func TestLiveRuntimeExec(t *testing.T) {
 	}
 	server := httptest.NewServer(proxy)
 	t.Cleanup(server.Close)
-	manifest := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(endpoints.FSRegionManifest{Service: "ti-fs", Regions: []endpoints.FSRegionManifestEntry{{RegionCode: profile.FSPlacementRegionCode, Mode: endpoints.DefaultFSMode, ServerURL: server.URL, CloudProvider: profile.FSCloudProvider, TiDBRegion: profile.FSRegionCode}}})
-	}))
-	t.Cleanup(manifest.Close)
-	env := append(liveFSTokenEnv(profile, t.TempDir()), "TI_TELEMETRY=off", "TI_ALLOW_TEST_ENDPOINTS=1", "TI_TEST_FS_MANIFEST_URL="+manifest.URL, "TI_EXEC_TEST_LOCAL=local value")
+	// Data-plane routing comes from the recorded File System credential, so the
+	// isolated home records the local proxy as the regional service address.
+	env := append(liveFSTokenEnv(t, profile, t.TempDir(), server.URL), "TI_TELEMETRY=off", "TI_EXEC_TEST_LOCAL=local value")
 	run := func(t *testing.T, args ...string) commandResult {
 		t.Helper()
 		observer.reset()

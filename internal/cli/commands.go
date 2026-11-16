@@ -968,6 +968,7 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSCreateFileSystemCommand(info),
 		newFSDeleteFileSystemCommand(info),
 		newFSListFileSystemsCommand(info),
+		newFSListRegionsCommand(info),
 		newFSDescribeFileSystemCommand(info),
 		newFSDescribeFileSystemExtractConfigurationCommand(info),
 		newFSUpdateFileSystemExtractConfigurationCommand(info),
@@ -1012,13 +1013,14 @@ func newFSCommand(info version.Info) *cobra.Command {
 	}
 	tokenCommands := []string{"generate-file-system-token", "generate-file-system-scoped-token", "list-file-system-tokens", "enable-file-system-token", "disable-file-system-token", "delete-file-system-token", "refresh-file-system-token"}
 	selectorExclusions := append([]string{
-		"create-file-system", "list-file-systems", "describe-file-system", "delete-file-system", "import-file-system-token", "drain-file-system", "unmount-file-system",
+		"create-file-system", "list-file-systems", "list-regions", "describe-file-system", "delete-file-system", "import-file-system-token", "drain-file-system", "unmount-file-system",
 		"describe-file-system-extract-configuration", "update-file-system-extract-configuration",
 		"describe-file-system-embedding-configuration", "update-file-system-embedding-configuration",
 	}, tokenCommands...)
 	addFSSelectorFlags(commands, selectorExclusions...)
 	addFSAuthFlags(commands,
 		"create-file-system",
+		"list-regions",
 		"list-file-systems",
 		"describe-file-system",
 		"delete-file-system",
@@ -1469,6 +1471,22 @@ func newFSListFileSystemsCommand(info version.Info) *cobra.Command {
 	cmd.Flags().String("display-name", "", "Filter by a substring of the effective display name.")
 	cmd.Flags().StringArray("label", nil, "Filter by one exact organization-visible label in key=value form.")
 	return cmd
+}
+
+func newFSListRegionsCommand(info version.Info) *cobra.Command {
+	return newControlPlaneCommand(controlPlaneCommandSpec{
+		Use:        "list-regions",
+		Short:      "List the TiDB Cloud Filesystem regions published by the backend.",
+		Mutation:   readOnlyCommand,
+		Permission: authz.FSRegionRead,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := fsLocalServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return service.ListRegions(ctx.cmd.Context(), profile)
+		},
+	}, info)
 }
 
 func newFSDescribeFileSystemCommand(info version.Info) *cobra.Command {

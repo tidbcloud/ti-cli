@@ -818,17 +818,17 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	defer eastControl.close()
 	westControl := newFakeFSTenantControlPlane(t, "aws-us-west-2", "tenant-aws-us-west-2")
 	defer westControl.close()
-	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintf(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":%q,"cloud_provider":"aws","tidb_region":"us-east-1"},{"region_code":"aws-us-west-2","mode":"tidb_cloud_native","server_url":%q,"cloud_provider":"aws","tidb_region":"us-west-2"}]}`, eastControl.URL(), westControl.URL())
-	}))
-	defer manifestServer.Close()
+	regionsServer := newFakeFSRegions(t,
+		fakeFSRegion{RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: eastControl.URL()},
+		fakeFSRegion{RegionCode: "aws-us-west-2", CloudProvider: "aws", ServiceAddress: westControl.URL()},
+	)
 	baseEnv := []string{
 		"HOME=" + home,
 		"TI_DRIVE9_BIN=" + companion,
 		"TI_TEST_FAKE_MOUNT_READY=1",
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 		"TI_ALLOW_TEST_ENDPOINTS=1",
-		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+		"TI_TEST_FS_REGIONS_URL=" + regionsServer.URL,
 	}
 	configured := runTIWithInput(t, bin, "", append(baseEnv,
 		"TI_REGION_CODE=aws-us-east-1",
@@ -1077,7 +1077,7 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	}
 }
 
-func TestFSCloudRegionsUseBuiltInEndpoints(t *testing.T) {
+func TestFSCloudRegionsUseRecordedServiceAddress(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake companion build path is covered by unit tests on Windows")
 	}
@@ -1096,7 +1096,7 @@ func TestFSCloudRegionsUseBuiltInEndpoints(t *testing.T) {
 			recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
 			const fileSystemID = "tenant-cloud-sandbox"
 			token := drive9TestToken(fileSystemID)
-			env := []string{
+			baseEnv := []string{
 				"HOME=" + home,
 				"TI_PROFILE=default",
 				"TI_REGION_CODE=aws-us-east-1",
@@ -1104,25 +1104,39 @@ func TestFSCloudRegionsUseBuiltInEndpoints(t *testing.T) {
 				"TIDB_CLOUD_PUBLIC_KEY=",
 				"TIDB_CLOUD_PRIVATE_KEY=",
 				"TI_ALLOW_TEST_ENDPOINTS=",
-				"TI_TEST_FS_MANIFEST_URL=http://127.0.0.1:1/must-not-be-used",
+				"TI_TEST_FS_REGIONS_URL=http://127.0.0.1:1/must-not-be-used",
 				"FAKE_DRIVE9_RECORD=" + recordPath,
 				"DRIVE9_SERVER=https://wrong.example.test",
 				"DRIVE9_REGION_CODE=aws-us-west-2",
 				"DRIVE9_API_KEY=wrong-credential",
 			}
-			result := runTIWithInput(t, bin, "", env, "--region", regionCode, "fs", "list-files", "--path", "/")
-			result.wantExitCode(0)
+
+			// A File System token alone routes through the conventional regional
+			// address derived from the canonical region code: no catalog request,
+			// no compiled-in region table, and no local state.
+			withoutCredential := runTIWithInput(t, bin, "", baseEnv, "--region", regionCode, "fs", "list-files", "--path", "/")
+			withoutCredential.wantExitCode(0)
 			assertFakeDrive9Call(t, readFakeDrive9Calls(t, recordPath), []string{"fs", "ls"}, token, home, "default", fileSystemID, "https://"+regionCode+".drive9.ai", regionCode)
 			for _, name := range []string{"config", "credentials", "fs_credentials"} {
 				if _, err := os.Stat(filepath.Join(home, ".ti", name)); !os.IsNotExist(err) {
 					t.Fatalf("token-only access persisted %s: %v", name, err)
 				}
 			}
+
+			// A recorded address always wins over the derived convention.
+			if err := os.Remove(recordPath); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			recorded := "https://" + regionCode + ".recorded.test"
+			seedFSCredential(t, home, "default", fileSystemID, regionCode, recorded, token)
+			result := runTIWithInput(t, bin, "", baseEnv, "--region", regionCode, "fs", "list-files", "--path", "/")
+			result.wantExitCode(0)
+			assertFakeDrive9Call(t, readFakeDrive9Calls(t, recordPath), []string{"fs", "ls"}, token, home, "default", fileSystemID, recorded, regionCode)
 		})
 	}
 }
 
-func TestFSConfigurationFreeAccess(t *testing.T) {
+func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("fake companion build path is covered by unit tests on Windows")
 	}
@@ -1135,10 +1149,7 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
 	}
 	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
-	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":"https://fs-east.test","cloud_provider":"aws","tidb_region":"us-east-1"}]}`)
-	}))
-	defer manifestServer.Close()
+	regionsServer := newFakeFSRegions(t, fakeFSRegion{RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: "https://fs-east.test"})
 	baseEnv := []string{
 		"HOME=" + home,
 		"TI_LOGGING=on",
@@ -1146,8 +1157,9 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 		"TI_TEST_FAKE_MOUNT_READY=1",
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 		"TI_ALLOW_TEST_ENDPOINTS=1",
-		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+		"TI_TEST_FS_REGIONS_URL=" + regionsServer.URL,
 	}
+	seedFSCredential(t, home, "default", "tenant-sandbox", "aws-us-east-1", "https://fs-east.test", drive9TestToken("tenant-sandbox"))
 	authEnv := append(append([]string{}, baseEnv...),
 		"TDC_FS_TOKEN="+drive9TestToken("tenant-sandbox"),
 		"TDC_REGION_CODE=aws-us-east-1",
@@ -1169,6 +1181,8 @@ func TestFSConfigurationFreeAccess(t *testing.T) {
 		result.wantExitCode(0)
 	}
 
+	// Tokens without a recorded credential still work through the conventional
+	// regional address derived from the canonical region code.
 	flagsOnly := runTIWithInput(t, bin, "", baseEnv,
 		"--region", "aws-us-east-1",
 		"fs", "list-files",
@@ -1259,6 +1273,7 @@ func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {
 		"TI_REGION_CODE=aws-us-east-1",
 		"DRIVE9_API_KEY=ambient-must-not-win",
 	}
+	seedFSCredential(t, home, "private-runtime-profile", "tenant-runtime", "aws-us-east-1", "https://fs-east.test", token)
 
 	helpRecord := filepath.Join(t.TempDir(), "help-calls.jsonl")
 	helpEnv := []string{
@@ -1429,20 +1444,18 @@ func TestFSLayerForkWorkflowCommands(t *testing.T) {
 		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
 	}
 	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
-	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":"https://fs-east.test","cloud_provider":"aws","tidb_region":"us-east-1"}]}`)
-	}))
-	defer manifestServer.Close()
+	regionsServer := newFakeFSRegions(t, fakeFSRegion{RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: "https://fs-east.test"})
 	env := []string{
 		"HOME=" + home,
 		"TI_DRIVE9_BIN=" + companion,
 		"TI_TEST_FAKE_MOUNT_READY=1",
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 		"TI_ALLOW_TEST_ENDPOINTS=1",
-		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+		"TI_TEST_FS_REGIONS_URL=" + regionsServer.URL,
 		"TI_FS_TOKEN=" + drive9TestToken("tenant-layer"),
 		"TI_REGION_CODE=aws-us-east-1",
 	}
+	seedFSCredential(t, home, "default", "tenant-layer", "aws-us-east-1", "https://fs-east.test", drive9TestToken("tenant-layer"))
 
 	fork := runTIWithInput(t, bin, "", env, "fs", "fork-layer", "--parent-layer-ref", "research-base", "--layer-id", "child-id", "--layer-name", "child", "--checkpoint-id", "seed", "--actor-id", "agent")
 	fork.wantExitCode(0)
@@ -1517,10 +1530,7 @@ func TestFSImportFileSystemToken(t *testing.T) {
 		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
 	}
 	token := drive9TestToken("tenant-imported")
-	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprint(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":"https://fs.test","cloud_provider":"aws","tidb_region":"us-east-1"}]}`)
-	}))
-	defer manifestServer.Close()
+	regionsServer := newFakeFSRegions(t, fakeFSRegion{RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: "https://fs.test"})
 	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
 	baseEnv := []string{
 		"HOME=" + home,
@@ -1529,7 +1539,9 @@ func TestFSImportFileSystemToken(t *testing.T) {
 		"FAKE_DRIVE9_RECORD=" + recordPath,
 		"FAKE_DRIVE9_EXPECT_API_KEY=" + token,
 		"TI_ALLOW_TEST_ENDPOINTS=1",
-		"TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+		"TI_TEST_FS_REGIONS_URL=" + regionsServer.URL,
+		"TIDB_CLOUD_PUBLIC_KEY=e2e-public",
+		"TIDB_CLOUD_PRIVATE_KEY=e2e-private",
 	}
 	tokenPath := filepath.Join(t.TempDir(), "fs-token")
 	if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0o600); err != nil {
@@ -1580,6 +1592,30 @@ func TestFSImportFileSystemToken(t *testing.T) {
 	stdinImport.wantExitCode(0)
 	if _, err := fscred.GetCredential(stdinHome, "default", "tenant-imported"); err != nil {
 		t.Fatalf("stdin import did not store credentials: %v", err)
+	}
+
+	// A token-only machine without TiDB Cloud API keys imports through the
+	// conventional regional address, and the caller never needs the catalog.
+	keylessHome := t.TempDir()
+	keylessEnv := []string{
+		"HOME=" + keylessHome,
+		"TI_DRIVE9_BIN=" + companion,
+		"FAKE_DRIVE9_RECORD=" + recordPath,
+		"FAKE_DRIVE9_EXPECT_API_KEY=" + token,
+		"TI_ALLOW_TEST_ENDPOINTS=1",
+		"TI_TEST_FS_REGIONS_URL=http://127.0.0.1:1/must-not-be-used",
+		"TIDB_CLOUD_PUBLIC_KEY=",
+		"TIDB_CLOUD_PRIVATE_KEY=",
+	}
+	keyless := runTIWithInput(t, bin, "", keylessEnv,
+		"--region", "aws-us-east-1", "fs", "import-file-system-token", "--from-file", tokenPath)
+	keyless.wantExitCode(0)
+	keylessCredential, err := fscred.GetCredential(keylessHome, "default", "tenant-imported")
+	if err != nil {
+		t.Fatalf("keyless import did not store credentials: %v", err)
+	}
+	if keylessCredential.ServiceAddress != "https://aws-us-east-1.drive9.ai" {
+		t.Fatalf("keyless import address = %q, want the derived address", keylessCredential.ServiceAddress)
 	}
 }
 
@@ -1643,12 +1679,9 @@ func TestFSFileSystemTokenLifecycle(t *testing.T) {
 		}
 	}))
 	defer tokenServer.Close()
-	manifestServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = fmt.Fprintf(w, `{"service":"drive9","regions":[{"region_code":"aws-us-east-1","mode":"tidb_cloud_native","server_url":%q,"cloud_provider":"aws","tidb_region":"us-east-1"}]}`, tokenServer.URL)
-	}))
-	defer manifestServer.Close()
+	regionsServer := newFakeFSRegions(t, fakeFSRegion{RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: tokenServer.URL})
 	env := []string{
-		"HOME=" + home, "TI_ALLOW_TEST_ENDPOINTS=1", "TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+		"HOME=" + home, "TI_ALLOW_TEST_ENDPOINTS=1", "TI_TEST_FS_REGIONS_URL=" + regionsServer.URL,
 		"TI_REGION_CODE=aws-us-east-1", "TIDB_CLOUD_PUBLIC_KEY=e2e-public", "TIDB_CLOUD_PRIVATE_KEY=e2e-private",
 	}
 	configured := runTIWithInput(t, bin, "", env, "configure", "--profile", "stage", "--non-interactive")
@@ -1691,12 +1724,14 @@ func TestFSFileSystemTokenLifecycle(t *testing.T) {
 	bearerListEnv := append(append([]string{}, env...), "TI_FS_TOKEN="+generatedToken)
 	bearerListed := runTIWithInput(t, bin, "", bearerListEnv, "--profile", "stage", "fs", "list-file-system-tokens")
 	bearerListed.wantExitCode(0)
-	configFreeBearerEnv := []string{
-		"HOME=" + t.TempDir(), "TI_ALLOW_TEST_ENDPOINTS=1", "TI_TEST_FS_MANIFEST_URL=" + manifestServer.URL,
+	recordedBearerHome := t.TempDir()
+	recordedBearerEnv := []string{
+		"HOME=" + recordedBearerHome, "TI_ALLOW_TEST_ENDPOINTS=1",
 		"TI_REGION_CODE=aws-us-east-1", "TI_FS_TOKEN=" + generatedToken,
 	}
-	configFreeBearerList := runTIWithInput(t, bin, "", configFreeBearerEnv, "fs", "list-file-system-tokens")
-	configFreeBearerList.wantExitCode(0)
+	seedFSCredential(t, recordedBearerHome, "default", "tenant-tokens", "aws-us-east-1", tokenServer.URL, generatedToken)
+	recordedBearerList := runTIWithInput(t, bin, "", recordedBearerEnv, "fs", "list-file-system-tokens")
+	recordedBearerList.wantExitCode(0)
 	bearerDisabled := runTIWithInput(t, bin, "", bearerListEnv, "--profile", "stage", "fs", "disable-file-system-token", "--token-id", "token-scoped")
 	bearerDisabled.wantExitCode(0)
 	bearerDisabled.wantStdoutContains(`"status": "disabled"`)
@@ -2459,4 +2494,61 @@ func (r commandResult) fail(format string, args ...any) {
 		"stdout:\n" + r.stdout,
 		"stderr:\n" + r.stderr,
 	}, "\n"))
+}
+
+func TestFSListRegionsThroughBinary(t *testing.T) {
+	bin := tiBinary(t)
+	home := t.TempDir()
+	regionsServer := newFakeFSRegions(t,
+		fakeFSRegion{RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: "https://aws-us-east-1.drive9.ai"},
+		fakeFSRegion{RegionCode: "aws-us-west-2", CloudProvider: "aws", ServiceAddress: "https://aws-us-west-2.drive9.ai", State: "PENDING"},
+		fakeFSRegion{RegionCode: "gcp-us-east1", CloudProvider: "gcp", ServiceAddress: "https://gcp-us-east1.drive9.ai"},
+	)
+	// A credential written before the region catalog has no recorded address; the
+	// command must backfill it.
+	seedFSCredential(t, home, "default", "fs-legacy", "aws-us-east-1", "", drive9TestToken("fs-legacy"))
+	env := []string{
+		"HOME=" + home,
+		"TI_ALLOW_TEST_ENDPOINTS=1",
+		"TI_TEST_FS_REGIONS_URL=" + regionsServer.URL,
+		"TIDB_CLOUD_PUBLIC_KEY=e2e-public",
+		"TIDB_CLOUD_PRIVATE_KEY=e2e-private",
+	}
+
+	list := runTIWithInput(t, bin, "", env, "fs", "list-regions")
+	list.wantExitCode(0)
+	for _, want := range []string{`"region_count": 3`, `"region_code": "aws-us-east-1"`, `"region_code": "gcp-us-east1"`, `"state": "PENDING"`, `"eligible": false`, `"eligible": true`} {
+		list.wantStdoutContains(want)
+	}
+	listed, err := fscred.GetCredential(home, "default", "fs-legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed.ServiceAddress != "https://aws-us-east-1.drive9.ai" {
+		t.Fatalf("list-regions did not backfill the credential address: %#v", listed)
+	}
+
+	queried := runTIWithInput(t, bin, "", env, "fs", "list-regions", "--query", "regions[?eligible].region_code", "--output", "json")
+	queried.wantExitCode(0)
+	queried.wantStdoutContains("aws-us-east-1")
+	queried.wantStdoutNotContains("aws-us-west-2")
+
+	text := runTIWithInput(t, bin, "", env, "fs", "list-regions", "--output", "text")
+	text.wantExitCode(0)
+	for _, want := range []string{"REGION", "PROVIDER", "SERVICE ADDRESS", "aws-us-east-1", "https://gcp-us-east1.drive9.ai"} {
+		text.wantStdoutContains(want)
+	}
+
+	dryRun := runTIWithInput(t, bin, "", env, "fs", "list-regions", "--dry-run")
+	dryRun.wantExitCode(2)
+
+	noKeys := []string{
+		"HOME=" + t.TempDir(),
+		"TI_ALLOW_TEST_ENDPOINTS=1",
+		"TI_TEST_FS_REGIONS_URL=" + regionsServer.URL,
+		"TIDB_CLOUD_PUBLIC_KEY=",
+		"TIDB_CLOUD_PRIVATE_KEY=",
+	}
+	withoutKeys := runTIWithInput(t, bin, "", noKeys, "fs", "list-regions")
+	withoutKeys.wantExitCode(3)
 }

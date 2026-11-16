@@ -38,9 +38,12 @@ func TestRuntimeExecSignals(t *testing.T) {
 			if test.twice {
 				mode = "wait-for-second-signal"
 			}
+			home := t.TempDir()
+			token := drive9TestToken("tenant-runtime-signal")
+			seedFSCredential(t, home, "default", "tenant-runtime-signal", "aws-us-east-1", "https://aws-us-east-1.drive9.ai", token)
 			cmd := exec.Command(bin, "exec", "wait")
-			cmd.Env = append(os.Environ(), "HOME="+t.TempDir(), "TI_LOGGING=off", "TI_TELEMETRY=off", "TI_ALLOW_TEST_ENDPOINTS=1", "TI_DRIVE9_BIN="+companion,
-				"TI_FS_TOKEN="+drive9TestToken("tenant-runtime-signal"), "TI_REGION_CODE=aws-us-east-1", "FAKE_DRIVE9_EXEC_MODE="+mode)
+			cmd.Env = append(os.Environ(), "HOME="+home, "TI_LOGGING=off", "TI_TELEMETRY=off", "TI_ALLOW_TEST_ENDPOINTS=1", "TI_DRIVE9_BIN="+companion,
+				"TI_FS_TOKEN="+token, "TI_REGION_CODE=aws-us-east-1", "FAKE_DRIVE9_EXEC_MODE="+mode)
 			cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 			pipe, err := cmd.StdoutPipe()
 			if err != nil {

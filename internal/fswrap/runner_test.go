@@ -2,6 +2,7 @@ package fswrap
 
 import (
 	"errors"
+	"github.com/tidbcloud/ti-cli/internal/fsregion"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -33,13 +34,12 @@ func TestDrive9EnvironmentSanitizesTISecrets(t *testing.T) {
 		FSPlacementRegionCode: "aws-us-east-1",
 		FSCloudProvider:       "aws",
 		FSRegionCode:          "us-east-1",
+		FSServiceAddress:      "https://fs.test",
 		FSAPIKey:              "selected-fs-token",
 		TiDBCloudPublicKey:    "selected-public",
 		TiDBCloudPrivateKey:   "selected-private",
 	}
-	runner := Runner{Resolver: endpoints.Resolver{FSBaseURLs: map[endpoints.ProviderRegion]string{
-		{Provider: "aws", Region: "us-east-1"}: "https://fs.test",
-	}}}
+	runner := Runner{Resolver: testFSRegionResolver(t, "https://fs.test")}
 
 	env, err := runner.drive9Env(t.TempDir(), RunOptions{
 		Profile:         profile,
@@ -305,4 +305,15 @@ func TestLocateCompanionResolvesSymlinkedBinary(t *testing.T) {
 	if _, err := runner.locateCompanion(); apperr.CodeFor(err) != "fs.companion_untrusted" {
 		t.Fatalf("symlink to a world-writable directory error = %v", err)
 	}
+}
+
+func testFSRegionResolver(t *testing.T, baseURL string) endpoints.Resolver {
+	t.Helper()
+	catalog, err := fsregion.Normalize([]fsregion.Entry{{
+		RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: baseURL, State: "ACTIVE",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return endpoints.Resolver{FSRegions: &catalog}
 }

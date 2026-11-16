@@ -2,6 +2,7 @@ package region
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -54,13 +55,18 @@ var supported = map[string][]Region{
 
 // filesystemOnly marks placements that serve TiDB Cloud Filesystem without a
 // TiDB Cloud Starter placement. TiDB Cloud Starter resolution rejects them
-// through Validate, while Filesystem resolution accepts them through
-// ValidateFilesystem; the built-in Filesystem endpoint mapping remains the
-// authority on whether a Filesystem endpoint exists for a placement.
+// through Validate. Whether a Filesystem endpoint exists for a placement is not
+// decided here: the Filesystem region catalog published by the backend is the
+// authority.
 var filesystemOnly = map[string]struct{}{
 	placementKey(ProviderGCP, "us-east1"):    {},
 	placementKey(ProviderAzure, "centralus"): {},
 }
+
+// nativeCodePattern is the structural shape of the native part of a canonical
+// region code. It is deliberately independent of the Starter whitelist: the
+// Filesystem region catalog decides which of these codes it publishes.
+var nativeCodePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$`)
 
 func placementKey(provider, regionCode string) string {
 	return provider + "\x00" + regionCode
@@ -130,32 +136,41 @@ func DefaultRegion(provider string) (string, error) {
 	return regions[0].Code, nil
 }
 
-// CanonicalCode returns the canonical placement code for an accepted
-// provider/region pair. It accepts every placement ti can address, including
-// Filesystem-only placements such as azure-centralus.
+// CanonicalCode returns the canonical placement code for a provider and native
+// region code. It validates the pair structurally only: whether the placement
+// is offered by TiDB Cloud Starter is decided by Validate, and whether it is
+// offered by TiDB Cloud Filesystem is decided by the published Filesystem
+// region catalog.
 func CanonicalCode(provider, nativeCode string) (string, error) {
-	if err := validatePlacement(provider, nativeCode); err != nil {
+	placement, err := ParseCanonicalCode(providerToPrefixValue(provider) + "-" + strings.TrimSpace(nativeCode))
+	if err != nil {
 		return "", err
 	}
-	prefix, ok := providerToPrefix[provider]
-	if !ok {
+	if placement.Provider != provider {
 		return "", fmt.Errorf("unsupported cloud provider %q; supported providers: %s", provider, joinProviders())
 	}
-	return prefix + "-" + nativeCode, nil
+	return placement.Code, nil
 }
 
-func ParsePlacementCode(code string) (Placement, error) {
-	code = strings.TrimSpace(code)
+// ParseCanonicalCode parses a canonical region code into its provider and
+// native parts without consulting any whitelist. It rejects a missing
+// separator, an empty part, an unknown provider prefix, or a native part that
+// does not match the canonical shape. Callers that need Starter semantics must
+// additionally call Validate, and callers that need Filesystem semantics must
+// look the code up in the Filesystem region catalog.
+func ParseCanonicalCode(code string) (Placement, error) {
+	raw := strings.TrimSpace(code)
+	code = strings.ToLower(raw)
 	prefix, nativeCode, ok := strings.Cut(code, "-")
 	if !ok || prefix == "" || nativeCode == "" {
-		return Placement{}, fmt.Errorf("unsupported region code %q; expected values such as %s", code, DefaultPlacementCode())
+		return Placement{}, fmt.Errorf("unsupported region code %q; expected values such as %s", raw, DefaultPlacementCode())
 	}
 	provider, ok := providerPrefixes[prefix]
 	if !ok {
-		return Placement{}, fmt.Errorf("unsupported cloud provider prefix %q in region code %q; supported prefixes: %s", prefix, code, joinProviderPrefixes())
+		return Placement{}, fmt.Errorf("unsupported cloud provider prefix %q in region code %q; supported prefixes: %s", prefix, raw, joinProviderPrefixes())
 	}
-	if err := validatePlacement(provider, nativeCode); err != nil {
-		return Placement{}, err
+	if len(nativeCode) > 63 || !nativeCodePattern.MatchString(nativeCode) {
+		return Placement{}, fmt.Errorf("unsupported region code %q; expected values such as %s", raw, DefaultPlacementCode())
 	}
 	regionLabel := ""
 	if regions, _ := Regions(provider); len(regions) > 0 {
@@ -175,6 +190,21 @@ func ParsePlacementCode(code string) (Placement, error) {
 	}, nil
 }
 
+// ProviderForAPI maps a TiDB Cloud API cloud provider value, which is also the
+// canonical region prefix, to the internal provider name.
+func ProviderForAPI(apiProvider string) (string, bool) {
+	provider, ok := providerPrefixes[strings.ToLower(strings.TrimSpace(apiProvider))]
+	return provider, ok
+}
+
+func providerToPrefixValue(provider string) string {
+	provider = strings.TrimSpace(provider)
+	if prefix, ok := providerToPrefix[provider]; ok {
+		return prefix
+	}
+	return provider
+}
+
 // Validate reports whether provider/regionCode is a supported TiDB Cloud
 // Starter placement. A placement that only serves TiDB Cloud Filesystem is
 // rejected with an explicit Filesystem-only error instead of being reported as
@@ -187,13 +217,6 @@ func Validate(provider, regionCode string) error {
 		return fmt.Errorf("placement %q serves TiDB Cloud Filesystem only, not TiDB Cloud Starter", providerToPrefix[provider]+"-"+regionCode)
 	}
 	return nil
-}
-
-// ValidateFilesystem reports whether provider/regionCode can be routed to a
-// TiDB Cloud Filesystem endpoint. Whether an endpoint exists for the placement
-// is decided by the built-in Filesystem region mapping.
-func ValidateFilesystem(provider, regionCode string) error {
-	return validatePlacement(provider, regionCode)
 }
 
 func validatePlacement(provider, regionCode string) error {

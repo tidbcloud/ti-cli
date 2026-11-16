@@ -247,16 +247,18 @@ func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string,
 	), nil
 }
 
+// resolveFS selects the regional endpoint recorded in the selected File
+// System's credentials. Data-plane, mount, Git, journal, vault, layer, and
+// Runtime commands use it, so they never depend on TiDB Cloud API credentials.
 func (s Service) resolveFS(profile *config.Profile) (endpoints.Endpoint, error) {
-	provider := profile.FSCloudProvider
-	regionCode := profile.FSRegionCode
-	if provider == "" {
-		provider = profile.CloudProvider
-	}
-	if regionCode == "" {
-		regionCode = profile.RegionCode
-	}
-	return s.resolver().ResolveFS(provider, regionCode)
+	return s.resolver().ResolveFSCredentialEndpoint(profile)
+}
+
+// resolveAdminFS selects the regional endpoint from the published Filesystem
+// region catalog. It is used by control-plane commands, which run with TiDB
+// Cloud API credentials and may not have a File System credential yet.
+func (s Service) resolveAdminFS(profile *config.Profile) (endpoints.Endpoint, error) {
+	return s.resolver().ResolveFSProfile(profile)
 }
 
 func (s Service) bearerClient(profile *config.Profile, endpoint endpoints.Endpoint, permission authz.Permission, action string) (*apifs.Client, error) {
@@ -279,10 +281,13 @@ func (s Service) bearerClient(profile *config.Profile, endpoint endpoints.Endpoi
 }
 
 func (s Service) resolver() endpoints.Resolver {
-	if s.Resolver.IsZero() {
-		return endpoints.NewResolver()
+	resolver := endpoints.NewResolver()
+	if !s.Resolver.IsZero() {
+		resolver = s.Resolver
 	}
-	return s.Resolver
+	resolver.Debug = s.Debug
+	resolver.DebugWriter = s.DebugWriter
+	return resolver
 }
 
 func (s Service) homeDir() (string, error) {

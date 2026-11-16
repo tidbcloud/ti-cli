@@ -23,6 +23,7 @@ const (
 	StarterSQLUserUpdate    Permission = "starter.sql_user.update"
 	StarterSQLExecute       Permission = "starter.sql.execute"
 	StarterExportRead       Permission = "starter.export.read"
+	FSRegionRead            Permission = "fs.region.read"
 	FSVolumeRead            Permission = "fs.volume.read"
 	FSVolumeCreate          Permission = "fs.volume.create"
 	FSVolumeDelete          Permission = "fs.volume.delete"
@@ -59,6 +60,7 @@ const (
 var commandPermissions = map[string]Permission{
 	"ti fs create-file-system":                           FSVolumeCreate,
 	"ti fs delete-file-system":                           FSVolumeDelete,
+	"ti fs list-regions":                                 FSRegionRead,
 	"ti fs list-file-systems":                            FSVolumeRead,
 	"ti fs describe-file-system":                         FSVolumeRead,
 	"ti fs check-file-system":                            FSVolumeRead,
