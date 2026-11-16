@@ -134,7 +134,7 @@ func (r Resolver) ResolveIAM() (Endpoint, error) {
 // recorded in profile. Control-plane commands use it: they need a region and may
 // not have a File System credential yet, so the published Filesystem region
 // catalog is authoritative.
-func (r Resolver) ResolveFSProfile(profile *config.Profile) (Endpoint, error) {
+func (r Resolver) ResolveFSProfile(ctx context.Context, profile *config.Profile) (Endpoint, error) {
 	if profile == nil {
 		return Endpoint{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
@@ -149,12 +149,12 @@ func (r Resolver) ResolveFSProfile(profile *config.Profile) (Endpoint, error) {
 	if regionCode == "" {
 		regionCode = profile.PlacementRegionCode
 	}
-	return r.ResolveFSRegion(profile, regionCode)
+	return r.ResolveFSRegion(ctx, profile, regionCode)
 }
 
 // ResolveFSRegion selects the regional Filesystem endpoint for an explicit
 // canonical region code using the published Filesystem region catalog.
-func (r Resolver) ResolveFSRegion(profile *config.Profile, regionCode string) (Endpoint, error) {
+func (r Resolver) ResolveFSRegion(ctx context.Context, profile *config.Profile, regionCode string) (Endpoint, error) {
 	placement, err := region.ParseCanonicalCode(regionCode)
 	if err != nil {
 		return Endpoint{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
@@ -162,7 +162,7 @@ func (r Resolver) ResolveFSRegion(profile *config.Profile, regionCode string) (E
 	if profile == nil {
 		return Endpoint{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required to resolve a ti fs region")
 	}
-	catalog, err := r.FetchFSRegions(context.Background(), profile)
+	catalog, err := r.FetchFSRegions(ctx, profile)
 	if err != nil {
 		return Endpoint{}, err
 	}
@@ -223,8 +223,9 @@ func (r Resolver) FetchFSRegions(ctx context.Context, profile *config.Profile) (
 	credentials := fsregion.Credentials{}
 	if profile != nil {
 		credentials = fsregion.Credentials{
-			PublicKey:  profile.TiDBCloudPublicKey,
-			PrivateKey: profile.TiDBCloudPrivateKey,
+			ProfileName: profile.Name,
+			PublicKey:   profile.TiDBCloudPublicKey,
+			PrivateKey:  profile.TiDBCloudPrivateKey,
 		}
 	}
 	client := fsregion.Client{

@@ -233,7 +233,7 @@ ti fs list-regions
 ti fs list-regions --query 'regions[?eligible].region_code' --output text
 ```
 
-`ti fs create-file-system` and `ti fs import-file-system-token` record the regional `service_address` with the File System credential, and data-plane commands route from that address without requesting the region catalog. A token-only machine works without TiDB Cloud credentials: import once with credentials (`ti fs import-file-system-token --from-file ./fs-token`), or rely on the conventional `https://<region-id>.drive9.ai` address that `ti` derives when no address is recorded.
+`ti fs create-file-system` and `ti fs import-file-system-token` record the regional `service_address` with the File System credential, and data-plane commands route from that address without requesting the region catalog. A token-only machine works without TiDB Cloud credentials: import once (`ti fs import-file-system-token --from-file ./fs-token`) and `ti` derives the conventional `https://<region-id>.drive9.ai` address whenever the credential records none. With TiDB Cloud credentials the import also records the catalog-published address; without them it records none, so a later catalog change still applies.
 
 `ti fs list-file-systems` reads the region-scoped remote inventory through TiDB Cloud credentials. A profile can access multiple file systems, including resources created on another machine. Data-plane commands never infer a resource from the number of local credentials, so provide `--file-system-id` or set `TI_FS_FILE_SYSTEM_ID`:
 

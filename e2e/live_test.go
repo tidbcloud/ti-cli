@@ -2147,7 +2147,7 @@ func liveFSTokenEnv(t *testing.T, profile *config.Profile, home, serviceAddress 
 		address = profile.FSServiceAddress
 	}
 	if address == "" {
-		endpoint, err := endpoints.NewResolver().ResolveFSProfile(profile)
+		endpoint, err := endpoints.NewResolver().ResolveFSProfile(context.Background(), profile)
 		if err != nil {
 			t.Fatalf("resolve live ti fs endpoint: %v", err)
 		}

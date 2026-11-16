@@ -112,7 +112,7 @@ type EmbeddingResult struct {
 }
 
 func (s Service) DescribeExtract(ctx context.Context, opts DescribeExtractOptions) (ExtractResult, error) {
-	id, mediaType, client, creds, err := s.extractInputs(opts.Profile, opts.FileSystemID, opts.MediaType, authz.FSExtractConfigRead, "describe file system extract configuration", "")
+	id, mediaType, client, creds, err := s.extractInputs(ctx, opts.Profile, opts.FileSystemID, opts.MediaType, authz.FSExtractConfigRead, "describe file system extract configuration", "")
 	if err != nil {
 		return ExtractResult{}, err
 	}
@@ -131,7 +131,7 @@ func (s Service) UpdateExtract(ctx context.Context, opts UpdateExtractOptions) (
 	if err != nil {
 		return ExtractResult{}, err
 	}
-	id, mediaType, client, creds, err := s.extractInputs(opts.Profile, opts.FileSystemID, opts.MediaType, authz.FSExtractConfigUpdate, "update file system extract configuration", opts.ProviderAPIKey)
+	id, mediaType, client, creds, err := s.extractInputs(ctx, opts.Profile, opts.FileSystemID, opts.MediaType, authz.FSExtractConfigUpdate, "update file system extract configuration", opts.ProviderAPIKey)
 	if err != nil {
 		return ExtractResult{}, err
 	}
@@ -146,7 +146,7 @@ func (s Service) UpdateExtract(ctx context.Context, opts UpdateExtractOptions) (
 }
 
 func (s Service) DescribeEmbedding(ctx context.Context, opts DescribeEmbeddingOptions) (EmbeddingResult, error) {
-	id, client, creds, err := s.embeddingInputs(opts.Profile, opts.FileSystemID, authz.FSEmbeddingConfigRead, "describe file system embedding configuration", "")
+	id, client, creds, err := s.embeddingInputs(ctx, opts.Profile, opts.FileSystemID, authz.FSEmbeddingConfigRead, "describe file system embedding configuration", "")
 	if err != nil {
 		return EmbeddingResult{}, err
 	}
@@ -165,7 +165,7 @@ func (s Service) UpdateEmbedding(ctx context.Context, opts UpdateEmbeddingOption
 	if err != nil {
 		return EmbeddingResult{}, err
 	}
-	id, client, creds, err := s.embeddingInputs(opts.Profile, opts.FileSystemID, authz.FSEmbeddingConfigUpdate, "update file system embedding configuration", opts.ProviderAPIKey)
+	id, client, creds, err := s.embeddingInputs(ctx, opts.Profile, opts.FileSystemID, authz.FSEmbeddingConfigUpdate, "update file system embedding configuration", opts.ProviderAPIKey)
 	if err != nil {
 		return EmbeddingResult{}, err
 	}
@@ -179,12 +179,12 @@ func (s Service) UpdateEmbedding(ctx context.Context, opts UpdateEmbeddingOption
 	return embeddingResult(id, response), nil
 }
 
-func (s Service) DryRunUpdateExtract(command string, opts UpdateExtractOptions) (dryrun.Result, error) {
+func (s Service) DryRunUpdateExtract(ctx context.Context, command string, opts UpdateExtractOptions) (dryrun.Result, error) {
 	request, err := validateExtractUpdate(opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
-	id, mediaType, _, _, err := s.extractInputs(opts.Profile, opts.FileSystemID, opts.MediaType, authz.FSExtractConfigUpdate, "update file system extract configuration", opts.ProviderAPIKey)
+	id, mediaType, _, _, err := s.extractInputs(ctx, opts.Profile, opts.FileSystemID, opts.MediaType, authz.FSExtractConfigUpdate, "update file system extract configuration", opts.ProviderAPIKey)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -198,12 +198,12 @@ func (s Service) DryRunUpdateExtract(command string, opts UpdateExtractOptions) 
 	}, checks...), nil
 }
 
-func (s Service) DryRunUpdateEmbedding(command string, opts UpdateEmbeddingOptions) (dryrun.Result, error) {
+func (s Service) DryRunUpdateEmbedding(ctx context.Context, command string, opts UpdateEmbeddingOptions) (dryrun.Result, error) {
 	request, err := validateEmbeddingUpdate(opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
-	id, _, _, err := s.embeddingInputs(opts.Profile, opts.FileSystemID, authz.FSEmbeddingConfigUpdate, "update file system embedding configuration", opts.ProviderAPIKey)
+	id, _, _, err := s.embeddingInputs(ctx, opts.Profile, opts.FileSystemID, authz.FSEmbeddingConfigUpdate, "update file system embedding configuration", opts.ProviderAPIKey)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -225,7 +225,7 @@ func configurationDryRunChecks(profile *config.Profile, permission authz.Permiss
 	}
 }
 
-func (s Service) extractInputs(profile *config.Profile, fileSystemID, mediaType string, permission authz.Permission, action, providerAPIKey string) (string, string, *apifs.Client, apifs.TiDBCloudCredentials, error) {
+func (s Service) extractInputs(ctx context.Context, profile *config.Profile, fileSystemID, mediaType string, permission authz.Permission, action, providerAPIKey string) (string, string, *apifs.Client, apifs.TiDBCloudCredentials, error) {
 	id, err := validateFileSystemID(fileSystemID)
 	if err != nil {
 		return "", "", nil, apifs.TiDBCloudCredentials{}, err
@@ -234,25 +234,25 @@ func (s Service) extractInputs(profile *config.Profile, fileSystemID, mediaType 
 	if err != nil {
 		return "", "", nil, apifs.TiDBCloudCredentials{}, err
 	}
-	client, creds, err := s.adminClient(profile, permission, action, providerAPIKey)
+	client, creds, err := s.adminClient(ctx, profile, permission, action, providerAPIKey)
 	return id, mediaType, client, creds, err
 }
 
-func (s Service) embeddingInputs(profile *config.Profile, fileSystemID string, permission authz.Permission, action, providerAPIKey string) (string, *apifs.Client, apifs.TiDBCloudCredentials, error) {
+func (s Service) embeddingInputs(ctx context.Context, profile *config.Profile, fileSystemID string, permission authz.Permission, action, providerAPIKey string) (string, *apifs.Client, apifs.TiDBCloudCredentials, error) {
 	id, err := validateFileSystemID(fileSystemID)
 	if err != nil {
 		return "", nil, apifs.TiDBCloudCredentials{}, err
 	}
-	client, creds, err := s.adminClient(profile, permission, action, providerAPIKey)
+	client, creds, err := s.adminClient(ctx, profile, permission, action, providerAPIKey)
 	return id, client, creds, err
 }
 
-func (s Service) adminClient(profile *config.Profile, permission authz.Permission, action, providerAPIKey string) (*apifs.Client, apifs.TiDBCloudCredentials, error) {
+func (s Service) adminClient(ctx context.Context, profile *config.Profile, permission authz.Permission, action, providerAPIKey string) (*apifs.Client, apifs.TiDBCloudCredentials, error) {
 	creds, err := auth.ValidateProfile(profile)
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, err
 	}
-	endpoint, err := s.resolver().ResolveFSProfile(profile)
+	endpoint, err := s.resolver().ResolveFSProfile(ctx, profile)
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, err
 	}

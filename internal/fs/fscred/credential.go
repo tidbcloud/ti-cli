@@ -123,10 +123,14 @@ func StoreCredentialRecord(homeDir string, profile *config.Profile, credential C
 		if credential.ServiceAddress == "" {
 			credential.ServiceAddress = existing.ServiceAddress
 		}
-		if credentialsEqual(existing, credential) {
-			return existing, nil
-		}
-		if !replace {
+		if credentialsIdentityEqual(existing, credential) {
+			// The recorded regional address is derived placement metadata, not
+			// token identity: an address change (for example a keyed import after
+			// a keyless one) updates it without demanding --replace.
+			if existing.ServiceAddress == credential.ServiceAddress {
+				return existing, nil
+			}
+		} else if !replace {
 			return Credential{}, credentialError("fs.credential_import_conflict", profile.Name, fileSystemID, "a different local token or region is already stored")
 		}
 	} else if apperr.CodeFor(getErr) != "fs.credential_not_found" {
@@ -236,11 +240,11 @@ func DeleteCredentialIfTokenID(homeDir, profileName, fileSystemID, tokenID strin
 	return removed, "", err
 }
 
-func credentialsEqual(left, right Credential) bool {
+// credentialsIdentityEqual compares everything that identifies a stored token.
+// The regional service address is intentionally excluded so that refreshing
+// placement metadata never looks like a token conflict.
+func credentialsIdentityEqual(left, right Credential) bool {
 	if left.FileSystemID != right.FileSystemID || left.RegionCode != right.RegionCode || left.APIKey != right.APIKey || left.TokenID != right.TokenID || left.ScopeKind != right.ScopeKind || left.TokenName != right.TokenName {
-		return false
-	}
-	if left.ServiceAddress != right.ServiceAddress {
 		return false
 	}
 	if !tokenScopesEqual(left.Scopes, right.Scopes) {

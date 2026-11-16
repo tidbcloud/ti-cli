@@ -529,7 +529,7 @@ func TestResolveEndpointPrefersRecordedAddressThenDerives(t *testing.T) {
 	profile := &config.Profile{Name: "test", HomeDir: home}
 	service := Service{HomeDir: home}
 
-	derived, err := service.resolveEndpoint(profile, "aws-us-east-1", "fs-1")
+	derived, err := service.resolveEndpoint(context.Background(), profile, "aws-us-east-1", "fs-1")
 	if err != nil {
 		t.Fatalf("resolveEndpoint failed: %v", err)
 	}
@@ -545,7 +545,7 @@ func TestResolveEndpointPrefersRecordedAddressThenDerives(t *testing.T) {
 	}, false); err != nil {
 		t.Fatal(err)
 	}
-	recorded, err := service.resolveEndpoint(profile, "aws-us-east-1", "fs-1")
+	recorded, err := service.resolveEndpoint(context.Background(), profile, "aws-us-east-1", "fs-1")
 	if err != nil {
 		t.Fatalf("resolveEndpoint failed: %v", err)
 	}

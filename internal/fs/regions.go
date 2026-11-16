@@ -52,7 +52,7 @@ func (s Service) ListRegions(ctx context.Context, profile *config.Profile) (List
 	if err != nil {
 		return ListRegionsResult{}, err
 	}
-	s.refreshCredentialServiceAddresses(profile, catalog)
+	s.refreshCredentialServiceAddresses(ctx, profile, catalog)
 	regions := make([]RegionSummary, 0, len(catalog.Entries))
 	for _, entry := range catalog.Entries {
 		regions = append(regions, RegionSummary{
@@ -73,7 +73,7 @@ func (s Service) ListRegions(ctx context.Context, profile *config.Profile) (List
 // commands route from the credential, so they need the address recorded there.
 // Per-credential failures are ignored: a credential that cannot be rewritten
 // still reports the actionable hint when a data-plane command needs it.
-func (s Service) refreshCredentialServiceAddresses(profile *config.Profile, catalog fsregion.Catalog) {
+func (s Service) refreshCredentialServiceAddresses(ctx context.Context, profile *config.Profile, catalog fsregion.Catalog) {
 	homeDir, err := s.homeDir()
 	if err != nil {
 		return
@@ -86,11 +86,22 @@ func (s Service) refreshCredentialServiceAddresses(profile *config.Profile, cata
 		if !credential.HasLocalToken || credential.ServiceAddress != "" || credential.APIKey == "" {
 			continue
 		}
-		entry, ok := catalog.Lookup(credential.RegionCode)
-		if !ok || !entry.Eligible() {
+		if entry, ok := catalog.Lookup(credential.RegionCode); !ok || !entry.Eligible() {
 			continue
+		} else {
+			address := entry.ServiceAddress
+			// Re-read and write under the credential lock so a concurrent
+			// refresh-file-system-token rotation cannot be reverted by this
+			// placement-only update.
+			_ = fscred.WithCredentialLock(ctx, homeDir, profileName(profile), credential.FileSystemID, func() error {
+				current, getErr := fscred.GetCredential(homeDir, profileName(profile), credential.FileSystemID)
+				if getErr != nil || current.ServiceAddress != "" {
+					return nil
+				}
+				current.ServiceAddress = address
+				_, storeErr := fscred.StoreCredentialRecord(homeDir, profile, current, true)
+				return storeErr
+			})
 		}
-		credential.ServiceAddress = entry.ServiceAddress
-		_, _ = fscred.StoreCredentialRecord(homeDir, profile, credential, true)
 	}
 }

@@ -869,9 +869,11 @@ Credential files contain `file_system_id`, canonical `region_code`, an optional
 the main `~/.ti/credentials` file. Profile and ID path segments are safely
 encoded. `service_address` is the regional Filesystem endpoint published by the
 region catalog; `create-file-system` and `import-file-system-token` write it and
-`ti fs list-regions` backfills it. Recorded `service_address` is optional: when a
-credential does not have one (it predates the catalog), data-plane routing
-derives the conventional address `https://<region-id>.drive9.ai`. Remote Drive9
+`ti fs list-regions` backfills it. Only catalog-resolved addresses are persisted;
+a keyless import validates through the derived conventional address and records
+none, so a later catalog change still applies. Recorded `service_address` is
+optional: when a credential does not have one (it predates the catalog),
+data-plane routing derives `https://<region-id>.drive9.ai`. Remote Drive9
 list/get is authoritative for inventory and status; local state only determines
 `has_local_token` and data-plane access.
 

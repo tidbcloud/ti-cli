@@ -463,3 +463,40 @@ func credentialTestProfile() *config.Profile {
 		Name: "stage", PlacementRegionCode: "aws-us-east-1", CloudProvider: "aws", RegionCode: "us-east-1",
 	}
 }
+
+func TestStoreCredentialUpdatesAddressWithoutReplace(t *testing.T) {
+	home := t.TempDir()
+	profile := &config.Profile{Name: "stage", HomeDir: home}
+	base := Credential{FileSystemID: "tenant-address", RegionCode: "aws-us-east-1", APIKey: wrappedToken(t, "tenant-address")}
+	base.ServiceAddress = "https://aws-us-east-1.recorded.example"
+	if _, err := StoreCredentialRecord(home, profile, base, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// A changed placement address is metadata, not token identity.
+	updated := base
+	updated.ServiceAddress = "https://aws-us-east-1.other.example"
+	stored, err := StoreCredentialRecord(home, profile, updated, false)
+	if err != nil {
+		t.Fatalf("address-only update was treated as a conflict: %v", err)
+	}
+	if stored.ServiceAddress != "https://aws-us-east-1.other.example" {
+		t.Fatalf("stored address = %q", stored.ServiceAddress)
+	}
+
+	// An empty address never clears a recorded one.
+	stored, err = StoreCredentialRecord(home, profile, Credential{FileSystemID: base.FileSystemID, RegionCode: base.RegionCode, APIKey: base.APIKey}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ServiceAddress != "https://aws-us-east-1.other.example" {
+		t.Fatalf("empty address cleared the recorded one: %#v", stored)
+	}
+
+	// A different token is still a conflict without --replace.
+	other := base
+	other.APIKey = wrappedToken(t, "tenant-address") + "-different"
+	if _, err := StoreCredentialRecord(home, profile, other, false); apperr.CodeFor(err) != "fs.credential_import_conflict" {
+		t.Fatalf("expected a token conflict, got %v", err)
+	}
+}

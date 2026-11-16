@@ -13,7 +13,7 @@ import (
 )
 
 func testCredentials() Credentials {
-	return Credentials{PublicKey: "public", PrivateKey: "private"}
+	return Credentials{ProfileName: "default", PublicKey: "public", PrivateKey: "private"}
 }
 
 func regionJSON(regionID, provider, address, state string) string {
@@ -105,6 +105,46 @@ func TestFetchRejectsContractViolations(t *testing.T) {
 				t.Fatalf("unexpected code %q for %v", code, err)
 			}
 		})
+	}
+}
+
+func TestFetchKeepsTheDocumentedExitCodeContract(t *testing.T) {
+	for _, test := range []struct {
+		status int
+		code   string
+		exit   int
+		want   string
+	}{
+		{status: http.StatusUnauthorized, code: "auth.invalid_credentials", exit: 3, want: "Check ~/.ti/credentials"},
+		{status: http.StatusForbidden, code: "authz.permission_denied", exit: 4, want: "permission denied"},
+		{status: http.StatusNotFound, code: "api.not_found", exit: 5, want: "remote resource not found"},
+	} {
+		t.Run(http.StatusText(test.status), func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(test.status)
+			}))
+			defer server.Close()
+			_, err := Client{BaseURL: server.URL, Credentials: testCredentials()}.Fetch(context.Background())
+			if err == nil {
+				t.Fatal("expected the catalog request to fail")
+			}
+			if code := apperr.CodeFor(err); code != test.code {
+				t.Fatalf("code = %q, want %q", code, test.code)
+			}
+			if exit := apperr.ExitCodeFor(err); exit != test.exit {
+				t.Fatalf("exit = %d, want %d", exit, test.exit)
+			}
+			if message := apperr.MessageFor(err); !strings.Contains(message, test.want) {
+				t.Fatalf("message %q is missing %q", message, test.want)
+			}
+		})
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+	if _, err := (Client{BaseURL: server.URL, Credentials: testCredentials()}).Fetch(context.Background()); apperr.CodeFor(err) != "api.fs_regions_unavailable" || apperr.ExitCodeFor(err) != 1 {
+		t.Fatalf("expected a generic api.fs_regions_unavailable exit 1 for HTTP 500, got %v", err)
 	}
 }
 

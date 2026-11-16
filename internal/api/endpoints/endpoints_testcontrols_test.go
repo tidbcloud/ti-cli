@@ -1,6 +1,7 @@
 package endpoints
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -63,7 +64,7 @@ func TestNewResolverIgnoresTestOverridesInReleaseBuilds(t *testing.T) {
 	if err != nil || iam.BaseURL != DefaultIAMBaseURL {
 		t.Fatalf("IAM endpoint = %q, %v; want the default", iam.BaseURL, err)
 	}
-	if _, err := resolver.ResolveFSProfile(overrideProfile(t)); err == nil {
+	if _, err := resolver.ResolveFSProfile(context.Background(), overrideProfile(t)); err == nil {
 		t.Fatal("expected Filesystem resolution to fail without the test catalog")
 	}
 	if got := catalogRequests.Load(); got != 0 {
@@ -86,7 +87,7 @@ func TestNewResolverAppliesTestOverridesInLocalBuilds(t *testing.T) {
 	}
 	profile := overrideProfile(t)
 	profile.FSPlacementRegionCode = "aws-us-east-1"
-	fs, err := resolver.ResolveFSProfile(profile)
+	fs, err := resolver.ResolveFSProfile(context.Background(), profile)
 	if err != nil || fs.BaseURL != "https://override.drive9.example" {
 		t.Fatalf("FS endpoint = %q, %v; want the catalog override", fs.BaseURL, err)
 	}

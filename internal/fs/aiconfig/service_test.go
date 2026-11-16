@@ -118,7 +118,7 @@ func TestAIConfigurationServiceOutputDryRunAndRedaction(t *testing.T) {
 		t.Fatalf("update = %#v, %v", updated, err)
 	}
 	beforeDryRun := requests
-	dryRun, err := service.DryRunUpdateExtract("ti fs update-file-system-extract-configuration", opts)
+	dryRun, err := service.DryRunUpdateExtract(context.Background(), "ti fs update-file-system-extract-configuration", opts)
 	if err != nil {
 		t.Fatal(err)
 	}

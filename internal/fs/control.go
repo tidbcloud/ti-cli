@@ -181,7 +181,7 @@ func (s Service) DryRunImportFileSystemToken(ctx context.Context, commandPath st
 }
 
 func (s Service) DryRunCreateFileSystem(ctx context.Context, commandPath string, opts CreateFileSystemOptions) (dryrun.Result, error) {
-	request, _, _, endpoint, err := s.adminCreateInputs(opts)
+	request, _, _, endpoint, err := s.adminCreateInputs(ctx, opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -212,7 +212,7 @@ func (s Service) DryRunCreateFileSystem(ctx context.Context, commandPath string,
 }
 
 func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string, opts DeleteFileSystemOptions) (dryrun.Result, error) {
-	fileSystemID, _, _, endpoint, err := s.adminDeleteInputs(opts)
+	fileSystemID, _, _, endpoint, err := s.adminDeleteInputs(ctx, opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -257,8 +257,8 @@ func (s Service) resolveFS(profile *config.Profile) (endpoints.Endpoint, error) 
 // resolveAdminFS selects the regional endpoint from the published Filesystem
 // region catalog. It is used by control-plane commands, which run with TiDB
 // Cloud API credentials and may not have a File System credential yet.
-func (s Service) resolveAdminFS(profile *config.Profile) (endpoints.Endpoint, error) {
-	return s.resolver().ResolveFSProfile(profile)
+func (s Service) resolveAdminFS(ctx context.Context, profile *config.Profile) (endpoints.Endpoint, error) {
+	return s.resolver().ResolveFSProfile(ctx, profile)
 }
 
 func (s Service) bearerClient(profile *config.Profile, endpoint endpoints.Endpoint, permission authz.Permission, action string) (*apifs.Client, error) {

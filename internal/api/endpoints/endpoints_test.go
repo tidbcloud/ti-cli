@@ -121,7 +121,7 @@ func TestResolveFSProfileFromCatalog(t *testing.T) {
 	server, hits := testCatalogServer(t, activeUSPrivateEast1)
 	profile := testProfileWithKeys(t.TempDir())
 	profile.FSPlacementRegionCode = "aws-us-east-1"
-	endpoint, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSProfile(profile)
+	endpoint, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSProfile(context.Background(), profile)
 	if err != nil {
 		t.Fatalf("ResolveFSProfile failed: %v", err)
 	}
@@ -139,7 +139,7 @@ func TestResolveFSProfileFromCatalog(t *testing.T) {
 func TestResolveFSRegionRejectsUnpublishedRegion(t *testing.T) {
 	server, _ := testCatalogServer(t, activeUSPrivateEast1)
 	profile := testProfileWithKeys(t.TempDir())
-	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(profile, "aws-us-west-2")
+	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(context.Background(), profile, "aws-us-west-2")
 	if err == nil {
 		t.Fatal("expected unsupported fs region to fail")
 	}
@@ -158,7 +158,7 @@ func TestResolveFSRegionRejectsUnpublishedRegion(t *testing.T) {
 func TestResolveFSRegionRejectsInactiveRegion(t *testing.T) {
 	server, _ := testCatalogServer(t, `{"regionId":"aws-us-west-2","cloudProvider":"aws","displayName":"Oregon (us-west-2)","serviceAddress":"https://aws-us-west-2.drive9.ai","state":"PENDING"}`)
 	profile := testProfileWithKeys(t.TempDir())
-	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(profile, "aws-us-west-2")
+	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(context.Background(), profile, "aws-us-west-2")
 	if err == nil {
 		t.Fatal("expected a non-ACTIVE region to fail")
 	}
@@ -168,7 +168,7 @@ func TestResolveFSRegionRejectsInactiveRegion(t *testing.T) {
 }
 
 func TestResolveFSWithoutCredentialsFails(t *testing.T) {
-	_, err := NewResolver().ResolveFSProfile(&config.Profile{Name: config.DefaultProfile, FSPlacementRegionCode: "aws-us-east-1"})
+	_, err := NewResolver().ResolveFSProfile(context.Background(), &config.Profile{Name: config.DefaultProfile, FSPlacementRegionCode: "aws-us-east-1"})
 	if err == nil {
 		t.Fatal("expected resolution without credentials to fail")
 	}
@@ -263,7 +263,7 @@ func TestFetchFSRegionsNeverFallsBackToLocalState(t *testing.T) {
 func TestResolveFSRejectsPlainHTTPCatalogAddress(t *testing.T) {
 	server, _ := testCatalogServer(t, `{"regionId":"aws-us-east-1","cloudProvider":"aws","displayName":"N. Virginia (us-east-1)","serviceAddress":"http://aws-us-east-1.drive9.ai","state":"ACTIVE"}`)
 	profile := testProfileWithKeys(t.TempDir())
-	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(profile, "aws-us-east-1")
+	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(context.Background(), profile, "aws-us-east-1")
 	if err == nil || apperr.CodeFor(err) != "api.fs_regions_invalid" {
 		t.Fatalf("expected the catalog to reject a plain http service address, got %v", err)
 	}

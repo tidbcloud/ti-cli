@@ -145,6 +145,9 @@ func layerHelpHasCommand(help, command string) bool {
 }
 
 func incompatibleDrive9Error(cause error) error {
+	if isFSPlacementError(cause) {
+		return cause
+	}
 	message := "the installed ti-drive9 companion does not support filesystem layer fork workflows; update or reinstall ti after a compatible companion release is available"
 	if cause != nil {
 		return apperr.Wrap("fs.companion_incompatible", "runtime", 1, message, cause)
@@ -233,7 +236,7 @@ func (s Service) importFileSystemToken(ctx context.Context, opts ImportFileSyste
 	if err != nil {
 		return ImportFileSystemTokenResult{}, err
 	}
-	endpoint, err := s.importEndpoint(opts.Profile, placement.Code)
+	endpoint, err := s.importEndpoint(ctx, opts.Profile, placement.Code)
 	if err != nil {
 		return ImportFileSystemTokenResult{}, err
 	}
@@ -245,6 +248,13 @@ func (s Service) importFileSystemToken(ctx context.Context, opts ImportFileSyste
 	selected.FSRegionCode = placement.NativeCode
 	selected.FSServiceAddress = endpoint.BaseURL
 	selected.FSAPIKey = opts.Token
+	// Only a catalog-resolved address is authoritative enough to persist. A
+	// keyless import derives the conventional address purely for validation;
+	// recording it would freeze the convention and hide a later catalog change.
+	recordedAddress := ""
+	if opts.Profile.HasTiDBCloudCredentials() {
+		recordedAddress = endpoint.BaseURL
+	}
 	validationHome, err := os.MkdirTemp("", "ti-fs-token-validation-*")
 	if err != nil {
 		return ImportFileSystemTokenResult{}, apperr.Wrap("fs.token_validation", "runtime", 1, "prepare temporary FS token validation state", err)
@@ -271,7 +281,7 @@ func (s Service) importFileSystemToken(ctx context.Context, opts ImportFileSyste
 		if _, err := fscred.StoreCredentialRecord(homeDir, opts.Profile, fscred.Credential{
 			FileSystemID:   tokenID,
 			RegionCode:     placement.Code,
-			ServiceAddress: endpoint.BaseURL,
+			ServiceAddress: recordedAddress,
 			APIKey:         opts.Token,
 		}, opts.Replace); err != nil {
 			return ImportFileSystemTokenResult{}, err
@@ -1768,9 +1778,9 @@ func isFSPlacementError(err error) bool {
 // token. With TiDB Cloud API credentials the published catalog is authoritative;
 // without them ti falls back to the conventional regional address so that a
 // token-only machine can still register a File System.
-func (s Service) importEndpoint(profile *config.Profile, regionCode string) (endpoints.Endpoint, error) {
+func (s Service) importEndpoint(ctx context.Context, profile *config.Profile, regionCode string) (endpoints.Endpoint, error) {
 	if profile != nil && profile.HasTiDBCloudCredentials() {
-		return s.resolver().ResolveFSRegion(profile, regionCode)
+		return s.resolver().ResolveFSRegion(ctx, profile, regionCode)
 	}
 	selected := config.Profile{}
 	if profile != nil {

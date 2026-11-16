@@ -12,6 +12,8 @@ import (
 
 	apitransport "github.com/tidbcloud/ti-cli/internal/api/transport"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/auth"
+	"github.com/tidbcloud/ti-cli/internal/authz"
 )
 
 const (
@@ -21,7 +23,8 @@ const (
 	catalogReadMaxByte = 8 << 20
 )
 
-// Credentials are the TiDB Cloud API keys used for the catalog request.
+// Credentials are the TiDB Cloud API keys used for the catalog request. The
+// profile name is only used to phrase authentication and authorization failures.
 type Credentials struct {
 	ProfileName string
 	PublicKey   string
@@ -34,7 +37,7 @@ func (c Credentials) Complete() bool {
 }
 
 // Client fetches the published Filesystem region catalog. It owns no local
-// state: caching and fallback policy live in Load.
+// state: every call observes the published state, and nothing is cached.
 type Client struct {
 	BaseURL     string
 	HTTPClient  *http.Client
@@ -98,7 +101,7 @@ func (c Client) Fetch(ctx context.Context) (Catalog, error) {
 		if err != nil {
 			return Catalog{}, apperr.Wrap("api.fs_regions_unavailable", "api", 1, "the Filesystem region catalog is unavailable", err)
 		}
-		pageData, readErr := readCatalogPage(response)
+		pageData, readErr := c.readCatalogPage(response)
 		response.Body.Close()
 		if readErr != nil {
 			return Catalog{}, readErr
@@ -152,8 +155,19 @@ func catalogQuery(pageToken string) url.Values {
 	return query
 }
 
-func readCatalogPage(response *http.Response) (catalogPage, error) {
+func (c Client) readCatalogPage(response *http.Response) (catalogPage, error) {
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		// The catalog is a Digest-authenticated TiDB Cloud control-plane
+		// endpoint, so credential, authorization, and not-found failures keep the
+		// documented exit-code contract instead of collapsing into exit 1.
+		switch response.StatusCode {
+		case http.StatusUnauthorized:
+			return catalogPage{}, auth.InvalidCredentials(c.Credentials.ProfileName).AsError()
+		case http.StatusForbidden:
+			return catalogPage{}, auth.PermissionDenied(c.Credentials.ProfileName, authz.FSRegionRead, "read the Filesystem region catalog").AsError()
+		case http.StatusNotFound:
+			return catalogPage{}, auth.NotFound(http.MethodGet, RegionsPath).AsError()
+		}
 		return catalogPage{}, apperr.New(
 			"api.fs_regions_unavailable",
 			"api",

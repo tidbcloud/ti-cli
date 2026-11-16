@@ -111,10 +111,12 @@ Two distinct paths replace the single compiled-in mapping:
    `describe-file-system`, `delete-file-system`, `import-file-system-token`, the
    token lifecycle commands, AI provider configuration, and `list-regions`.
    A canonical code the catalog does not publish or does not currently activate
-   fails with `api.fs_endpoint_unsupported`, listing the eligible regions.
+   fails with `api.fs_endpoint_unsupported`, listing the routable regions. The
+   resolver honors the command context, so Ctrl+C cancels a slow catalog fetch.
 2. **Credential resolution** (`endpoints.Resolver.ResolveFSCredentialEndpoint`)
    uses the `service_address` recorded in the selected File System's local
-   credentials. It serves data-plane, mount, layer, pack/unpack, Git, journal,
+   credentials. A recorded address always came from the catalog, so it outranks
+   the convention. It serves data-plane, mount, layer, pack/unpack, Git, journal,
    vault, and Runtime execution commands, and makes no network request at all.
    When the credential records no address (it predates the catalog) or records an
    unusable one, the conventional address is derived from the canonical region
@@ -140,14 +142,21 @@ api_key = "drive9_..."
 
 - `ti fs create-file-system` writes the address resolved from the catalog.
 - `ti fs import-file-system-token` resolves the catalog entry before validating
-  the token remotely and writes the same address. This is the bootstrap for a
-  machine that has only a File System token: import needs TiDB Cloud API
-  credentials once, and every later data-plane command needs none.
+  the token remotely and records that catalog address. When TiDB Cloud API
+  credentials are absent it validates through the derived conventional address
+  instead and records **no** address, so a later catalog change is still picked
+  up by derivation. Only catalog-resolved addresses are ever persisted.
 - `ti fs list-regions` backfills the address on stored credentials that predate
   this change. It only rewrites credentials it can match to an eligible catalog
-  entry; per-credential write failures never fail the command. Backfill is an
-  accuracy improvement, not a prerequisite: data-plane routing would otherwise
-  fall back to the derived conventional address.
+  entry, it re-reads and writes each credential under the credential lock so a
+  concurrent token rotation is not reverted, and per-credential write failures
+  never fail the command. Backfill is an accuracy improvement, not a
+  prerequisite: data-plane routing would otherwise fall back to the derived
+  conventional address.
+- An address-only change never counts as an import conflict: the recorded
+  address is placement metadata, not token identity, so a keyed import after a
+  keyless one updates it without `--replace`. A missing address never clears a
+  recorded one.
 - A missing `service_address` stays loadable, so existing credentials keep
   parsing and keep working through the derived address.
 - A stored address must pass the same validation as a catalog address. An
@@ -255,7 +264,13 @@ ti fs list-regions [--output json|text] [--query J]
     mapping of the region-code prefix.
   - `api.fs_regions_request` / `api.fs_regions_unavailable` /
     `api.fs_regions_decode` / `api.fs_regions_invalid` (api, exit `1`) — request
-    construction, transport, decode, and contract validation failures.
+    construction, transport, decode, and contract validation failures. A
+    credential, authorization, or not-found status is **not** part of this
+    bucket: the catalog request reuses the shared TiDB Cloud status taxonomy, so
+    HTTP 401 is `auth.invalid_credentials` (exit `3`), 403 is
+    `authz.permission_denied` (exit `4`), and 404 is `api.not_found` (exit `5`).
+    The classifications live in `internal/auth` and are rendered by both
+    `internal/api` and `internal/fsregion`, so the taxonomy cannot diverge.
   - `config.invalid_region` (exit `2`) — malformed canonical code.
 
 ## Testing
@@ -276,6 +291,9 @@ Unit tests:
   mount locator address round-trip, and data-plane routing with no network.
 - `internal/cli`: `ti fs list-regions` registration, flags, permission, and
   `--dry-run` rejection.
+- `internal/auth` + `internal/fsregion`: shared status taxonomy — 401/403/404 on
+  the catalog request produce exit codes 3/4/5 with the same wording as the
+  shared client, while 5xx stays `api.fs_regions_unavailable` (exit `1`).
 
 Black-box e2e:
 
@@ -316,7 +334,11 @@ Update in the same change:
   the removal of the installer region lists.
 - `docs/pingcap-docs/docs/`: the matching English `ti-` pages when the published
   behavior is described there.
-- Move this spec to `docs/spec/done/` only after live verification.
+- Move this spec to `docs/spec/done/` only after live verification **and** after
+  the English `ti-` pages land: the docs submodule (`docs/pingcap-docs/docs`) was
+  uninitialized in the authoring environment, so `ti fs list-regions`, the region
+  discovery model, and the installer output change still need matching pages,
+  `TOC-ai.md`, and `ai/_index.md` updates.
 
 ## Non-Goals
 

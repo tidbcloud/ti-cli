@@ -1066,7 +1066,7 @@ func newFSGenerateFileSystemTokenCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunGenerate(ctx.CommandPath(), opts)
+			return service.DryRunGenerate(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID that owns the generated token. Owner token generation requires TiDB Cloud API credentials.")
@@ -1102,7 +1102,7 @@ func newFSGenerateFileSystemScopedTokenCommand(info version.Info) *cobra.Command
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunGenerateScoped(ctx.CommandPath(), opts)
+			return service.DryRunGenerateScoped(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "Optional file system ID assertion; required when using a locally stored owner token.")
@@ -1211,7 +1211,7 @@ func newFSTokenMutationCommand(use, short, operation, method, path string, permi
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunMutation(ctx.CommandPath(), operation, method, path, opts, permission, mountGuard)
+			return service.DryRunMutation(ctx.cmd.Context(), ctx.CommandPath(), operation, method, path, opts, permission, mountGuard)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID that owns the token. Required with TiDB Cloud API credentials; optional with an owner FS token.")
@@ -1245,7 +1245,7 @@ func newFSRefreshFileSystemTokenCommand(info version.Info) *cobra.Command {
 				return dryrun.Result{}, err
 			}
 			opts.DryRun = true
-			return service.DryRunRefresh(ctx.CommandPath(), opts)
+			return service.DryRunRefresh(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "Optional file system ID assertion; required when using a locally stored token.")
@@ -1563,7 +1563,7 @@ func newFSUpdateFileSystemExtractConfigurationCommand(info version.Info) *cobra.
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunUpdateExtract(ctx.CommandPath(), opts)
+			return service.DryRunUpdateExtract(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID. This command requires TiDB Cloud API credentials.")
@@ -1628,7 +1628,7 @@ func newFSUpdateFileSystemEmbeddingConfigurationCommand(info version.Info) *cobr
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunUpdateEmbedding(ctx.CommandPath(), opts)
+			return service.DryRunUpdateEmbedding(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID. This command requires TiDB Cloud API credentials.")

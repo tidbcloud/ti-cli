@@ -1614,9 +1614,18 @@ func TestFSImportFileSystemToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("keyless import did not store credentials: %v", err)
 	}
-	if keylessCredential.ServiceAddress != "https://aws-us-east-1.drive9.ai" {
-		t.Fatalf("keyless import address = %q, want the derived address", keylessCredential.ServiceAddress)
+	// A keyless import validates through the derived address but must not freeze
+	// it: data-plane routing keeps deriving until the catalog records one.
+	if keylessCredential.ServiceAddress != "" {
+		t.Fatalf("keyless import recorded a derived address: %#v", keylessCredential)
 	}
+	if err := os.Remove(recordPath); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	keylessUse := runTIWithInput(t, bin, "", keylessEnv,
+		"fs", "list-files", "--file-system-id", "tenant-imported", "--path", "/")
+	keylessUse.wantExitCode(0)
+	assertFakeDrive9Call(t, readFakeDrive9Calls(t, recordPath), []string{"fs", "ls"}, token, keylessHome, "default", "tenant-imported", "https://aws-us-east-1.drive9.ai", "aws-us-east-1")
 }
 
 func TestFSFileSystemTokenLifecycle(t *testing.T) {
@@ -2503,6 +2512,8 @@ func TestFSListRegionsThroughBinary(t *testing.T) {
 		fakeFSRegion{RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: "https://aws-us-east-1.drive9.ai"},
 		fakeFSRegion{RegionCode: "aws-us-west-2", CloudProvider: "aws", ServiceAddress: "https://aws-us-west-2.drive9.ai", State: "PENDING"},
 		fakeFSRegion{RegionCode: "gcp-us-east1", CloudProvider: "gcp", ServiceAddress: "https://gcp-us-east1.drive9.ai"},
+		// Active, but for a cloud provider this ti release cannot map: listed, never routed.
+		fakeFSRegion{RegionCode: "aws-us-west-3", CloudProvider: "tencent", ServiceAddress: "https://aws-us-west-3.drive9.ai"},
 	)
 	// A credential written before the region catalog has no recorded address; the
 	// command must backfill it.
@@ -2517,7 +2528,7 @@ func TestFSListRegionsThroughBinary(t *testing.T) {
 
 	list := runTIWithInput(t, bin, "", env, "fs", "list-regions")
 	list.wantExitCode(0)
-	for _, want := range []string{`"region_count": 3`, `"region_code": "aws-us-east-1"`, `"region_code": "gcp-us-east1"`, `"state": "PENDING"`, `"eligible": false`, `"eligible": true`} {
+	for _, want := range []string{`"region_count": 4`, `"region_code": "aws-us-east-1"`, `"region_code": "gcp-us-east1"`, `"state": "PENDING"`, `"eligible": false`, `"eligible": true`} {
 		list.wantStdoutContains(want)
 	}
 	listed, err := fscred.GetCredential(home, "default", "fs-legacy")
@@ -2541,6 +2552,18 @@ func TestFSListRegionsThroughBinary(t *testing.T) {
 
 	dryRun := runTIWithInput(t, bin, "", env, "fs", "list-regions", "--dry-run")
 	dryRun.wantExitCode(2)
+
+	// An unmapped cloud provider stays visible but is never routable.
+	list.wantStdoutContains(`"region_code": "aws-us-west-3"`)
+	unmapped := runTIWithInput(t, bin, "", env, "--region", "aws-us-west-3", "fs", "list-file-systems")
+	unmapped.wantExitCode(2)
+	unmapped.wantStderrContains(`"tencent"`)
+	unmapped.wantStderrContains("does not support")
+
+	// A region the catalog does not publish fails locally with the contract code.
+	unpublished := runTIWithInput(t, bin, "", env, "--region", "aws-eu-central-1", "fs", "list-file-systems")
+	unpublished.wantExitCode(2)
+	unpublished.wantStderrContains("ti fs is not available for region aws-eu-central-1")
 
 	noKeys := []string{
 		"HOME=" + t.TempDir(),

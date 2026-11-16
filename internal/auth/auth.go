@@ -10,6 +10,7 @@ import (
 
 	"github.com/tidbcloud/ti-cli/internal/api/transport"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/authz"
 	"github.com/tidbcloud/ti-cli/internal/config"
 )
 
@@ -82,6 +83,56 @@ func ValidateProfile(profile *config.Profile) (Credentials, error) {
 		PublicKey:   profile.TiDBCloudPublicKey,
 		PrivateKey:  profile.TiDBCloudPrivateKey,
 	}, nil
+}
+
+// StatusError is the shared classification of a TiDB Cloud control-plane HTTP
+// status that must keep ti's documented exit-code contract: 3 authentication,
+// 4 authorization, 5 remote not found. Callers render it as their own error type
+// (api.Error, apperr.Error) so the taxonomy has one source and cannot diverge.
+type StatusError struct {
+	Code     string
+	Category string
+	ExitCode int
+	Message  string
+}
+
+// InvalidCredentials classifies HTTP 401 for a TiDB Cloud API key pair.
+func InvalidCredentials(profileName string) StatusError {
+	if profileName == "" {
+		profileName = config.DefaultProfile
+	}
+	return StatusError{
+		Code:     "auth.invalid_credentials",
+		Category: "authentication",
+		ExitCode: 3,
+		Message:  fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName),
+	}
+}
+
+// PermissionDenied classifies HTTP 403 for a TiDB Cloud control-plane request.
+func PermissionDenied(profileName string, permission authz.Permission, action string) StatusError {
+	err := authz.PermissionDenied(profileName, permission, action, "", "")
+	return StatusError{
+		Code:     apperr.CodeFor(err),
+		Category: apperr.CategoryFor(err),
+		ExitCode: apperr.ExitCodeFor(err),
+		Message:  apperr.MessageFor(err),
+	}
+}
+
+// NotFound classifies HTTP 404 for a TiDB Cloud control-plane request.
+func NotFound(method, path string) StatusError {
+	return StatusError{
+		Code:     "api.not_found",
+		Category: "api",
+		ExitCode: 5,
+		Message:  fmt.Sprintf("remote resource not found: %s %s", method, path),
+	}
+}
+
+// AsError renders the classification as a CLI error.
+func (e StatusError) AsError() error {
+	return apperr.New(e.Code, e.Category, e.ExitCode, e.Message)
 }
 
 func NewDigestTransport(creds Credentials, base http.RoundTripper) http.RoundTripper {
