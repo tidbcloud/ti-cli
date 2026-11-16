@@ -74,8 +74,8 @@ func TestFetchFiltersNonActiveRegionsAtLookup(t *testing.T) {
 	if _, ok := catalog.Lookup("aws-us-west-2"); !ok {
 		t.Fatal("expected the inactive region to stay in the catalog")
 	}
-	if codes := catalog.EligibleRegionCodes(); len(codes) != 1 || codes[0] != "aws-us-east-1" {
-		t.Fatalf("eligible regions = %#v", codes)
+	if codes := catalog.RoutableRegionCodes(); len(codes) != 1 || codes[0] != "aws-us-east-1" {
+		t.Fatalf("routable regions = %#v", codes)
 	}
 }
 
@@ -130,13 +130,35 @@ func TestFetchReportsTransportFailures(t *testing.T) {
 }
 
 func TestFetchKeepsUnknownCloudProviders(t *testing.T) {
-	server, _ := catalogServer(t, `{"regions":[`+regionJSON("aws-us-east-1", "aws", "https://aws-us-east-1.drive9.ai", "ACTIVE")+`],"nextPageToken":""}`)
+	server, _ := catalogServer(t, `{"regions":[`+
+		regionJSON("aws-us-east-1", "aws", "https://aws-us-east-1.drive9.ai", "ACTIVE")+`,`+
+		`{"regionId":"aws-us-west-2","cloudProvider":"tencent","serviceAddress":"https://aws-us-west-2.drive9.ai","state":"ACTIVE"}`+
+		`],"nextPageToken":""}`)
 	catalog, err := Client{BaseURL: server.URL, Credentials: testCredentials()}.Fetch(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if catalog.Entries[0].Provider != "aws" {
-		t.Fatalf("provider = %q", catalog.Entries[0].Provider)
+	unmapped, ok := catalog.Lookup("aws-us-west-2")
+	if !ok {
+		t.Fatal("expected the unmapped provider entry to stay listed")
+	}
+	if unmapped.CloudProvider != "tencent" || unmapped.Provider != "" {
+		t.Fatalf("unmapped entry = %#v", unmapped)
+	}
+	if unmapped.Routable() {
+		t.Fatal("an unmapped cloud provider must not be routable")
+	}
+	if codes := catalog.RoutableRegionCodes(); len(codes) != 1 || codes[0] != "aws-us-east-1" {
+		t.Fatalf("routable regions = %#v", codes)
+	}
+	unsupported := UnsupportedProviderError(unmapped)
+	if code := apperr.CodeFor(unsupported); code != "api.fs_endpoint_unsupported" {
+		t.Fatalf("unexpected code %q", code)
+	}
+	for _, want := range []string{"aws-us-west-2", "tencent", "does not support"} {
+		if message := apperr.MessageFor(unsupported); !strings.Contains(message, want) {
+			t.Fatalf("error message %q is missing %q", message, want)
+		}
 	}
 }
 

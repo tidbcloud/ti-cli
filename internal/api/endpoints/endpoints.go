@@ -170,11 +170,13 @@ func (r Resolver) ResolveFSRegion(profile *config.Profile, regionCode string) (E
 	if !ok || !entry.Eligible() {
 		return Endpoint{}, fsregion.UnpublishedRegionError(placement.Code, catalog)
 	}
-	provider := entry.Provider
-	if provider == "" {
-		provider = placement.Provider
+	if !entry.Routable() {
+		// An unmapped cloud provider is listed but never routable: borrowing the
+		// provider from the region-code prefix would route a request the catalog
+		// did not authorize.
+		return Endpoint{}, fsregion.UnsupportedProviderError(entry)
 	}
-	return fsEndpoint(provider, entry.RegionCode, entry.ServiceAddress)
+	return fsEndpoint(entry.Provider, entry.RegionCode, entry.ServiceAddress)
 }
 
 // ResolveFSCredentialEndpoint selects the Filesystem endpoint recorded in the

@@ -3,8 +3,9 @@
 // and their regional service addresses.
 //
 // The catalog replaces the compiled-in Filesystem region mapping that ti used
-// to ship. It is fetched from the TiDB Cloud Filesystem open API, cached as a
-// last-known-good snapshot under ~/.ti, and never contains secrets.
+// to ship. It is fetched from the TiDB Cloud Filesystem open API on demand, holds
+// only public placement metadata, and is never cached locally: a command that
+// resolves through the catalog always observes the published state.
 package fsregion
 
 import (
@@ -64,16 +65,24 @@ func (c Catalog) Lookup(regionCode string) (Entry, bool) {
 	return Entry{}, false
 }
 
-// EligibleRegionCodes returns the sorted region codes ti may route to.
-func (c Catalog) EligibleRegionCodes() []string {
+// RoutableRegionCodes returns the sorted region codes ti may route to: eligible
+// entries whose cloud provider ti can map. An eligible entry with an unmapped
+// provider stays visible in list output but is never routable, because routing
+// it would silently borrow a provider mapping from the region-code prefix.
+func (c Catalog) RoutableRegionCodes() []string {
 	codes := make([]string, 0, len(c.Entries))
 	for _, entry := range c.Entries {
-		if entry.Eligible() {
+		if entry.Eligible() && entry.Provider != "" {
 			codes = append(codes, entry.RegionCode)
 		}
 	}
 	sort.Strings(codes)
 	return codes
+}
+
+// Routable reports whether ti may route to this entry.
+func (e Entry) Routable() bool {
+	return e.Eligible() && e.Provider != ""
 }
 
 // Normalize validates and canonicalizes a catalog. Unknown cloud providers are
@@ -181,11 +190,22 @@ func MissingCatalogError(cause error) error {
 	return apperr.New("fs.region_catalog_unavailable", "config", 2, message)
 }
 
+// UnsupportedProviderError reports an active region whose cloud provider this ti
+// release cannot map. It is listed by ti fs list-regions but cannot be routed.
+func UnsupportedProviderError(entry Entry) error {
+	return apperr.New(
+		"api.fs_endpoint_unsupported",
+		"config",
+		2,
+		fmt.Sprintf("ti fs region %q is published for cloud provider %q, which this ti release does not support", entry.RegionCode, entry.CloudProvider),
+	)
+}
+
 // UnpublishedRegionError reports a canonical region code the catalog does not
 // publish or does not currently activate.
 func UnpublishedRegionError(regionCode string, catalog Catalog) error {
 	message := "ti fs is not available for region " + regionCode
-	if codes := catalog.EligibleRegionCodes(); len(codes) > 0 {
+	if codes := catalog.RoutableRegionCodes(); len(codes) > 0 {
 		message += "; available ti fs regions: " + strings.Join(codes, ", ")
 	}
 	if entry, ok := catalog.Lookup(regionCode); ok && !entry.Eligible() {

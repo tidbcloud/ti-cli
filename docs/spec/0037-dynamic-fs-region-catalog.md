@@ -249,7 +249,10 @@ ti fs list-regions [--output json|text] [--query J]
   - `fs.region_catalog_unavailable` (config, exit `2`) — the catalog request
     cannot be made because TiDB Cloud API credentials are missing.
   - `api.fs_endpoint_unsupported` (config, exit `2`) — the catalog does not
-    publish or does not activate the requested region.
+    publish the region, does not currently activate it, or publishes it for a
+    cloud provider this `ti` release cannot map. An unmapped provider is listed
+    by `ti fs list-regions` but never routed, and never borrows the provider
+    mapping of the region-code prefix.
   - `api.fs_regions_request` / `api.fs_regions_unavailable` /
     `api.fs_regions_decode` / `api.fs_regions_invalid` (api, exit `1`) — request
     construction, transport, decode, and contract validation failures.
@@ -280,7 +283,9 @@ Black-box e2e:
   with the new response shape.
 - Control-plane commands resolve regions from the fake catalog, including a
   region the binary never knew about.
-- An unpublished region fails with `api.fs_endpoint_unsupported`.
+- An unpublished region and an active region whose cloud provider `ti` cannot
+  map both fail with `api.fs_endpoint_unsupported`, and the unmapped one stays
+  visible in `ti fs list-regions`.
 - A token-only data-plane command without a recorded credential routes through
   the derived conventional address and never requests the catalog.
 - A recorded credential routes the companion to its address instead of the
