@@ -383,7 +383,7 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 		}
 		return statusErrorFrom(auth.InvalidCredentials(c.ProfileName), res, requestID, body)
 	case http.StatusForbidden:
-		message := permissionDeniedMessage(profileName(c.ProfileName), c.Permission, c.Action, c.Provider, c.RegionCode)
+		message := authz.PermissionDeniedMessage(profileName(c.ProfileName), c.Permission, c.Action, c.Provider, c.RegionCode)
 		if c.Service == endpoints.ServiceFS {
 			switch c.Permission {
 			case authz.FSTokenIssueScoped:
@@ -527,10 +527,6 @@ func profileName(name string) string {
 		return config.DefaultProfile
 	}
 	return name
-}
-
-func permissionDeniedMessage(profileName string, permission authz.Permission, action, provider, regionCode string) string {
-	return authz.PermissionDeniedMessage(profileName, permission, action, provider, regionCode)
 }
 
 // statusErrorFrom renders a shared status classification with the HTTP response

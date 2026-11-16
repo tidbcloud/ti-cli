@@ -212,7 +212,7 @@ func (s Service) listFileSystems(ctx context.Context, opts ListFileSystemsOption
 }
 
 func (s Service) describeFileSystem(ctx context.Context, profile *config.Profile, fileSystemID string) (DescribeFileSystemResult, error) {
-	id, client, creds, err := s.adminItemInputs(ctx, profile, fileSystemID, authz.FSVolumeRead, "describe a file system")
+	id, client, creds, _, err := s.adminItemEndpointInputs(ctx, profile, fileSystemID, authz.FSVolumeRead, "describe a file system")
 	if err != nil {
 		return DescribeFileSystemResult{}, err
 	}
@@ -281,11 +281,6 @@ func (s Service) adminCreateInputs(ctx context.Context, opts CreateFileSystemOpt
 
 func (s Service) adminDeleteInputs(ctx context.Context, opts DeleteFileSystemOptions) (string, *apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
 	return s.adminItemEndpointInputs(ctx, opts.Profile, opts.FileSystemID, authz.FSVolumeDelete, "delete a file system")
-}
-
-func (s Service) adminItemInputs(ctx context.Context, profile *config.Profile, fileSystemID string, permission authz.Permission, action string) (string, *apifs.Client, apifs.TiDBCloudCredentials, error) {
-	id, client, creds, _, err := s.adminItemEndpointInputs(ctx, profile, fileSystemID, permission, action)
-	return id, client, creds, err
 }
 
 func (s Service) adminItemEndpointInputs(ctx context.Context, profile *config.Profile, fileSystemID string, permission authz.Permission, action string) (string, *apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
