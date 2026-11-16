@@ -49,14 +49,34 @@ func TestRunWritesProfileLocallyAndDoesNotPrintSecret(t *testing.T) {
 	}
 }
 
-func TestRunRejectsUnsupportedProviderRegion(t *testing.T) {
+func TestRunRejectsMalformedRegionCode(t *testing.T) {
 	_, err := Run(context.Background(), Options{
 		HomeDir: t.TempDir(),
-		In:      strings.NewReader("ali-us-east-1\npublic-key\nprivate-key\n"),
+		In:      strings.NewReader("aws-us_east_1\npublic-key\nprivate-key\n"),
 		Out:     &bytes.Buffer{},
 	})
 	if err == nil {
-		t.Fatal("expected invalid provider/region to fail")
+		t.Fatal("expected a malformed region code to fail")
+	}
+	if code := apperr.CodeFor(err); code != "config.invalid_region" {
+		t.Fatalf("unexpected code %q", code)
+	}
+}
+
+// TestRunAcceptsStructurallyValidUnpublishedRegion pins that configure makes no
+// network request and validates placement shape only.
+func TestRunAcceptsStructurallyValidUnpublishedRegion(t *testing.T) {
+	home := t.TempDir()
+	result, err := Run(context.Background(), Options{
+		HomeDir: home,
+		In:      strings.NewReader("aws-us-east-2\npublic-key\nprivate-key\n"),
+		Out:     &bytes.Buffer{},
+	})
+	if err != nil {
+		t.Fatalf("Run failed: %v", err)
+	}
+	if result.RegionCode != "aws-us-east-2" {
+		t.Fatalf("unexpected region: %#v", result)
 	}
 }
 

@@ -181,7 +181,7 @@ func (s Service) DryRunImportFileSystemToken(ctx context.Context, commandPath st
 }
 
 func (s Service) DryRunCreateFileSystem(ctx context.Context, commandPath string, opts CreateFileSystemOptions) (dryrun.Result, error) {
-	request, _, _, endpoint, err := s.adminCreateInputs(opts)
+	request, _, _, endpoint, err := s.adminCreateInputs(ctx, opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -212,7 +212,7 @@ func (s Service) DryRunCreateFileSystem(ctx context.Context, commandPath string,
 }
 
 func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string, opts DeleteFileSystemOptions) (dryrun.Result, error) {
-	fileSystemID, _, _, endpoint, err := s.adminDeleteInputs(opts)
+	fileSystemID, _, _, endpoint, err := s.adminDeleteInputs(ctx, opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -247,16 +247,18 @@ func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string,
 	), nil
 }
 
+// resolveFS selects the regional endpoint recorded in the selected File
+// System's credentials. Data-plane, mount, Git, journal, vault, layer, and
+// Runtime commands use it, so they never depend on TiDB Cloud API credentials.
 func (s Service) resolveFS(profile *config.Profile) (endpoints.Endpoint, error) {
-	provider := profile.FSCloudProvider
-	regionCode := profile.FSRegionCode
-	if provider == "" {
-		provider = profile.CloudProvider
-	}
-	if regionCode == "" {
-		regionCode = profile.RegionCode
-	}
-	return s.resolver().ResolveFS(provider, regionCode)
+	return s.resolver().ResolveFSCredentialEndpoint(profile)
+}
+
+// resolveAdminFS selects the regional endpoint from the published Filesystem
+// region catalog. It is used by control-plane commands, which run with TiDB
+// Cloud API credentials and may not have a File System credential yet.
+func (s Service) resolveAdminFS(ctx context.Context, profile *config.Profile) (endpoints.Endpoint, error) {
+	return s.resolver().ResolveFSProfile(ctx, profile)
 }
 
 func (s Service) bearerClient(profile *config.Profile, endpoint endpoints.Endpoint, permission authz.Permission, action string) (*apifs.Client, error) {
@@ -279,10 +281,7 @@ func (s Service) bearerClient(profile *config.Profile, endpoint endpoints.Endpoi
 }
 
 func (s Service) resolver() endpoints.Resolver {
-	if s.Resolver.IsZero() {
-		return endpoints.NewResolver()
-	}
-	return s.Resolver
+	return s.Resolver.WithDefaults().WithDebug(s.Debug, s.DebugWriter)
 }
 
 func (s Service) homeDir() (string, error) {

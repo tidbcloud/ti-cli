@@ -332,7 +332,7 @@ func TestRegistryRejectsInvalidPlacementMetadata(t *testing.T) {
 		placementCode string
 	}{
 		{name: "missing provider", placementCode: "aws-us-east-1"},
-		{name: "invalid region", cloudProvider: "aws", placementCode: "aws-missing-1"},
+		{name: "invalid region", cloudProvider: "aws", placementCode: "aws-missing_1"},
 		{name: "provider mismatch", cloudProvider: "alibaba_cloud", placementCode: "aws-us-east-1"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

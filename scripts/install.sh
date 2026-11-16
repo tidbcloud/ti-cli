@@ -277,16 +277,6 @@ report_path_status() {
   fi
 }
 
-print_regions() {
-  printf "\n"
-  printf "  ${BOLD}Config regions:${RESET}\n"
-  printf "    aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1\n"
-  printf "    alicloud-ap-southeast-1, gcp-us-east1, azure-centralus\n"
-  printf "\n"
-  printf "  ${BOLD}ti fs regions:${RESET}\n"
-  printf "    aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1, gcp-us-east1, azure-centralus\n"
-}
-
 print_next_steps() {
   printf "\n"
   printf "  ${BOLD}Get started:${RESET}\n"
@@ -394,6 +384,5 @@ install_file "${TMP_DIR}/${COMPANION_ARTIFACT}" "$COMPANION_TARGET"
 success "ti installed to ${TARGET}"
 bootstrap_config
 report_path_status
-print_regions
 print_telemetry_notice
 print_next_steps

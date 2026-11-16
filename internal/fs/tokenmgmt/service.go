@@ -255,7 +255,7 @@ func (s Service) generateScoped(ctx context.Context, opts GenerateScopedOptions,
 			return GenerateScopedResult{}, getErr
 		}
 	}
-	client, endpoint, err := s.bearerClient(opts.Profile, resolved, authz.FSTokenIssueScoped, "generate a scoped file system token")
+	client, endpoint, err := s.bearerClient(ctx, opts.Profile, resolved, authz.FSTokenIssueScoped, "generate a scoped file system token")
 	if err != nil {
 		return GenerateScopedResult{}, err
 	}
@@ -309,7 +309,7 @@ func (s Service) generate(ctx context.Context, opts GenerateOptions, fileSystemI
 			return GenerateResult{}, getErr
 		}
 	}
-	client, creds, endpoint, err := s.controlClient(opts.Profile, fileSystemID, opts.RegionOverride, authz.FSTokenGenerate, "generate a file system token")
+	client, creds, endpoint, err := s.controlClient(ctx, opts.Profile, fileSystemID, opts.RegionOverride, authz.FSTokenGenerate, "generate a file system token")
 	if err != nil {
 		return GenerateResult{}, err
 	}
@@ -356,7 +356,7 @@ func (s Service) List(ctx context.Context, opts ListOptions) (ListResult, error)
 	if opts.Limit <= 0 || opts.Limit > MaxListLimit {
 		return ListResult{}, apperr.New("fs.invalid_token_limit", "usage", 2, fmt.Sprintf("--limit must be between 1 and %d", MaxListLimit))
 	}
-	management, err := s.resolveManagementAuth(opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, authz.FSTokenList, "list file system tokens")
+	management, err := s.resolveManagementAuth(ctx, opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, authz.FSTokenList, "list file system tokens")
 	if err != nil {
 		return ListResult{}, err
 	}
@@ -401,7 +401,7 @@ func (s Service) setEnabled(ctx context.Context, opts MutationOptions, enabled b
 	if enabled {
 		permission, action = authz.FSTokenEnable, "enable a file system token"
 	}
-	management, err := s.resolveManagementAuth(opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, permission, action)
+	management, err := s.resolveManagementAuth(ctx, opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, permission, action)
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -427,7 +427,7 @@ func (s Service) Delete(ctx context.Context, opts MutationOptions) (MutationResu
 	if err != nil {
 		return MutationResult{}, err
 	}
-	management, err := s.resolveManagementAuth(opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, authz.FSTokenDelete, "delete a file system token")
+	management, err := s.resolveManagementAuth(ctx, opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, authz.FSTokenDelete, "delete a file system token")
 	if err != nil {
 		return MutationResult{}, err
 	}
@@ -514,7 +514,7 @@ func (s Service) refreshRemote(ctx context.Context, profile *config.Profile, res
 	if err != nil {
 		return RefreshResult{}, err
 	}
-	endpoint, err := s.resolveEndpoint(profile, resolved.regionCode)
+	endpoint, err := s.resolveEndpoint(ctx, profile, resolved.regionCode, resolved.fileSystemID)
 	if err != nil {
 		return RefreshResult{}, err
 	}
@@ -631,8 +631,8 @@ func tokenInputPresent(token string, explicit bool) (bool, error) {
 	return strings.TrimSpace(envToken) != "", nil
 }
 
-func (s Service) bearerClient(profile *config.Profile, resolved bearerInput, permission authz.Permission, action string) (*apifs.Client, endpoints.Endpoint, error) {
-	endpoint, err := s.resolveEndpoint(profile, resolved.regionCode)
+func (s Service) bearerClient(ctx context.Context, profile *config.Profile, resolved bearerInput, permission authz.Permission, action string) (*apifs.Client, endpoints.Endpoint, error) {
+	endpoint, err := s.resolveEndpoint(ctx, profile, resolved.regionCode, resolved.fileSystemID)
 	if err != nil {
 		return nil, endpoints.Endpoint{}, err
 	}
@@ -646,7 +646,7 @@ func (s Service) bearerClient(profile *config.Profile, resolved bearerInput, per
 	return apifs.New(raw), endpoint, nil
 }
 
-func (s Service) resolveManagementAuth(profile *config.Profile, requestedFileSystemID, token string, tokenExplicit bool, regionOverride string, permission authz.Permission, action string) (managementAuth, error) {
+func (s Service) resolveManagementAuth(ctx context.Context, profile *config.Profile, requestedFileSystemID, token string, tokenExplicit bool, regionOverride string, permission authz.Permission, action string) (managementAuth, error) {
 	useBearer, err := tokenInputPresent(token, tokenExplicit)
 	if err != nil {
 		return managementAuth{}, err
@@ -656,7 +656,7 @@ func (s Service) resolveManagementAuth(profile *config.Profile, requestedFileSys
 		if err != nil {
 			return managementAuth{}, err
 		}
-		client, endpoint, err := s.bearerClient(profile, resolved, permission, action)
+		client, endpoint, err := s.bearerClient(ctx, profile, resolved, permission, action)
 		if err != nil {
 			return managementAuth{}, err
 		}
@@ -666,7 +666,7 @@ func (s Service) resolveManagementAuth(profile *config.Profile, requestedFileSys
 	if err != nil {
 		return managementAuth{}, err
 	}
-	client, credentials, endpoint, err := s.controlClient(profile, fileSystemID, regionOverride, permission, action)
+	client, credentials, endpoint, err := s.controlClient(ctx, profile, fileSystemID, regionOverride, permission, action)
 	if err != nil {
 		return managementAuth{}, err
 	}
@@ -680,12 +680,12 @@ func requireControlPlaneTokenManagementID(value string) (string, error) {
 	return fscred.ValidateFileSystemID(value)
 }
 
-func (s Service) DryRunGenerate(commandPath string, opts GenerateOptions) (dryrun.Result, error) {
+func (s Service) DryRunGenerate(ctx context.Context, commandPath string, opts GenerateOptions) (dryrun.Result, error) {
 	fileSystemID, _, _, err := validateGenerate(opts)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
-	_, _, endpoint, err := s.controlClient(opts.Profile, fileSystemID, opts.RegionOverride, authz.FSTokenGenerate, "generate a file system token")
+	_, _, endpoint, err := s.controlClient(ctx, opts.Profile, fileSystemID, opts.RegionOverride, authz.FSTokenGenerate, "generate a file system token")
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -699,7 +699,7 @@ func (s Service) DryRunGenerate(commandPath string, opts GenerateOptions) (dryru
 	return tokenDryRun(commandPath, "generate_file_system_token", http.MethodPost, "/v1/tokens/generate", fileSystemID, opts.Profile, endpoint, authz.FSTokenGenerate), nil
 }
 
-func (s Service) DryRunGenerateScoped(commandPath string, opts GenerateScopedOptions) (dryrun.Result, error) {
+func (s Service) DryRunGenerateScoped(ctx context.Context, commandPath string, opts GenerateScopedOptions) (dryrun.Result, error) {
 	_, _, _, err := validateGenerateScoped(opts)
 	if err != nil {
 		return dryrun.Result{}, err
@@ -715,19 +715,19 @@ func (s Service) DryRunGenerateScoped(commandPath string, opts GenerateScopedOpt
 			return dryrun.Result{}, getErr
 		}
 	}
-	endpoint, err := s.resolveEndpoint(opts.Profile, resolved.regionCode)
+	endpoint, err := s.resolveEndpoint(ctx, opts.Profile, resolved.regionCode, resolved.fileSystemID)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
 	return tokenDryRun(commandPath, "generate_file_system_scoped_token", http.MethodPost, "/v1/tokens", resolved.fileSystemID, opts.Profile, endpoint, authz.FSTokenIssueScoped), nil
 }
 
-func (s Service) DryRunMutation(commandPath, operation, method, path string, opts MutationOptions, permission authz.Permission, mountGuard bool) (dryrun.Result, error) {
+func (s Service) DryRunMutation(ctx context.Context, commandPath, operation, method, path string, opts MutationOptions, permission authz.Permission, mountGuard bool) (dryrun.Result, error) {
 	tokenID, err := validateTokenID(opts.TokenID)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
-	management, err := s.resolveManagementAuth(opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, permission, operation)
+	management, err := s.resolveManagementAuth(ctx, opts.Profile, opts.FileSystemID, opts.Token, opts.TokenExplicit, opts.RegionOverride, permission, operation)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -739,7 +739,7 @@ func (s Service) DryRunMutation(commandPath, operation, method, path string, opt
 	return tokenDryRun(commandPath, operation, method, path, management.fileSystemID, opts.Profile, management.endpoint, permission), nil
 }
 
-func (s Service) DryRunRefresh(commandPath string, opts RefreshOptions) (dryrun.Result, error) {
+func (s Service) DryRunRefresh(ctx context.Context, commandPath string, opts RefreshOptions) (dryrun.Result, error) {
 	resolved, err := s.resolveRefresh(opts)
 	if err != nil {
 		return dryrun.Result{}, err
@@ -750,7 +750,7 @@ func (s Service) DryRunRefresh(commandPath string, opts RefreshOptions) (dryrun.
 	if err := s.guardTokenFingerprintMount(resolved.fileSystemID, tokenFingerprint(resolved.token)); err != nil {
 		return dryrun.Result{}, err
 	}
-	endpoint, err := s.resolveEndpoint(opts.Profile, resolved.regionCode)
+	endpoint, err := s.resolveEndpoint(ctx, opts.Profile, resolved.regionCode, resolved.fileSystemID)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -765,7 +765,7 @@ func tokenDryRun(commandPath, operation, method, path, fileSystemID string, prof
 		dryrun.Check{Name: "permission_requirement", Status: "passed", Message: string(permission)})
 }
 
-func (s Service) controlClient(profile *config.Profile, fileSystemID, regionOverride string, permission authz.Permission, action string) (*apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
+func (s Service) controlClient(ctx context.Context, profile *config.Profile, fileSystemID, regionOverride string, permission authz.Permission, action string) (*apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
 	creds, err := auth.ValidateProfile(profile)
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
@@ -778,7 +778,7 @@ func (s Service) controlClient(profile *config.Profile, fileSystemID, regionOver
 			return nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, getErr
 		}
 	}
-	endpoint, err := s.resolveEndpoint(profile, placementCode)
+	endpoint, err := s.resolveEndpoint(ctx, profile, placementCode, fileSystemID)
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
@@ -797,7 +797,11 @@ func apiRedactor(secrets ...string) apitransport.Redactor {
 	return apitransport.Redactor{Secrets: secrets}
 }
 
-func (s Service) resolveEndpoint(profile *config.Profile, override string) (endpoints.Endpoint, error) {
+func (s Service) resolver() endpoints.Resolver {
+	return s.Resolver.WithDefaults().WithDebug(s.Debug, s.DebugWriter)
+}
+
+func (s Service) resolveEndpoint(ctx context.Context, profile *config.Profile, override, fileSystemID string) (endpoints.Endpoint, error) {
 	placementCode := strings.TrimSpace(override)
 	if placementCode == "" && profile != nil {
 		placementCode = profile.PlacementRegionCode
@@ -805,15 +809,32 @@ func (s Service) resolveEndpoint(profile *config.Profile, override string) (endp
 	if placementCode == "" {
 		return endpoints.Endpoint{}, apperr.New("fs.missing_region", "config", 2, "ti fs region is required; pass --region, set TI_REGION_CODE, or configure a profile region")
 	}
-	placement, err := region.ParsePlacementCode(placementCode)
+	placement, err := region.ParseCanonicalCode(placementCode)
 	if err != nil {
 		return endpoints.Endpoint{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
-	resolver := s.Resolver
-	if resolver.IsZero() {
-		resolver = endpoints.NewResolver()
+	// Bearer token management runs without TiDB Cloud API keys, so it prefers
+	// the address already recorded for the managed File System and only falls
+	// back to the published catalog when no credential records it.
+	if address, ok := s.recordedServiceAddress(profile, fileSystemID, placement.Code); ok {
+		selected := *profile
+		selected.FSPlacementRegionCode = placement.Code
+		selected.FSServiceAddress = address
+		return s.resolver().ResolveFSCredentialEndpoint(&selected)
 	}
-	return resolver.ResolveFS(placement.Provider, placement.NativeCode)
+	if !profile.HasTiDBCloudCredentials() {
+		// Bearer token management runs without TiDB Cloud API keys, so it cannot
+		// request the published catalog. Fall back to the conventional regional
+		// address, exactly like data-plane routing.
+		selected := config.Profile{}
+		if profile != nil {
+			selected = *profile
+		}
+		selected.FSPlacementRegionCode = placement.Code
+		selected.FSServiceAddress = ""
+		return s.resolver().ResolveFSCredentialEndpoint(&selected)
+	}
+	return s.resolver().ResolveFSRegion(ctx, profile, placement.Code)
 }
 
 func (s Service) guardTokenIDMount(fileSystemID, tokenID string) error {
@@ -1173,4 +1194,23 @@ func formatTokenExpiry(expiresAt *time.Time) string {
 		return "never"
 	}
 	return expiresAt.UTC().Format(time.RFC3339)
+}
+
+// recordedServiceAddress returns the Filesystem service address recorded for the
+// managed File System or the selected profile when it matches regionCode.
+func (s Service) recordedServiceAddress(profile *config.Profile, fileSystemID, regionCode string) (string, bool) {
+	if profile != nil && strings.TrimSpace(profile.FSServiceAddress) != "" && profile.FSPlacementRegionCode == regionCode {
+		return strings.TrimSpace(profile.FSServiceAddress), true
+	}
+	if profile == nil || strings.TrimSpace(fileSystemID) == "" {
+		return "", false
+	}
+	credential, err := fscred.GetCredential(s.homeDir(profile), profileName(profile), fileSystemID)
+	if err != nil {
+		return "", false
+	}
+	if credential.RegionCode != regionCode || strings.TrimSpace(credential.ServiceAddress) == "" {
+		return "", false
+	}
+	return strings.TrimSpace(credential.ServiceAddress), true
 }

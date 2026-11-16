@@ -250,7 +250,7 @@ func ResolveAuthenticated(homeDir string, profile *config.Profile, opts ResolveA
 	if placementCode == "" {
 		return nil, Resource{}, apperr.New("fs.missing_region", "config", 2, "ti fs region is required; pass --region, set TI_REGION_CODE, or configure region_code for the selected file system or profile")
 	}
-	placement, err := region.ParsePlacementCode(placementCode)
+	placement, err := region.ParseCanonicalCode(placementCode)
 	if err != nil {
 		return nil, Resource{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
@@ -310,7 +310,7 @@ func resolve(homeDir string, profile *config.Profile, selector string, selectorE
 	selected.FSTenantID = resource.TenantID
 	selected.FSCloudProvider = resource.CloudProvider
 	selected.FSPlacementRegionCode = resource.RegionCode
-	placement, err := region.ParsePlacementCode(resource.RegionCode)
+	placement, err := region.ParseCanonicalCode(resource.RegionCode)
 	if err != nil {
 		return nil, Resource{}, resourceError("fs.resource_credentials_incomplete", profile.Name, resource.Name, "stored region_code is invalid")
 	}
@@ -448,7 +448,7 @@ func canonicalPlacement(profile *config.Profile, cloudProvider, regionCode strin
 	if regionCode == "" && profile != nil {
 		regionCode = profile.PlacementRegionCode
 	}
-	if parsed, err := region.ParsePlacementCode(regionCode); err == nil {
+	if parsed, err := region.ParseCanonicalCode(regionCode); err == nil {
 		return parsed.Code, parsed.Provider, nil
 	}
 	if cloudProvider == "" && profile != nil {
@@ -559,7 +559,7 @@ func readResourceDir(dir, profileName, expectedName string) (Resource, error) {
 	if resource.Name != expectedName || strings.TrimSpace(resource.TenantID) == "" || strings.TrimSpace(resource.CloudProvider) == "" || strings.TrimSpace(resource.RegionCode) == "" || strings.TrimSpace(creds.APIKey) == "" {
 		return Resource{}, resourceError("fs.resource_credentials_incomplete", profileName, expectedName, "resource config or credentials are incomplete")
 	}
-	placement, err := region.ParsePlacementCode(resource.RegionCode)
+	placement, err := region.ParseCanonicalCode(resource.RegionCode)
 	if err != nil || normalizeProvider(resource.CloudProvider) != placement.Provider {
 		return Resource{}, resourceError("fs.resource_credentials_incomplete", profileName, expectedName, "resource cloud_provider and region_code are invalid or inconsistent")
 	}

@@ -36,6 +36,7 @@ type Profile struct {
 	FSPlacementRegionCode string
 	FSCloudProvider       string
 	FSRegionCode          string
+	FSServiceAddress      string
 	FSAPIKey              string
 	FSTokenID             string
 	FSTokenScopeKind      string
@@ -144,6 +145,11 @@ func LoadLocal(ctx context.Context, opts LoadOptions) (*Profile, error) {
 	cfg, hasConfig := configDoc[profileName]
 	creds, hasCreds := credentialsDoc[profileName]
 
+	publicKey, privateKey, err := resolveOptionalTiDBCloudCredentials(creds, hasCreds, opts.Env)
+	if err != nil {
+		return nil, err
+	}
+
 	placement, hasPlacement, err := resolveOptionalPlacement(cfg, opts.RegionOverride, opts.Env)
 	if err != nil {
 		return nil, err
@@ -163,6 +169,8 @@ func LoadLocal(ctx context.Context, opts LoadOptions) (*Profile, error) {
 		Name:                  profileName,
 		HomeDir:               opts.HomeDir,
 		Source:                source,
+		TiDBCloudPublicKey:    publicKey,
+		TiDBCloudPrivateKey:   privateKey,
 		FSResourceName:        cfg.FSResourceName,
 		FSTenantID:            cfg.FSTenantID,
 		FSPlacementRegionCode: fsPlacement.Code,
@@ -176,6 +184,16 @@ func LoadLocal(ctx context.Context, opts LoadOptions) (*Profile, error) {
 		profile.RegionCode = placement.NativeCode
 	}
 	return profile, nil
+}
+
+// HasTiDBCloudCredentials reports whether the profile carries both TiDB Cloud
+// API keys. Commands that can run without them use it to decide whether the
+// published Filesystem region catalog is reachable.
+func (p *Profile) HasTiDBCloudCredentials() bool {
+	if p == nil {
+		return false
+	}
+	return strings.TrimSpace(p.TiDBCloudPublicKey) != "" && strings.TrimSpace(p.TiDBCloudPrivateKey) != ""
 }
 
 func ValidateProfileName(name string) error {
@@ -271,6 +289,34 @@ func resolveTiDBCloudCredentials(homeDir, profileName string, creds store.Creden
 	return creds.TiDBCloudPublicKey, creds.TiDBCloudPrivateKey, "profile", nil
 }
 
+// resolveOptionalTiDBCloudCredentials resolves TiDB Cloud API keys for commands
+// that must keep working without them. Only a complete environment pair or a
+// complete stored pair is returned; a partial pair is ignored so that local
+// Filesystem data-plane commands never fail because of credential state they do
+// not require. Commands that do require credentials validate them explicitly.
+func resolveOptionalTiDBCloudCredentials(creds store.CredentialsProfile, hasCreds bool, env map[string]string) (string, string, error) {
+	envPublicValue, _, _, err := envcompat.ResolveNames(env, "TIDB_CLOUD_PUBLIC_KEY", "TDC_PUBLIC_KEY")
+	if err != nil {
+		return "", "", err
+	}
+	envPrivateValue, _, _, err := envcompat.ResolveNames(env, "TIDB_CLOUD_PRIVATE_KEY", "TDC_PRIVATE_KEY")
+	if err != nil {
+		return "", "", err
+	}
+	envPublic := strings.TrimSpace(envPublicValue)
+	envPrivate := strings.TrimSpace(envPrivateValue)
+	if envPublic != "" && envPrivate != "" {
+		return envPublic, envPrivate, nil
+	}
+	if !hasCreds {
+		return "", "", nil
+	}
+	if strings.TrimSpace(creds.TiDBCloudPublicKey) == "" || strings.TrimSpace(creds.TiDBCloudPrivateKey) == "" {
+		return "", "", nil
+	}
+	return creds.TiDBCloudPublicKey, creds.TiDBCloudPrivateKey, nil
+}
+
 func envMissing(key string) error {
 	return apperr.New(
 		"config.env_missing",
@@ -281,7 +327,7 @@ func envMissing(key string) error {
 }
 
 func parsePlacement(regionCode string) (region.Placement, error) {
-	placement, err := region.ParsePlacementCode(regionCode)
+	placement, err := region.ParseCanonicalCode(regionCode)
 	if err != nil {
 		return region.Placement{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}

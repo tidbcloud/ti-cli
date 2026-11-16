@@ -370,25 +370,20 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Body:       string(body),
 		}
 	case http.StatusUnauthorized:
-		message := fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
-		if c.Service == endpoints.ServiceFS {
-			if !c.BearerAuth {
-				message = fmt.Sprintf("authentication failed: TiDB Cloud rejected the API key pair for profile %q. Check ~/.ti/credentials or create a new API key.", profileName(c.ProfileName))
-			} else {
-				message = fmt.Sprintf("authentication failed: ti fs rejected the selected token for profile %q. It might be disabled, expired, refreshed elsewhere, or revoked; generate or import a valid token and try again.", profileName(c.ProfileName))
+		if c.Service == endpoints.ServiceFS && c.BearerAuth {
+			return &Error{
+				Code:       "auth.invalid_credentials",
+				Category:   "authentication",
+				ExitCode:   3,
+				StatusCode: res.StatusCode,
+				RequestID:  requestID,
+				Message:    fmt.Sprintf("authentication failed: ti fs rejected the selected token for profile %q. It might be disabled, expired, refreshed elsewhere, or revoked; generate or import a valid token and try again.", profileName(c.ProfileName)),
+				Body:       string(body),
 			}
 		}
-		return &Error{
-			Code:       "auth.invalid_credentials",
-			Category:   "authentication",
-			ExitCode:   3,
-			StatusCode: res.StatusCode,
-			RequestID:  requestID,
-			Message:    message,
-			Body:       string(body),
-		}
+		return statusErrorFrom(auth.InvalidCredentials(c.ProfileName), res, requestID, body)
 	case http.StatusForbidden:
-		message := permissionDeniedMessage(profileName(c.ProfileName), c.Permission, c.Action, c.Provider, c.RegionCode)
+		message := authz.PermissionDeniedMessage(profileName(c.ProfileName), c.Permission, c.Action, c.Provider, c.RegionCode)
 		if c.Service == endpoints.ServiceFS {
 			switch c.Permission {
 			case authz.FSTokenIssueScoped:
@@ -418,15 +413,7 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 			Body:       string(body),
 		}
 	case http.StatusNotFound:
-		return &Error{
-			Code:       "api.not_found",
-			Category:   "api",
-			ExitCode:   5,
-			StatusCode: res.StatusCode,
-			RequestID:  requestID,
-			Message:    fmt.Sprintf("remote resource not found: %s %s", req.Method, req.URL.Path),
-			Body:       string(body),
-		}
+		return statusErrorFrom(auth.NotFound(req.Method, req.URL.Path), res, requestID, body)
 	case http.StatusMethodNotAllowed, http.StatusNotImplemented:
 		return &Error{
 			Code:       "api.contract_gap",
@@ -542,16 +529,16 @@ func profileName(name string) string {
 	return name
 }
 
-func permissionDeniedMessage(profileName string, permission authz.Permission, action, provider, regionCode string) string {
-	if action == "" {
-		action = string(permission)
+// statusErrorFrom renders a shared status classification with the HTTP response
+// details that the operation log and diagnostics rely on.
+func statusErrorFrom(status auth.StatusError, res *http.Response, requestID string, body []byte) error {
+	return &Error{
+		Code:       status.Code,
+		Category:   status.Category,
+		ExitCode:   status.ExitCode,
+		StatusCode: res.StatusCode,
+		RequestID:  requestID,
+		Message:    status.Message,
+		Body:       string(body),
 	}
-	location := provider
-	if regionCode != "" {
-		location = provider + "/" + regionCode
-	}
-	if location == "" {
-		location = "the selected scope"
-	}
-	return fmt.Sprintf("permission denied: profile %q is not allowed to %s in %s. Ask an organization admin for %s permission or use another profile.", profileName, action, location, permission)
 }

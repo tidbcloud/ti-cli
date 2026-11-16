@@ -968,6 +968,7 @@ func newFSCommand(info version.Info) *cobra.Command {
 		newFSCreateFileSystemCommand(info),
 		newFSDeleteFileSystemCommand(info),
 		newFSListFileSystemsCommand(info),
+		newFSListRegionsCommand(info),
 		newFSDescribeFileSystemCommand(info),
 		newFSDescribeFileSystemExtractConfigurationCommand(info),
 		newFSUpdateFileSystemExtractConfigurationCommand(info),
@@ -1012,13 +1013,14 @@ func newFSCommand(info version.Info) *cobra.Command {
 	}
 	tokenCommands := []string{"generate-file-system-token", "generate-file-system-scoped-token", "list-file-system-tokens", "enable-file-system-token", "disable-file-system-token", "delete-file-system-token", "refresh-file-system-token"}
 	selectorExclusions := append([]string{
-		"create-file-system", "list-file-systems", "describe-file-system", "delete-file-system", "import-file-system-token", "drain-file-system", "unmount-file-system",
+		"create-file-system", "list-file-systems", "list-regions", "describe-file-system", "delete-file-system", "import-file-system-token", "drain-file-system", "unmount-file-system",
 		"describe-file-system-extract-configuration", "update-file-system-extract-configuration",
 		"describe-file-system-embedding-configuration", "update-file-system-embedding-configuration",
 	}, tokenCommands...)
 	addFSSelectorFlags(commands, selectorExclusions...)
 	addFSAuthFlags(commands,
 		"create-file-system",
+		"list-regions",
 		"list-file-systems",
 		"describe-file-system",
 		"delete-file-system",
@@ -1064,7 +1066,7 @@ func newFSGenerateFileSystemTokenCommand(info version.Info) *cobra.Command {
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunGenerate(ctx.CommandPath(), opts)
+			return service.DryRunGenerate(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID that owns the generated token. Owner token generation requires TiDB Cloud API credentials.")
@@ -1100,7 +1102,7 @@ func newFSGenerateFileSystemScopedTokenCommand(info version.Info) *cobra.Command
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunGenerateScoped(ctx.CommandPath(), opts)
+			return service.DryRunGenerateScoped(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "Optional file system ID assertion; required when using a locally stored owner token.")
@@ -1209,7 +1211,7 @@ func newFSTokenMutationCommand(use, short, operation, method, path string, permi
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunMutation(ctx.CommandPath(), operation, method, path, opts, permission, mountGuard)
+			return service.DryRunMutation(ctx.cmd.Context(), ctx.CommandPath(), operation, method, path, opts, permission, mountGuard)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID that owns the token. Required with TiDB Cloud API credentials; optional with an owner FS token.")
@@ -1243,7 +1245,7 @@ func newFSRefreshFileSystemTokenCommand(info version.Info) *cobra.Command {
 				return dryrun.Result{}, err
 			}
 			opts.DryRun = true
-			return service.DryRunRefresh(ctx.CommandPath(), opts)
+			return service.DryRunRefresh(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "Optional file system ID assertion; required when using a locally stored token.")
@@ -1471,6 +1473,22 @@ func newFSListFileSystemsCommand(info version.Info) *cobra.Command {
 	return cmd
 }
 
+func newFSListRegionsCommand(info version.Info) *cobra.Command {
+	return newControlPlaneCommand(controlPlaneCommandSpec{
+		Use:        "list-regions",
+		Short:      "List the TiDB Cloud Filesystem regions published by the backend.",
+		Mutation:   readOnlyCommand,
+		Permission: authz.FSRegionRead,
+		Run: func(ctx commandContext) (any, error) {
+			service, profile, err := fsLocalServiceAndProfile(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return service.ListRegions(ctx.cmd.Context(), profile)
+		},
+	}, info)
+}
+
 func newFSDescribeFileSystemCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
 		Use:        "describe-file-system",
@@ -1545,7 +1563,7 @@ func newFSUpdateFileSystemExtractConfigurationCommand(info version.Info) *cobra.
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunUpdateExtract(ctx.CommandPath(), opts)
+			return service.DryRunUpdateExtract(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID. This command requires TiDB Cloud API credentials.")
@@ -1610,7 +1628,7 @@ func newFSUpdateFileSystemEmbeddingConfigurationCommand(info version.Info) *cobr
 			if err != nil {
 				return dryrun.Result{}, err
 			}
-			return service.DryRunUpdateEmbedding(ctx.CommandPath(), opts)
+			return service.DryRunUpdateEmbedding(ctx.cmd.Context(), ctx.CommandPath(), opts)
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID. This command requires TiDB Cloud API credentials.")

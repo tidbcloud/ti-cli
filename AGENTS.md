@@ -114,6 +114,7 @@ Implemented:
 - `ti fs refresh-file-system-token`
 - `ti fs delete-file-system`
 - `ti fs list-file-systems`
+- `ti fs list-regions`
 - `ti fs describe-file-system`
 - `ti fs describe-file-system-extract-configuration`
 - `ti fs update-file-system-extract-configuration`
@@ -509,8 +510,10 @@ Follow these rules unless `docs/priciples.md` is updated:
   system-level ti found on PATH, invoke sudo, create system-directory
   symlinks, or modify shell profile files automatically.
 - Installer scripts must detect PATH shadowing, bootstrap `~/.ti/config` only
-  when missing, print the exact command that prepends `~/.ti/bin` to PATH,
-  print DB and ti fs region lists, and show clear next steps. They must never
+  when missing, print the exact command that prepends `~/.ti/bin` to PATH, and
+  show clear next steps. They must not compile in or print a region list: DB
+  placements are static and Filesystem regions are published by the backend, so
+  users read them from `ti fs list-regions` or the CLI help. They must never
   write `~/.ti/credentials`.
 - Installer scripts must invoke the staged `ti` binary's shared home migration
   before creating the default `~/.ti/bin` destination. Do not duplicate state
@@ -588,6 +591,8 @@ Implemented command behavior:
 - `ti fs delete-file-system --file-system-id <file-system-id>`
 - `ti fs delete-file-system --file-system-id <file-system-id> --dry-run`
 - `ti fs list-file-systems`
+- `ti fs list-regions`
+- `ti fs list-regions --output text`
 - `ti fs describe-file-system --file-system-id <file-system-id>`
 - `ti fs describe-file-system-extract-configuration --file-system-id <file-system-id> --media-type image`
 - `ti fs update-file-system-extract-configuration --file-system-id <file-system-id> --media-type image --enabled false`
@@ -705,6 +710,7 @@ Registered command surface:
 - `ti fs refresh-file-system-token`
 - `ti fs delete-file-system`
 - `ti fs list-file-systems`
+- `ti fs list-regions`
 - `ti fs describe-file-system`
 - `ti fs check-file-system`
 - `ti fs copy-file`
@@ -858,11 +864,18 @@ New local credentials are keyed by the server-assigned file system ID:
 ~/.ti/fs_credentials/<profile-key>/<file-system-id-key>/credentials
 ```
 
-Credential files contain `file_system_id`, canonical `region_code`, and
-`api_key`, use mode `0600`, and must never be written to the main
-`~/.ti/credentials` file. Profile and ID path segments are safely encoded.
-Remote Drive9 list/get is authoritative for inventory and status; local state
-only determines `has_local_token` and data-plane access.
+Credential files contain `file_system_id`, canonical `region_code`, an optional
+`service_address`, and `api_key`, use mode `0600`, and must never be written to
+the main `~/.ti/credentials` file. Profile and ID path segments are safely
+encoded. `service_address` is the regional Filesystem endpoint published by the
+region catalog; `create-file-system` and `import-file-system-token` write it and
+`ti fs list-regions` backfills it. Only catalog-resolved addresses are persisted;
+a keyless import validates through the derived conventional address and records
+none, so a later catalog change still applies. Recorded `service_address` is
+optional: when a credential does not have one (it predates the catalog),
+data-plane routing derives `https://<region-id>.drive9.ai`. Remote Drive9
+list/get is authoritative for inventory and status; local state only determines
+`has_local_token` and data-plane access.
 
 `ti fs create-file-system` returns the stored owner credential as `fs_token`;
 this is the only ordinary command result that may reveal it. Treat `fs_token`
@@ -915,15 +928,19 @@ SQL credential is used on the HTTPS, MySQL or connection-string path.
 Use `internal/api/endpoints` for Starter, IAM/account, and fs endpoint
 selection. Do not add service URLs to user config. The default Starter host is
 `https://serverless.tidbapi.com`; the default IAM host is
-`https://iam.tidbapi.com`. The ti fs host is resolved from the built-in
-endpoint mapping owned by `internal/api/endpoints`. If the mapping does not
-contain the profile placement, return a clear unsupported endpoint error; do
-not add a user-facing raw server URL flag or config key or restore a runtime
-manifest dependency.
+`https://iam.tidbapi.com`. TiDB Cloud Filesystem regional hosts are published by
+the Filesystem open API (`GET https://fs.tidbapi.com/v1beta2/regions`, Digest
+auth) and owned by `internal/fsregion`; never compile a Filesystem region table
+into ti. Control-plane commands resolve the region through that catalog and
+require TiDB Cloud API keys. Data-plane, mount, Git, journal, vault, and Runtime
+commands resolve the address recorded in the selected File System's local
+credentials and make no catalog request. If the placement is not published or
+not recorded, return a clear actionable error; do not add a user-facing raw
+server URL flag, config key, region cache, or runtime manifest dependency.
 Hidden test and developer controls are not supported user configuration:
 
-- `TI_TEST_STARTER_BASE_URL`, `TI_TEST_IAM_BASE_URL` and `TI_TEST_FS_MANIFEST_URL`
-  override the Starter, IAM and fs manifest endpoints;
+- `TI_TEST_STARTER_BASE_URL`, `TI_TEST_IAM_BASE_URL` and `TI_TEST_FS_REGIONS_URL`
+  override the Starter, IAM and Filesystem region catalog endpoints;
 - `TI_TEST_TELEMETRY_ENDPOINT` overrides the telemetry endpoint;
 - `TI_RELEASE_API_BASE_URL` overrides the `ti update` release metadata origin,
   and only to an https URL or plain http to localhost;
@@ -989,16 +1006,21 @@ credential lookup order:
 2. `TI_FS_TOKEN`.
 3. The selected ID's `api_key` in its ID-keyed credentials file.
 
-Those commands do not require TiDB Cloud public/private keys. A clean machine
-can use an existing resource with only a canonical region and FS token; the ID
-is derived in memory from the token. Do not
-persist ephemeral flag/environment credentials or create a synthetic `[env]`
-profile. `ti fs create-file-system`, remote list/describe, and
+Those commands do not require TiDB Cloud public/private keys and never request
+the Filesystem region catalog. They route from the credential's recorded
+`service_address`, or, when it has none, from the conventional address derived
+from the canonical region code (`https://<region-id>.drive9.ai`). A clean machine
+can therefore use an existing resource with only a canonical region and FS
+token; the ID is derived in memory from the token. Do not persist ephemeral
+flag/environment credentials or create a synthetic `[env]` profile. `ti fs create-file-system`, remote list/describe, and
 `ti fs delete-file-system` remain TiDB Cloud-authenticated. Delete requires an
 ID but does not require a locally stored owner token.
 
 Filesystem token generate/list/enable/disable/delete commands also use only
 TiDB Cloud public/private keys and always require an explicit File System ID.
+When such a command runs with a bearer token and no TiDB Cloud API keys, it
+routes like data-plane traffic: the recorded credential address first, then the
+derived conventional address.
 Refresh instead resolves exactly one bearer token from `--fs-token`,
 `TI_FS_TOKEN`, or the selected local credential. A local refresh atomically
 replaces that selected credential; a flag or environment refresh returns the
@@ -1015,32 +1037,28 @@ set before calling `config.Load`; the root flag has a default value, but that
 default must not suppress `TI_PROFILE`. Also pass the explicit `--region`
 value into profile loading so endpoint selection sees the override.
 
-Supported MVP placement values:
+Canonical region codes are `<provider-prefix>-<native-code>`, for example
+`aws-us-east-1` or `gcp-us-east1`. The prefix is the cloud provider selector:
+`aws` maps to internal provider `aws`; `alicloud` maps to internal provider
+`alibaba_cloud`; `gcp` maps to internal provider `gcp`; `azure` maps to internal
+provider `azure`. Keep this mapping centralized in `internal/config/region`.
 
-| Canonical region code | Cloud provider | Region label |
-| --- | --- | --- |
-| `aws-us-east-1` | AWS | N. Virginia |
-| `aws-us-west-2` | AWS | Oregon |
-| `aws-eu-central-1` | AWS | Frankfurt |
-| `aws-ap-northeast-1` | AWS | Tokyo |
-| `aws-ap-southeast-1` | AWS | Singapore |
-| `alicloud-ap-southeast-1` | Alibaba Cloud | Singapore |
-| `gcp-us-east1` | Google Cloud | South Carolina |
-| `azure-centralus` | Microsoft Azure | Central US |
+Two authorities decide placement eligibility:
 
-The prefix before the first `-` is the cloud provider selector. `aws` maps to
-internal provider `aws`; `alicloud` maps to internal provider
-`alibaba_cloud`; `gcp` maps to internal provider `gcp`; `azure` maps to
-internal provider `azure`. Keep this mapping centralized in
-`internal/config/region`.
+- TiDB Cloud Starter has a static placement whitelist in
+  `internal/config/region.supported`, enforced by `region.Validate`. Starter
+  commands must fail locally for anything else. `region.filesystemOnly`
+  preserves the better "serves TiDB Cloud Filesystem only" message for
+  placements that are known Filesystem placements but not Starter placements.
+- TiDB Cloud Filesystem eligibility comes from the published Filesystem region
+  catalog (`internal/fsregion`). `region.ParseCanonicalCode` validates only the
+  canonical shape; the catalog decides whether a region may be used. Do not add
+  Filesystem placements to a compiled-in whitelist or endpoint table.
 
-Filesystem-only placements are marked in
-`internal/config/region.filesystemOnly`. `gcp-us-east1` and `azure-centralus`
-are the Filesystem-only placements: `region.ValidateFilesystem` accepts them for
-`ti fs`, while `region.Validate` keeps them out of TiDB Cloud Starter placement
-validation so `ti db` commands fail locally with an explicit Filesystem-only
-error. The built-in Filesystem endpoint mapping remains the authority on which
-placements have a Filesystem endpoint.
+A published Filesystem region is recorded as `service_address` in the ID-keyed
+credential when ti learns about the File System (create/import) and refreshed by
+`ti fs list-regions`. Region-to-address resolution for data-plane traffic must
+never consult the network.
 
 Do not store secrets in logs, telemetry, generated docs examples, or test
 fixtures.

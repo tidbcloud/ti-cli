@@ -452,7 +452,7 @@ func TestTenantControlDeleteFailurePreservesCredential(t *testing.T) {
 }
 
 func directTenantService(homeDir, baseURL string) Service {
-	return Service{HomeDir: homeDir, Resolver: supportedFSManifestResolver(baseURL), CompanionPath: filepath.Join(homeDir, "companion-must-not-run")}
+	return Service{HomeDir: homeDir, Resolver: testFSRegionResolver(nil, "aws-us-east-1", baseURL), CompanionPath: filepath.Join(homeDir, "companion-must-not-run")}
 }
 
 func assertAdminCredentialHeaders(t *testing.T, request *http.Request) {

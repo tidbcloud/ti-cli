@@ -75,7 +75,7 @@ func Run(ctx context.Context, opts Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	placement, err := region.ParsePlacementCode(regionCode)
+	placement, err := region.ParseCanonicalCode(regionCode)
 	if err != nil {
 		return Result{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}

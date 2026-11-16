@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/tidbcloud/ti-cli/internal/fsregion"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -63,6 +64,7 @@ func TestImportFileSystemTokenValidatesStatusAndStoresCredential(t *testing.T) {
 	profile := testProfile()
 	profile.HomeDir = home
 	service := testCompanionService(home, companion)
+	service.Resolver = testFSRegionResolver(t, "aws-us-east-1", "https://fs.test")
 	result, err := service.ImportFileSystemToken(context.Background(), ImportFileSystemTokenOptions{Profile: profile, Token: token})
 	if err != nil {
 		t.Fatal(err)
@@ -134,6 +136,7 @@ func TestImportFileSystemTokenIsIdempotentWithoutRewritingCredential(t *testing.
 	profile := testProfile()
 	profile.HomeDir = home
 	service := testCompanionService(home, companion)
+	service.Resolver = testFSRegionResolver(t, "aws-us-east-1", "https://fs.test")
 	opts := ImportFileSystemTokenOptions{Profile: profile, Token: token}
 	if _, err := service.ImportFileSystemToken(context.Background(), opts); err != nil {
 		t.Fatal(err)
@@ -171,9 +174,7 @@ func TestImportFileSystemTokenReplaceCanUpdateStoredRegionAfterValidation(t *tes
 	profile.PlacementRegionCode = "aws-us-west-2"
 	profile.RegionCode = "us-west-2"
 	t.Setenv("TI_FAKE_DRIVE9_EXPECT_API_KEY", newToken)
-	resolver := endpoints.Resolver{FSManifest: &endpoints.FSRegionManifest{Regions: []endpoints.FSRegionManifestEntry{
-		{RegionCode: "aws-us-west-2", Mode: endpoints.DefaultFSMode, ServerURL: "https://fs-west.test", CloudProvider: "aws", TiDBRegion: "us-west-2"},
-	}}}
+	resolver := testFSRegionResolver(t, "aws-us-west-2", "https://fs-west.test")
 	service := Service{HomeDir: home, CompanionPath: companion, Resolver: resolver}
 	if _, err := service.ImportFileSystemToken(context.Background(), ImportFileSystemTokenOptions{Profile: profile, Token: newToken}); apperr.CodeFor(err) != "fs.credential_import_conflict" {
 		t.Fatalf("import conflict error = %v", err)
@@ -567,36 +568,30 @@ func TestDrive9MissingCompanionIsActionable(t *testing.T) {
 	}
 }
 
-func TestDrive9EndpointFailurePreventsCompanionExecution(t *testing.T) {
+func TestDrive9DerivesServiceAddressWithoutARecordedOne(t *testing.T) {
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
-	resolver := endpoints.Resolver{FSManifest: &endpoints.FSRegionManifest{Regions: []endpoints.FSRegionManifestEntry{
-		{
-			RegionCode:    "aws-us-west-2",
-			Mode:          endpoints.DefaultFSMode,
-			ServerURL:     "https://fs-west.test",
-			CloudProvider: "aws",
-			TiDBRegion:    "us-west-2",
-		},
-	}}}
-	_, err := (Service{HomeDir: t.TempDir(), CompanionPath: companion, Resolver: resolver}).ReadFile(context.Background(), ReadFileOptions{
-		Profile: dataProfile(),
+	profile := dataProfile()
+	profile.FSServiceAddress = ""
+	if _, err := (Service{HomeDir: t.TempDir(), CompanionPath: companion}).ReadFile(context.Background(), ReadFileOptions{
+		Profile: profile,
 		Path:    "/workspace/README.md",
-	})
-	if apperr.CodeFor(err) != "api.fs_endpoint_unsupported" {
-		t.Fatalf("expected unsupported endpoint error, got %v", err)
+	}); err != nil {
+		t.Fatalf("ReadFile failed: %v", err)
 	}
-	if data, readErr := os.ReadFile(recordPath); readErr == nil && len(data) != 0 {
-		t.Fatalf("endpoint failure invoked Drive9: %s", data)
-	} else if readErr != nil && !os.IsNotExist(readErr) {
-		t.Fatal(readErr)
+	call := requireFakeDrive9Call(t, recordPath, "fs", "cat")
+	if got := call.Env["DRIVE9_SERVER"]; got != "https://aws-us-east-1.drive9.ai" {
+		t.Fatalf("derived DRIVE9_SERVER = %q", got)
+	}
+	if got := call.Env["DRIVE9_REGION_CODE"]; got != "aws-us-east-1" {
+		t.Fatalf("DRIVE9_REGION_CODE = %q", got)
 	}
 }
 
 func TestDryRunCreateFileSystemUsesAdminTenantMetadataShape(t *testing.T) {
 	profile := testProfile()
 	displayName := "agent-workspace"
-	result, err := Service{Resolver: supportedFSManifestResolver("https://fs.test")}.DryRunCreateFileSystem(context.Background(), "ti fs create-file-system", CreateFileSystemOptions{
+	result, err := Service{Resolver: testFSRegionResolver(t, "aws-us-east-1", "https://fs.test")}.DryRunCreateFileSystem(context.Background(), "ti fs create-file-system", CreateFileSystemOptions{
 		Profile:        profile,
 		WaitUntilReady: true,
 		DisplayName:    &displayName,
@@ -639,7 +634,7 @@ func TestDryRunDeleteFileSystemReportsCredentialFile(t *testing.T) {
 	if _, err := fscred.StoreCredential(home, profile, "tenant-1", "aws-us-east-1", "fs-secret", false); err != nil {
 		t.Fatal(err)
 	}
-	result, err := (Service{HomeDir: home, Resolver: supportedFSManifestResolver("https://fs.test")}).DryRunDeleteFileSystem(context.Background(), "ti fs delete-file-system", DeleteFileSystemOptions{
+	result, err := (Service{HomeDir: home, Resolver: testFSRegionResolver(t, "aws-us-east-1", "https://fs.test")}).DryRunDeleteFileSystem(context.Background(), "ti fs delete-file-system", DeleteFileSystemOptions{
 		Profile:      profile,
 		FileSystemID: "tenant-1",
 	})
@@ -854,6 +849,7 @@ func dataProfile() *config.Profile {
 	profile.FSCloudProvider = "aws"
 	profile.FSRegionCode = "us-east-1"
 	profile.FSPlacementRegionCode = "aws-us-east-1"
+	profile.FSServiceAddress = "https://fs.test"
 	profile.FSAPIKey = "fs-secret"
 	return profile
 }
@@ -862,24 +858,21 @@ func testCompanionService(home, companion string) Service {
 	return Service{
 		HomeDir:       home,
 		CompanionPath: companion,
-		Resolver:      supportedFSManifestResolver("https://fs.test"),
 	}
 }
 
-func supportedFSManifestResolver(baseURL string) endpoints.Resolver {
-	return endpoints.Resolver{
-		FSManifest: &endpoints.FSRegionManifest{
-			Regions: []endpoints.FSRegionManifestEntry{
-				{
-					RegionCode:    "aws-us-east-1",
-					Mode:          endpoints.DefaultFSMode,
-					ServerURL:     baseURL,
-					CloudProvider: "aws",
-					TiDBRegion:    "us-east-1",
-				},
-			},
-		},
+func testFSRegionResolver(t *testing.T, regionCode, baseURL string) endpoints.Resolver {
+	if t != nil {
+		t.Helper()
 	}
+	cloudProvider, _, _ := strings.Cut(regionCode, "-")
+	catalog, err := fsregion.Normalize([]fsregion.Entry{{
+		RegionCode: regionCode, CloudProvider: cloudProvider, ServiceAddress: baseURL, State: "ACTIVE",
+	}})
+	if err != nil {
+		panic(err)
+	}
+	return endpoints.Resolver{FSRegions: &catalog}
 }
 
 func TestCredentialEnvScrubRemovesCanonicalLegacyAndCompanionSecrets(t *testing.T) {

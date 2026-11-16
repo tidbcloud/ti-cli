@@ -208,9 +208,9 @@ fi
 			t.Fatalf("installer did not validate companion command surface %q; calls:\n%s", want, companionCallData)
 		}
 	}
-	for _, regionCode := range []string{"aws-us-east-1", "aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1", "gcp-us-east1", "azure-centralus"} {
-		if !strings.Contains(string(output), regionCode) {
-			t.Fatalf("installer did not list ti fs region %q:\n%s", regionCode, output)
+	for _, marker := range []string{"Config regions:", "ti fs regions:"} {
+		if strings.Contains(string(output), marker) {
+			t.Fatalf("installer printed a compiled-in region list (%q):\n%s", marker, output)
 		}
 	}
 	if data, err := os.ReadFile(shadow); err != nil || !strings.Contains(string(data), "unrelated ti") {
@@ -281,7 +281,7 @@ func TestInstallersDoNotEscalatePrivileges(t *testing.T) {
 	}
 }
 
-func TestInstallersUseProductOwnedFSRegionsAndHideCompanionPath(t *testing.T) {
+func TestInstallersCompileInNoRegionListAndHideCompanionPath(t *testing.T) {
 	for _, path := range []string{
 		filepath.Join("..", "scripts", "install.sh"),
 		filepath.Join("..", "scripts", "install.ps1"),
@@ -297,9 +297,17 @@ func TestInstallersUseProductOwnedFSRegionsAndHideCompanionPath(t *testing.T) {
 		if strings.Contains(content, "ti fs companion installed to") {
 			t.Fatalf("%s still reports the companion installation path", path)
 		}
-		for _, regionCode := range []string{"aws-us-east-1", "aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1", "gcp-us-east1", "azure-centralus"} {
-			if !strings.Contains(content, regionCode) {
-				t.Fatalf("%s does not list ti fs region %q", path, regionCode)
+		for _, marker := range []string{"Config regions:", "ti fs regions:", "Print-Regions", "print_regions"} {
+			if strings.Contains(content, marker) {
+				t.Fatalf("%s still prints a compiled-in region list (%q)", path, marker)
+			}
+		}
+		// The default-profile bootstrap still writes aws-us-east-1; every other
+		// Filesystem region code must be absent because the list is no longer
+		// compiled into the installer.
+		for _, regionCode := range []string{"aws-ap-southeast-1", "aws-us-west-2", "alicloud-ap-southeast-1", "gcp-us-east1", "azure-centralus"} {
+			if strings.Contains(content, regionCode) {
+				t.Fatalf("%s still hardcodes Filesystem region %q", path, regionCode)
 			}
 		}
 	}

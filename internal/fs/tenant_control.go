@@ -78,7 +78,7 @@ func ParseTenantListFilters(displayName string, displayNameSet bool, rawLabels [
 }
 
 func (s Service) createFileSystem(ctx context.Context, opts CreateFileSystemOptions) (FileSystemResult, error) {
-	request, client, creds, endpoint, err := s.adminCreateInputs(opts)
+	request, client, creds, endpoint, err := s.adminCreateInputs(ctx, opts)
 	if err != nil {
 		return FileSystemResult{}, err
 	}
@@ -107,11 +107,24 @@ func (s Service) createFileSystem(ctx context.Context, opts CreateFileSystemOpti
 	if status == "" {
 		status = "provisioning"
 	}
+	regionCode := endpoint.RegionCode
+	if regionCode == "" {
+		regionCode = opts.Profile.PlacementRegionCode
+	}
 	result := FileSystemResult{
 		FileSystemID: fileSystemID, DisplayName: effectiveTenantDisplayName(fileSystemID, response.DisplayName), Labels: cloneLabels(response.Labels),
-		RegionCode: opts.Profile.PlacementRegionCode, FSToken: response.APIKey, Status: status,
+		RegionCode: regionCode, FSToken: response.APIKey, Status: status,
 	}
-	if _, storeErr := fscred.StoreCredential(homeDir, opts.Profile, fileSystemID, endpoint.RegionName, response.APIKey, false); storeErr != nil {
+	storeErr := fscred.WithCredentialLock(ctx, homeDir, profileName(opts.Profile), fileSystemID, func() error {
+		_, err := fscred.StoreCredentialRecord(homeDir, opts.Profile, fscred.Credential{
+			FileSystemID:   fileSystemID,
+			RegionCode:     regionCode,
+			ServiceAddress: endpoint.BaseURL,
+			APIKey:         response.APIKey,
+		}, false)
+		return err
+	})
+	if storeErr != nil {
 		if s.Stderr != nil {
 			_, _ = fmt.Fprintf(s.Stderr, "ti [WARNING]: file system %s was created, but its one-time token could not be stored locally: %s\n", fileSystemID, apperr.MessageFor(storeErr))
 		}
@@ -131,7 +144,7 @@ func (s Service) listFileSystems(ctx context.Context, opts ListFileSystemsOption
 	if err := validateAdminTenantListOptions(opts); err != nil {
 		return ListFileSystemsResult{}, err
 	}
-	client, creds, _, err := s.adminTenantClient(opts.Profile, authz.FSVolumeRead, "list file systems")
+	client, creds, _, err := s.adminTenantClient(ctx, opts.Profile, authz.FSVolumeRead, "list file systems")
 	if err != nil {
 		return ListFileSystemsResult{}, err
 	}
@@ -199,7 +212,7 @@ func (s Service) listFileSystems(ctx context.Context, opts ListFileSystemsOption
 }
 
 func (s Service) describeFileSystem(ctx context.Context, profile *config.Profile, fileSystemID string) (DescribeFileSystemResult, error) {
-	id, client, creds, err := s.adminItemInputs(profile, fileSystemID, authz.FSVolumeRead, "describe a file system")
+	id, client, creds, _, err := s.adminItemEndpointInputs(ctx, profile, fileSystemID, authz.FSVolumeRead, "describe a file system")
 	if err != nil {
 		return DescribeFileSystemResult{}, err
 	}
@@ -225,7 +238,7 @@ func (s Service) describeFileSystem(ctx context.Context, profile *config.Profile
 }
 
 func (s Service) deleteFileSystem(ctx context.Context, opts DeleteFileSystemOptions) (DeleteResult, error) {
-	id, client, creds, _, err := s.adminDeleteInputs(opts)
+	id, client, creds, _, err := s.adminDeleteInputs(ctx, opts)
 	if err != nil {
 		return DeleteResult{}, err
 	}
@@ -251,11 +264,11 @@ func (s Service) deleteFileSystem(ctx context.Context, opts DeleteFileSystemOpti
 	return DeleteResult{FileSystemID: id, Status: status, CredentialsRemoved: credentialsRemoved, RemoteDeletionState: status}, nil
 }
 
-func (s Service) adminCreateInputs(opts CreateFileSystemOptions) (apifs.AdminTenantCreateRequest, *apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
+func (s Service) adminCreateInputs(ctx context.Context, opts CreateFileSystemOptions) (apifs.AdminTenantCreateRequest, *apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
 	if err := validateCreateMetadata(opts.DisplayName, opts.Labels); err != nil {
 		return apifs.AdminTenantCreateRequest{}, nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
-	client, creds, endpoint, err := s.adminTenantClient(opts.Profile, authz.FSVolumeCreate, "create a file system")
+	client, creds, endpoint, err := s.adminTenantClient(ctx, opts.Profile, authz.FSVolumeCreate, "create a file system")
 	if err != nil {
 		return apifs.AdminTenantCreateRequest{}, nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
@@ -266,40 +279,32 @@ func (s Service) adminCreateInputs(opts CreateFileSystemOptions) (apifs.AdminTen
 	return request, client, creds, endpoint, nil
 }
 
-func (s Service) adminDeleteInputs(opts DeleteFileSystemOptions) (string, *apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
-	id, client, creds, err := s.adminItemInputs(opts.Profile, opts.FileSystemID, authz.FSVolumeDelete, "delete a file system")
-	if err != nil {
-		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
-	}
-	endpoint, err := s.resolveFS(opts.Profile)
-	if err != nil {
-		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
-	}
-	return id, client, creds, endpoint, nil
+func (s Service) adminDeleteInputs(ctx context.Context, opts DeleteFileSystemOptions) (string, *apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
+	return s.adminItemEndpointInputs(ctx, opts.Profile, opts.FileSystemID, authz.FSVolumeDelete, "delete a file system")
 }
 
-func (s Service) adminItemInputs(profile *config.Profile, fileSystemID string, permission authz.Permission, action string) (string, *apifs.Client, apifs.TiDBCloudCredentials, error) {
+func (s Service) adminItemEndpointInputs(ctx context.Context, profile *config.Profile, fileSystemID string, permission authz.Permission, action string) (string, *apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
 	if strings.TrimSpace(fileSystemID) == "" {
 		message := "--file-system-id is required for describe-file-system; describing a file system requires TiDB Cloud API credentials"
 		if permission == authz.FSVolumeDelete {
 			message = "--file-system-id is required for delete-file-system; FS tokens cannot select or authorize file system deletion"
 		}
-		return "", nil, apifs.TiDBCloudCredentials{}, apperr.New("fs.missing_file_system_id", "usage", 2, message)
+		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, apperr.New("fs.missing_file_system_id", "usage", 2, message)
 	}
 	id, err := fscred.ValidateFileSystemID(fileSystemID)
 	if err != nil {
-		return "", nil, apifs.TiDBCloudCredentials{}, err
+		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
-	client, creds, _, err := s.adminTenantClient(profile, permission, action)
-	return id, client, creds, err
+	client, creds, endpoint, err := s.adminTenantClient(ctx, profile, permission, action)
+	return id, client, creds, endpoint, err
 }
 
-func (s Service) adminTenantClient(profile *config.Profile, permission authz.Permission, action string) (*apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
+func (s Service) adminTenantClient(ctx context.Context, profile *config.Profile, permission authz.Permission, action string) (*apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
 	creds, err := auth.ValidateProfile(profile)
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
-	endpoint, err := s.resolveFS(profile)
+	endpoint, err := s.resolveAdminFS(ctx, profile)
 	if err != nil {
 		return nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}

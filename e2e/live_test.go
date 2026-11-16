@@ -648,7 +648,7 @@ func TestLiveFSGitLifecycle(t *testing.T) {
 		t.Fatalf("cloned fs-git workspace is missing .git: %v", err)
 	}
 
-	hydrate := runTIWithInput(t, bin, "", liveFSTokenEnv(selected, t.TempDir()), "fs-git", "hydrate-git-workspace", "--target-path", repoPath, "--timeout", "5m")
+	hydrate := runTIWithInput(t, bin, "", liveFSTokenEnv(t, selected, t.TempDir(), ""), "fs-git", "hydrate-git-workspace", "--target-path", repoPath, "--timeout", "5m")
 	hydrate.wantExitCode(0)
 	hydrate.wantStdoutContains(`"operation": "hydrate_git_workspace"`)
 
@@ -1091,7 +1091,7 @@ func TestLiveFSVaultLifecycle(t *testing.T) {
 	createVaultSecret.wantExitCode(0)
 	createVaultSecret.wantStdoutContains(vaultSecretName)
 
-	listVaultSecrets := runTIWithInput(t, bin, "", liveFSTokenEnv(selected, t.TempDir()), "fs-vault", "list-secrets")
+	listVaultSecrets := runTIWithInput(t, bin, "", liveFSTokenEnv(t, selected, t.TempDir(), ""), "fs-vault", "list-secrets")
 	listVaultSecrets.wantExitCode(0)
 	listVaultSecrets.wantStdoutContains(vaultSecretName)
 
@@ -1243,7 +1243,7 @@ func TestLiveFSJournalLifecycle(t *testing.T) {
 	appendJournal.wantStdoutContains(`"count": 1`)
 	appendJournal.wantStdoutContains(appendID)
 
-	readJournal := runTIWithInput(t, bin, "", liveFSTokenEnv(selected, t.TempDir()), "fs-journal", "read-journal-entries", "--journal-id", journalID, "--limit", "10")
+	readJournal := runTIWithInput(t, bin, "", liveFSTokenEnv(t, selected, t.TempDir(), ""), "fs-journal", "read-journal-entries", "--journal-id", journalID, "--limit", "10")
 	readJournal.wantExitCode(0)
 	readJournal.wantStdoutContains(journalID)
 	readJournal.wantStdoutContains("task.started")
@@ -2136,7 +2136,24 @@ func waitLiveRemoteReadWithEnv(t *testing.T, bin string, env []string, remotePat
 	}
 }
 
-func liveFSTokenEnv(profile *config.Profile, home string) []string {
+// liveFSTokenEnv builds a token-only environment for data-plane live checks.
+// Data-plane routing comes from the File System credential, so the helper
+// records one in the isolated home exactly as create/import would. Passing an
+// empty serviceAddress uses the address already recorded on the live profile.
+func liveFSTokenEnv(t *testing.T, profile *config.Profile, home, serviceAddress string) []string {
+	t.Helper()
+	address := serviceAddress
+	if address == "" {
+		address = profile.FSServiceAddress
+	}
+	if address == "" {
+		endpoint, err := endpoints.NewResolver().ResolveFSProfile(context.Background(), profile)
+		if err != nil {
+			t.Fatalf("resolve live ti fs endpoint: %v", err)
+		}
+		address = endpoint.BaseURL
+	}
+	seedFSCredential(t, home, liveProfileName(t), profile.FSTenantID, profile.FSPlacementRegionCode, address, profile.FSAPIKey)
 	return []string{
 		"HOME=" + home,
 		"TI_LOGGING=off",
@@ -2571,15 +2588,7 @@ func liveDigestClient(t *testing.T, profile *config.Profile, endpoint endpoints.
 
 func liveFSClient(t *testing.T, profile *config.Profile, permission authz.Permission) *apifs.Client {
 	t.Helper()
-	provider := profile.FSCloudProvider
-	regionCode := profile.FSRegionCode
-	if provider == "" {
-		provider = profile.CloudProvider
-	}
-	if regionCode == "" {
-		regionCode = profile.RegionCode
-	}
-	endpoint, err := endpoints.NewResolver().ResolveFS(provider, regionCode)
+	endpoint, err := endpoints.NewResolver().ResolveFSCredentialEndpoint(profile)
 	if err != nil {
 		t.Fatalf("resolve live ti fs endpoint: %v", err)
 	}
@@ -2648,4 +2657,64 @@ func liveGETJSON(t *testing.T, client *api.Client, path string) {
 			t.Fatalf("live GET returned unexpected scalar payload for empty path")
 		}
 	}
+}
+
+// TestLiveFSListRegions verifies the published Filesystem region catalog against
+// the real API and that it refreshes stored credential addresses.
+func TestLiveFSListRegions(t *testing.T) {
+	requireLive(t)
+	bin := tiBinary(t)
+	profile := ensureLiveFSResource(t, bin, liveProfileName(t))
+	regionCode := profile.FSPlacementRegionCode
+
+	list := runTIWithInput(t, bin, "", nil, "--profile", liveProfileName(t), "fs", "list-regions")
+	list.wantExitCode(0)
+	var catalog struct {
+		RegionCount int `json:"region_count"`
+		Regions     []struct {
+			RegionCode     string `json:"region_code"`
+			ServiceAddress string `json:"service_address"`
+			State          string `json:"state"`
+			Eligible       bool   `json:"eligible"`
+		} `json:"regions"`
+	}
+	if err := json.Unmarshal([]byte(list.stdout), &catalog); err != nil {
+		t.Fatalf("decode live Filesystem region catalog: %v", err)
+	}
+	if catalog.RegionCount == 0 || len(catalog.Regions) != catalog.RegionCount {
+		t.Fatalf("unexpected live region catalog: %#v", catalog)
+	}
+	found := false
+	for _, region := range catalog.Regions {
+		if region.RegionCode != regionCode {
+			continue
+		}
+		found = true
+		if !region.Eligible || !strings.EqualFold(region.State, "ACTIVE") {
+			t.Fatalf("live region %s is not active: %#v", regionCode, region)
+		}
+		if !strings.HasPrefix(region.ServiceAddress, "https://") {
+			t.Fatalf("live region %s has no https service address: %#v", regionCode, region)
+		}
+	}
+	if !found {
+		t.Fatalf("live region %s is missing from the catalog: %#v", regionCode, catalog)
+	}
+
+	credential, err := fscred.GetCredential(mustUserHome(t), profile.Name, profile.FSTenantID)
+	if err != nil {
+		t.Fatalf("read live credential: %v", err)
+	}
+	if credential.ServiceAddress == "" {
+		t.Fatalf("list-regions did not refresh the live credential address: %#v", credential)
+	}
+}
+
+func mustUserHome(t *testing.T) string {
+	t.Helper()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("determine home directory: %v", err)
+	}
+	return home
 }

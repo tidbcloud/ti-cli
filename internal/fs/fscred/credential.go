@@ -20,6 +20,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/config"
 	"github.com/tidbcloud/ti-cli/internal/config/region"
 	"github.com/tidbcloud/ti-cli/internal/config/store"
+	"github.com/tidbcloud/ti-cli/internal/fsregion"
 )
 
 const (
@@ -31,15 +32,21 @@ const (
 var migrationMu sync.Mutex
 
 type Credential struct {
-	FileSystemID  string       `json:"file_system_id" toml:"file_system_id"`
-	RegionCode    string       `json:"region_code" toml:"region_code"`
-	HasLocalToken bool         `json:"has_local_token" toml:"-"`
-	APIKey        string       `json:"-" toml:"api_key"`
-	TokenID       string       `json:"token_id,omitempty" toml:"token_id,omitempty"`
-	ScopeKind     string       `json:"scope_kind,omitempty" toml:"scope_kind,omitempty"`
-	TokenName     string       `json:"token_name,omitempty" toml:"token_name,omitempty"`
-	ExpiresAt     *time.Time   `json:"expires_at,omitempty" toml:"expires_at,omitempty"`
-	Scopes        []TokenScope `json:"scopes,omitempty" toml:"scopes,omitempty"`
+	FileSystemID string `json:"file_system_id" toml:"file_system_id"`
+	RegionCode   string `json:"region_code" toml:"region_code"`
+	// ServiceAddress is the regional Filesystem endpoint recorded with the
+	// token. It is a stable property of the region, derived from the published
+	// Filesystem region catalog, and it lets token-only commands route without
+	// the catalog. It is optional so credentials written before the catalog
+	// existed keep loading.
+	ServiceAddress string       `json:"service_address,omitempty" toml:"service_address,omitempty"`
+	HasLocalToken  bool         `json:"has_local_token" toml:"-"`
+	APIKey         string       `json:"-" toml:"api_key"`
+	TokenID        string       `json:"token_id,omitempty" toml:"token_id,omitempty"`
+	ScopeKind      string       `json:"scope_kind,omitempty" toml:"scope_kind,omitempty"`
+	TokenName      string       `json:"token_name,omitempty" toml:"token_name,omitempty"`
+	ExpiresAt      *time.Time   `json:"expires_at,omitempty" toml:"expires_at,omitempty"`
+	Scopes         []TokenScope `json:"scopes,omitempty" toml:"scopes,omitempty"`
 }
 
 type TokenScope struct {
@@ -75,6 +82,12 @@ func StoreCredential(homeDir string, profile *config.Profile, fileSystemID, regi
 	}, replace)
 }
 
+// StoreCredentialRecord writes one credential. It performs a read-compare-write,
+// so every caller on a path that can race another writer (create, import, token
+// rotation, region backfill) must hold WithCredentialLock for that file system.
+// The legacy name-registry migration is the only exemption: it is serialized by
+// migrationMu, runs before any other writer for the file systems it migrates,
+// and fails closed on conflicting state, so it does not take the file lock.
 func StoreCredentialRecord(homeDir string, profile *config.Profile, credential Credential, replace bool) (Credential, error) {
 	if profile == nil {
 		return Credential{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")
@@ -91,12 +104,17 @@ func StoreCredentialRecord(homeDir string, profile *config.Profile, credential C
 	if placementCode == "" {
 		placementCode = strings.TrimSpace(profile.PlacementRegionCode)
 	}
-	placement, err := region.ParsePlacementCode(placementCode)
+	placement, err := region.ParseCanonicalCode(placementCode)
 	if err != nil {
 		return Credential{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
+	serviceAddress, err := normalizeServiceAddress(credential.ServiceAddress)
+	if err != nil {
+		return Credential{}, err
+	}
 	credential.FileSystemID = fileSystemID
 	credential.RegionCode = placement.Code
+	credential.ServiceAddress = serviceAddress
 	credential.HasLocalToken = true
 	credential.APIKey = apiKey
 	credential.TokenID = strings.TrimSpace(credential.TokenID)
@@ -108,10 +126,17 @@ func StoreCredentialRecord(homeDir string, profile *config.Profile, credential C
 		credential.ExpiresAt = &expiresAt
 	}
 	if existing, getErr := GetCredential(homeDir, profile.Name, fileSystemID); getErr == nil {
-		if credentialsEqual(existing, credential) {
-			return existing, nil
+		if credential.ServiceAddress == "" {
+			credential.ServiceAddress = existing.ServiceAddress
 		}
-		if !replace {
+		if credentialsIdentityEqual(existing, credential) {
+			// The recorded regional address is derived placement metadata, not
+			// token identity: an address change (for example a keyed import after
+			// a keyless one) updates it without demanding --replace.
+			if existing.ServiceAddress == credential.ServiceAddress {
+				return existing, nil
+			}
+		} else if !replace {
 			return Credential{}, credentialError("fs.credential_import_conflict", profile.Name, fileSystemID, "a different local token or region is already stored")
 		}
 	} else if apperr.CodeFor(getErr) != "fs.credential_not_found" {
@@ -131,7 +156,7 @@ func StoreCredentialRecord(homeDir string, profile *config.Profile, credential C
 	if err != nil {
 		return Credential{}, err
 	}
-	if stored.RegionCode != credential.RegionCode || stored.APIKey != credential.APIKey {
+	if stored.RegionCode != credential.RegionCode || stored.APIKey != credential.APIKey || stored.ServiceAddress != credential.ServiceAddress {
 		return Credential{}, credentialError("fs.credential_store_failed", profile.Name, fileSystemID, "stored credential verification failed")
 	}
 	return stored, nil
@@ -221,7 +246,10 @@ func DeleteCredentialIfTokenID(homeDir, profileName, fileSystemID, tokenID strin
 	return removed, "", err
 }
 
-func credentialsEqual(left, right Credential) bool {
+// credentialsIdentityEqual compares everything that identifies a stored token.
+// The regional service address is intentionally excluded so that refreshing
+// placement metadata never looks like a token conflict.
+func credentialsIdentityEqual(left, right Credential) bool {
 	if left.FileSystemID != right.FileSystemID || left.RegionCode != right.RegionCode || left.APIKey != right.APIKey || left.TokenID != right.TokenID || left.ScopeKind != right.ScopeKind || left.TokenName != right.TokenName {
 		return false
 	}
@@ -294,12 +322,20 @@ func GetCredential(homeDir, profileName, fileSystemID string) (Credential, error
 	if credential.FileSystemID != fileSystemID || strings.TrimSpace(credential.APIKey) == "" {
 		return Credential{}, credentialError("fs.credential_incomplete", profileName, fileSystemID, "local credentials are incomplete")
 	}
-	placement, err := region.ParsePlacementCode(credential.RegionCode)
+	placement, err := region.ParseCanonicalCode(credential.RegionCode)
 	if err != nil {
 		return Credential{}, credentialError("fs.credential_incomplete", profileName, fileSystemID, "stored region_code is invalid")
 	}
 	credential.RegionCode = placement.Code
 	credential.APIKey = strings.TrimSpace(credential.APIKey)
+	serviceAddress, addressErr := normalizeServiceAddress(credential.ServiceAddress)
+	if addressErr != nil {
+		// The address is a derived routing hint. A corrupt value is dropped so
+		// that catalog resolution or a later backfill can restore it; the
+		// token itself stays authoritative.
+		serviceAddress = ""
+	}
+	credential.ServiceAddress = serviceAddress
 	credential.HasLocalToken = true
 	return credential, nil
 }
@@ -507,12 +543,12 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 	if placementCode == "" {
 		return nil, Credential{}, apperr.New("fs.missing_region", "config", 2, "ti fs region is required; pass --region, set TI_REGION_CODE, or use locally stored credentials with region_code")
 	}
-	placement, err := region.ParsePlacementCode(placementCode)
+	placement, err := region.ParseCanonicalCode(placementCode)
 	if err != nil {
 		return nil, Credential{}, apperr.Wrap("config.invalid_region", "config", 2, err.Error(), err)
 	}
 	if found {
-		storedPlacement, storedErr := region.ParsePlacementCode(credential.RegionCode)
+		storedPlacement, storedErr := region.ParseCanonicalCode(credential.RegionCode)
 		if storedErr != nil {
 			return nil, Credential{}, apperr.Wrap("config.invalid_region", "config", 2, storedErr.Error(), storedErr)
 		}
@@ -520,6 +556,16 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 			return nil, Credential{}, apperr.New("fs.credential_region_mismatch", "config", 2, fmt.Sprintf("file system %q credentials are for %s, not %s", id, storedPlacement.Code, placement.Code))
 		}
 		credential.RegionCode = storedPlacement.Code
+	}
+	serviceAddress := credential.ServiceAddress
+	if !found {
+		// A dry run with an explicit token deliberately skips the stored
+		// credential for token validation, but it still needs the recorded
+		// regional address to validate endpoint selection without a network
+		// request.
+		if stored, err := GetCredential(homeDir, profile.Name, id); err == nil {
+			serviceAddress = stored.ServiceAddress
+		}
 	}
 	metadataMatchesToken := found && subtle.ConstantTimeCompare([]byte(token), []byte(credential.APIKey)) == 1
 	credential.FileSystemID = id
@@ -532,6 +578,7 @@ func ResolveCredential(homeDir string, profile *config.Profile, opts ResolveCred
 	selected.FSPlacementRegionCode = placement.Code
 	selected.FSCloudProvider = placement.Provider
 	selected.FSRegionCode = placement.NativeCode
+	selected.FSServiceAddress = serviceAddress
 	selected.FSAPIKey = token
 	if metadataMatchesToken {
 		selected.FSTokenID = credential.TokenID
@@ -578,6 +625,20 @@ func FileSystemIDFromToken(raw string) (string, error) {
 		return "", apperr.Wrap("fs.invalid_token", "authentication", 3, "invalid FS token JWT tenant_id", err)
 	}
 	return id, nil
+}
+
+// normalizeServiceAddress validates the routing hint recorded with a token. An
+// empty value stays empty: credentials written before the Filesystem region
+// catalog existed keep loading.
+func normalizeServiceAddress(value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		return "", nil
+	}
+	normalized, err := fsregion.NormalizeServiceAddress(value)
+	if err != nil {
+		return "", apperr.Wrap("fs.credential_incomplete", "config", 2, "stored Filesystem service address is invalid", err)
+	}
+	return normalized, nil
 }
 
 func ValidateFileSystemID(value string) (string, error) {

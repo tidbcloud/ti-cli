@@ -31,6 +31,7 @@ func TestFSUnpackFileSystemRejectsEscapingSymlinksFromCompanion(t *testing.T) {
 	companion := buildFakeCompanion(t)
 	home := t.TempDir()
 	token := drive9TestToken("tenant-pack-symlink")
+	seedFSCredential(t, home, "default", "tenant-pack-symlink", "aws-us-east-1", "https://aws-us-east-1.drive9.ai", token)
 	baseEnv := []string{
 		"HOME=" + home,
 		"TI_PROFILE=default",

@@ -205,16 +205,32 @@ func TestLoadDefaultProfileFallback(t *testing.T) {
 	}
 }
 
-func TestLoadRejectsInvalidRegionCombination(t *testing.T) {
+func TestLoadRejectsMalformedRegionCode(t *testing.T) {
 	home := t.TempDir()
-	writeProfile(t, home, DefaultProfile, "ali-us-east-1", "public", "private")
+	writeProfile(t, home, DefaultProfile, "aws-us_east_1", "public", "private")
 
 	_, err := Load(context.Background(), LoadOptions{HomeDir: home})
 	if err == nil {
-		t.Fatal("expected invalid region to fail")
+		t.Fatal("expected a malformed region code to fail")
 	}
-	if got := apperr.MessageFor(err); !strings.Contains(got, "unsupported region") {
+	if got := apperr.MessageFor(err); !strings.Contains(got, "unsupported region code") {
 		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
+// TestLoadAcceptsStructurallyValidUnpublishedRegion pins the split between
+// parsing and eligibility: the profile layer resolves placement shape only, and
+// the Filesystem region catalog decides whether a Filesystem command may use it.
+func TestLoadAcceptsStructurallyValidUnpublishedRegion(t *testing.T) {
+	home := t.TempDir()
+	writeProfile(t, home, DefaultProfile, "aws-us-east-2", "public", "private")
+
+	profile, err := Load(context.Background(), LoadOptions{HomeDir: home})
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if profile.PlacementRegionCode != "aws-us-east-2" {
+		t.Fatalf("unexpected placement: %#v", profile)
 	}
 }
 
@@ -324,10 +340,28 @@ func TestLoadLocalAllowsMissingPlacement(t *testing.T) {
 	}
 }
 
+func TestLoadLocalIgnoresAPartialTiDBCloudEnvironmentPair(t *testing.T) {
+	// Data-plane commands must not fail because only one of the optional key
+	// pair is present; they simply run without catalog access.
+	profile, err := LoadLocal(context.Background(), LoadOptions{
+		HomeDir: t.TempDir(),
+		Env:     map[string]string{"TIDB_CLOUD_PUBLIC_KEY": "public-only"},
+	})
+	if err != nil {
+		t.Fatalf("LoadLocal failed: %v", err)
+	}
+	if profile.TiDBCloudPublicKey != "" || profile.TiDBCloudPrivateKey != "" {
+		t.Fatalf("partial pair was loaded: %#v", profile)
+	}
+	if profile.HasTiDBCloudCredentials() {
+		t.Fatal("a partial pair must not count as complete credentials")
+	}
+}
+
 func TestLoadLocalRejectsMalformedEnvironmentPlacement(t *testing.T) {
 	_, err := LoadLocal(context.Background(), LoadOptions{
 		HomeDir: t.TempDir(),
-		Env:     map[string]string{"TI_REGION_CODE": "aws-not-a-region"},
+		Env:     map[string]string{"TI_REGION_CODE": "aws-not_a_region"},
 	})
 	if apperr.CodeFor(err) != "config.invalid_region" {
 		t.Fatalf("error = %v, want config.invalid_region", err)

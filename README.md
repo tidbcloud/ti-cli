@@ -104,9 +104,9 @@ Automation should move to `TI_*` and `TIDB_CLOUD_*` environment variables. The v
 ### Configure
 
 - Authentication: a TiDB Cloud Public Key and a Private Key from the [TiDB Cloud API Keys](https://tidbcloud.com/org-settings/api-keys) console. When either credential is missing, `ti` links to this page in its authentication error before suggesting `ti configure` or the corresponding environment variables.
-- Default region: one of aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, alicloud-ap-southeast-1, gcp-us-east1, or azure-centralus.
-    - Regions supporting TiDB Cloud Filesystem: aws-us-east-1, aws-ap-southeast-1, aws-us-west-2, alicloud-ap-southeast-1, gcp-us-east1, or azure-centralus. These endpoints are built into `ti`; endpoint resolution does not download a Drive9 region manifest.
-    - Regions supporting TiDB Cloud Starter: aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, or alicloud-ap-southeast-1. `gcp-us-east1` and `azure-centralus` are Filesystem-only placements, so `ti db` commands reject them during local placement validation.
+- Default region: a canonical region code such as aws-us-east-1 or aws-ap-southeast-1.
+    - Regions supporting TiDB Cloud Filesystem are published by TiDB Cloud Filesystem, not compiled into `ti`. List them with `ti fs list-regions`; creating and importing a File System records its regional `service_address` locally, and data-plane commands route from that address without any catalog request.
+    - Regions supporting TiDB Cloud Starter are aws-us-east-1, aws-us-west-2, aws-eu-central-1, aws-ap-northeast-1, aws-ap-southeast-1, and alicloud-ap-southeast-1. `gcp-us-east1` and `azure-centralus` are Filesystem-only placements, so `ti db` commands reject them during local placement validation.
 
 Set up a default profile with one command:
 
@@ -225,6 +225,15 @@ ti fs list-layer-chain --layer-ref experiment-a --output text
 ```
 
 Use `ti fs delete-layer --layer-ref experiment-a` to abandon a rejected leaf. Deleting a layer with live descendants fails unless `--cascade` is supplied explicitly. Layer names are not durable unique identifiers because abandoned layers remain visible; automation should capture returned layer IDs and use run-unique checkpoint IDs.
+
+`ti fs list-regions` lists the Filesystem regions published by TiDB Cloud Filesystem, with their cloud provider, display name, state, and regional service address. It uses TiDB Cloud credentials, always asks the API, and refreshes the recorded `service_address` of locally stored File System credentials:
+
+```shell
+ti fs list-regions
+ti fs list-regions --query 'regions[?eligible].region_code' --output text
+```
+
+`ti fs create-file-system` and `ti fs import-file-system-token` record the regional `service_address` with the File System credential, and data-plane commands route from that address without requesting the region catalog. A token-only machine works without TiDB Cloud credentials: import once (`ti fs import-file-system-token --from-file ./fs-token`) and `ti` derives the conventional `https://<region-id>.drive9.ai` address whenever the credential records none. With TiDB Cloud credentials the import also records the catalog-published address; without them it records none, so a later catalog change still applies.
 
 `ti fs list-file-systems` reads the region-scoped remote inventory through TiDB Cloud credentials. A profile can access multiple file systems, including resources created on another machine. Data-plane commands never infer a resource from the number of local credentials, so provide `--file-system-id` or set `TI_FS_FILE_SYSTEM_ID`:
 
