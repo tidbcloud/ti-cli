@@ -456,13 +456,7 @@ func (r Runner) homeDir(opts RunOptions) (string, error) {
 }
 
 func (r Runner) resolver() endpoints.Resolver {
-	resolver := endpoints.NewResolver()
-	if !r.Resolver.IsZero() {
-		resolver = r.Resolver
-	}
-	resolver.Debug = r.Debug
-	resolver.DebugWriter = r.DebugWriter
-	return resolver
+	return r.Resolver.WithDefaults().WithDebug(r.Debug, r.DebugWriter)
 }
 
 func prepareHome(homeDir string) error {

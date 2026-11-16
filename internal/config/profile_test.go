@@ -340,6 +340,24 @@ func TestLoadLocalAllowsMissingPlacement(t *testing.T) {
 	}
 }
 
+func TestLoadLocalIgnoresAPartialTiDBCloudEnvironmentPair(t *testing.T) {
+	// Data-plane commands must not fail because only one of the optional key
+	// pair is present; they simply run without catalog access.
+	profile, err := LoadLocal(context.Background(), LoadOptions{
+		HomeDir: t.TempDir(),
+		Env:     map[string]string{"TIDB_CLOUD_PUBLIC_KEY": "public-only"},
+	})
+	if err != nil {
+		t.Fatalf("LoadLocal failed: %v", err)
+	}
+	if profile.TiDBCloudPublicKey != "" || profile.TiDBCloudPrivateKey != "" {
+		t.Fatalf("partial pair was loaded: %#v", profile)
+	}
+	if profile.HasTiDBCloudCredentials() {
+		t.Fatal("a partial pair must not count as complete credentials")
+	}
+}
+
 func TestLoadLocalRejectsMalformedEnvironmentPlacement(t *testing.T) {
 	_, err := LoadLocal(context.Background(), LoadOptions{
 		HomeDir: t.TempDir(),

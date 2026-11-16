@@ -2,7 +2,6 @@ package fswrap
 
 import (
 	"errors"
-	"github.com/tidbcloud/ti-cli/internal/fsregion"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +11,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/fsregion"
 )
 
 func TestDrive9EnvironmentSanitizesTISecrets(t *testing.T) {

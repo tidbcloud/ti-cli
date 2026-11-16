@@ -94,7 +94,7 @@ A new package `internal/fsregion` owns the catalog:
   de-duplication, and stable ordering by `region_code`. It owns no local state
   and does not import `internal/api/endpoints`.
 - `Catalog` is an immutable validated snapshot with `Lookup(regionCode)` and
-  `EligibleRegionCodes()`.
+  `RoutableRegionCodes()`.
 - Error constructors produce the actionable failures listed below.
 
 There is **no** catalog cache. A stale region list is exactly what the compiled-in

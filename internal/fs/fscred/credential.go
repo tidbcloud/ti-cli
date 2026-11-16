@@ -82,6 +82,9 @@ func StoreCredential(homeDir string, profile *config.Profile, fileSystemID, regi
 	}, replace)
 }
 
+// StoreCredentialRecord writes one credential. It performs a read-compare-write,
+// so every caller on a path that can race another writer (create, import, token
+// rotation, region backfill) must hold WithCredentialLock for that file system.
 func StoreCredentialRecord(homeDir string, profile *config.Profile, credential Credential, replace bool) (Credential, error) {
 	if profile == nil {
 		return Credential{}, apperr.New("fs.missing_profile", "config", 2, "active profile is required")

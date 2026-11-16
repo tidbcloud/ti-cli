@@ -116,7 +116,7 @@ func TestFetchKeepsTheDocumentedExitCodeContract(t *testing.T) {
 		want   string
 	}{
 		{status: http.StatusUnauthorized, code: "auth.invalid_credentials", exit: 3, want: "Check ~/.ti/credentials"},
-		{status: http.StatusForbidden, code: "authz.permission_denied", exit: 4, want: "permission denied"},
+		{status: http.StatusForbidden, code: "authz.permission_denied", exit: 4, want: `profile "default" is not allowed to read the Filesystem region catalog in the selected scope`},
 		{status: http.StatusNotFound, code: "api.not_found", exit: 5, want: "remote resource not found"},
 	} {
 		t.Run(http.StatusText(test.status), func(t *testing.T) {

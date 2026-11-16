@@ -278,12 +278,15 @@ func (s Service) importFileSystemToken(ctx context.Context, opts ImportFileSyste
 		if err != nil {
 			return ImportFileSystemTokenResult{}, err
 		}
-		if _, err := fscred.StoreCredentialRecord(homeDir, opts.Profile, fscred.Credential{
-			FileSystemID:   tokenID,
-			RegionCode:     placement.Code,
-			ServiceAddress: recordedAddress,
-			APIKey:         opts.Token,
-		}, opts.Replace); err != nil {
+		if err := fscred.WithCredentialLock(ctx, homeDir, profileName(opts.Profile), tokenID, func() error {
+			_, storeErr := fscred.StoreCredentialRecord(homeDir, opts.Profile, fscred.Credential{
+				FileSystemID:   tokenID,
+				RegionCode:     placement.Code,
+				ServiceAddress: recordedAddress,
+				APIKey:         opts.Token,
+			}, opts.Replace)
+			return storeErr
+		}); err != nil {
 			return ImportFileSystemTokenResult{}, err
 		}
 		status = "imported"

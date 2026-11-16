@@ -530,17 +530,7 @@ func profileName(name string) string {
 }
 
 func permissionDeniedMessage(profileName string, permission authz.Permission, action, provider, regionCode string) string {
-	if action == "" {
-		action = string(permission)
-	}
-	location := provider
-	if regionCode != "" {
-		location = provider + "/" + regionCode
-	}
-	if location == "" {
-		location = "the selected scope"
-	}
-	return fmt.Sprintf("permission denied: profile %q is not allowed to %s in %s. Ask an organization admin for %s permission or use another profile.", profileName, action, location, permission)
+	return authz.PermissionDeniedMessage(profileName, permission, action, provider, regionCode)
 }
 
 // statusErrorFrom renders a shared status classification with the HTTP response

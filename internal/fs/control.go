@@ -281,13 +281,7 @@ func (s Service) bearerClient(profile *config.Profile, endpoint endpoints.Endpoi
 }
 
 func (s Service) resolver() endpoints.Resolver {
-	resolver := endpoints.NewResolver()
-	if !s.Resolver.IsZero() {
-		resolver = s.Resolver
-	}
-	resolver.Debug = s.Debug
-	resolver.DebugWriter = s.DebugWriter
-	return resolver
+	return s.Resolver.WithDefaults().WithDebug(s.Debug, s.DebugWriter)
 }
 
 func (s Service) homeDir() (string, error) {

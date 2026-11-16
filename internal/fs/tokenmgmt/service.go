@@ -798,13 +798,7 @@ func apiRedactor(secrets ...string) apitransport.Redactor {
 }
 
 func (s Service) resolver() endpoints.Resolver {
-	resolver := endpoints.NewResolver()
-	if !s.Resolver.IsZero() {
-		resolver = s.Resolver
-	}
-	resolver.Debug = s.Debug
-	resolver.DebugWriter = s.DebugWriter
-	return resolver
+	return s.Resolver.WithDefaults().WithDebug(s.Debug, s.DebugWriter)
 }
 
 func (s Service) resolveEndpoint(ctx context.Context, profile *config.Profile, override, fileSystemID string) (endpoints.Endpoint, error) {

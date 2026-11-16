@@ -135,6 +135,13 @@ func ForCommand(commandPath string) (Permission, error) {
 }
 
 func PermissionDenied(profileName string, permission Permission, action, provider, regionCode string) error {
+	return apperr.New("authz.permission_denied", "authorization", 4, PermissionDeniedMessage(profileName, permission, action, provider, regionCode))
+}
+
+// PermissionDeniedMessage renders the single authorization failure message used
+// by every TiDB Cloud control-plane caller. An empty provider/region renders
+// "the selected scope" instead of an empty location.
+func PermissionDeniedMessage(profileName string, permission Permission, action, provider, regionCode string) string {
 	if profileName == "" {
 		profileName = config.DefaultProfile
 	}
@@ -145,10 +152,8 @@ func PermissionDenied(profileName string, permission Permission, action, provide
 	if regionCode != "" {
 		location = provider + "/" + regionCode
 	}
-	return apperr.New(
-		"authz.permission_denied",
-		"authorization",
-		4,
-		fmt.Sprintf("permission denied: profile %q is not allowed to %s in %s. Ask an organization admin for %s permission or use another profile.", profileName, action, location, permission),
-	)
+	if location == "" {
+		location = "the selected scope"
+	}
+	return fmt.Sprintf("permission denied: profile %q is not allowed to %s in %s. Ask an organization admin for %s permission or use another profile.", profileName, action, location, permission)
 }

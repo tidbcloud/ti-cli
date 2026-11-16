@@ -84,6 +84,22 @@ func NewResolver() Resolver {
 	return resolver
 }
 
+// WithDefaults fills an unset resolver with the production defaults, so callers
+// do not each re-implement "use the service resolver, else NewResolver()".
+func (r Resolver) WithDefaults() Resolver {
+	if r.IsZero() {
+		return NewResolver()
+	}
+	return r
+}
+
+// WithDebug returns the resolver carrying the caller's debug configuration.
+func (r Resolver) WithDebug(debug bool, writer io.Writer) Resolver {
+	r.Debug = debug
+	r.DebugWriter = writer
+	return r
+}
+
 func (r Resolver) IsZero() bool {
 	return r.StarterBaseURL == "" &&
 		r.IAMBaseURL == "" &&

@@ -155,6 +155,26 @@ func TestResolveFSRegionRejectsUnpublishedRegion(t *testing.T) {
 	}
 }
 
+func TestResolveFSRegionRejectsUnmappedCloudProvider(t *testing.T) {
+	server, _ := testCatalogServer(t, `{"regionId":"aws-us-east-1","cloudProvider":"tencent","displayName":"N. Virginia (us-east-1)","serviceAddress":"https://aws-us-east-1.drive9.ai","state":"ACTIVE"}`)
+	profile := testProfileWithKeys(t.TempDir())
+	_, err := (Resolver{FSRegionsBaseURL: server.URL}).ResolveFSRegion(context.Background(), profile, "aws-us-east-1")
+	if err == nil {
+		t.Fatal("expected an unmapped cloud provider to be unroutable")
+	}
+	if code := apperr.CodeFor(err); code != "api.fs_endpoint_unsupported" {
+		t.Fatalf("unexpected code %q", code)
+	}
+	if exit := apperr.ExitCodeFor(err); exit != 2 {
+		t.Fatalf("exit = %d, want 2", exit)
+	}
+	for _, want := range []string{"tencent", "does not support"} {
+		if message := apperr.MessageFor(err); !strings.Contains(message, want) {
+			t.Fatalf("error message %q is missing %q", message, want)
+		}
+	}
+}
+
 func TestResolveFSRegionRejectsInactiveRegion(t *testing.T) {
 	server, _ := testCatalogServer(t, `{"regionId":"aws-us-west-2","cloudProvider":"aws","displayName":"Oregon (us-west-2)","serviceAddress":"https://aws-us-west-2.drive9.ai","state":"PENDING"}`)
 	profile := testProfileWithKeys(t.TempDir())
