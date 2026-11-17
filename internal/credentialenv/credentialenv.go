@@ -1,12 +1,18 @@
 // Package credentialenv owns the single list of environment variables that
-// carry ti credentials. Two processes are spawned with those credentials in
+// carry ti credentials. Several processes are spawned with those credentials in
 // scope: the ti-drive9 companion (which receives the ones it needs as DRIVE9_*
-// values) and the untrusted child of `ti fs-vault run-with-secret` (which must
-// receive none of them). Keeping one denylist here prevents the two scrub paths
-// from drifting apart.
+// values), the untrusted child of `ti fs-vault run-with-secret` (which must
+// receive none of them), and subprocesses that have no use for ti credentials at
+// all - git (whose hooks, clean/smudge filters, and configured helpers run in the
+// child environment), plus the staged ti binary and the downloaded companion that
+// `ti update` validates. Keeping one denylist here prevents the scrub paths from
+// drifting apart.
 package credentialenv
 
-import "strings"
+import (
+	"os"
+	"strings"
+)
 
 // credentialPrefixes covers the credential families ti accepts: the TiDB Cloud
 // API key pair, the legacy TDC_ names, the companion DRIVE9_ values, filesystem
@@ -53,4 +59,13 @@ func Scrub(env []string) []string {
 		out = append(out, entry)
 	}
 	return out
+}
+
+// ScrubbedEnviron returns the current environment without ti credentials. A
+// subprocess that never needs a ti credential must not be able to read one, so
+// the git invocations, the staged ti binary and the downloaded companion that
+// `ti update` validates all run with this environment instead of inheriting
+// os.Environ() verbatim.
+func ScrubbedEnviron() []string {
+	return Scrub(os.Environ())
 }

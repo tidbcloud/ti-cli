@@ -26,6 +26,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/authz"
 	"github.com/tidbcloud/ti-cli/internal/config"
+	"github.com/tidbcloud/ti-cli/internal/credentialenv"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 )
 
@@ -1134,7 +1135,7 @@ func unpackGitObjectPack(ctx context.Context, gitDir string, content []byte) err
 	if err := os.MkdirAll(filepath.Join(gitDir, "objects"), 0o755); err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, "git", "--git-dir", gitDir, "unpack-objects", "-r")
+	cmd := newGitCommand(ctx, "--git-dir", gitDir, "unpack-objects", "-r")
 	cmd.Stdin = bytes.NewReader(content)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -1395,7 +1396,7 @@ func gitListTree(ctx context.Context, repoDir, commitSHA string, includeSizes bo
 	}
 	args = append(args, "-z", commitSHA)
 	full := append([]string{"-C", repoDir}, args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd := newGitCommand(ctx, full...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -1494,7 +1495,7 @@ func runGit(ctx context.Context, repoDir string, args ...string) error {
 	if repoDir != "" {
 		args = append([]string{"-C", repoDir}, args...)
 	}
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := newGitCommand(ctx, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -1509,7 +1510,7 @@ func runGit(ctx context.Context, repoDir string, args ...string) error {
 
 func gitOutput(ctx context.Context, repoDir string, args ...string) (string, error) {
 	full := append([]string{"-C", repoDir}, args...)
-	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd := newGitCommand(ctx, full...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -1524,7 +1525,7 @@ func gitOutput(ctx context.Context, repoDir string, args ...string) (string, err
 }
 
 func gitCommandOutput(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := newGitCommand(ctx, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -1547,7 +1548,7 @@ func packGitObjects(ctx context.Context, gitDir string, objects map[string]struc
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
-	cmd := exec.CommandContext(ctx, "git", "--git-dir", gitDir, "pack-objects", "--stdout")
+	cmd := newGitCommand(ctx, "--git-dir", gitDir, "pack-objects", "--stdout")
 	cmd.Stdin = strings.NewReader(strings.Join(ids, "\n") + "\n")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -1586,23 +1587,16 @@ func isGitObjectID(value string) bool {
 	return true
 }
 
-func startGitHydrateBackground(ctx context.Context, targetPath, profileName string) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	args := []string{"fs-git", "hydrate-git-workspace", "--target-path", targetPath, "--timeout", gitHydrateTimeout.String()}
-	if strings.TrimSpace(profileName) != "" {
-		args = append(args, "--profile", profileName)
-	}
-	cmd := exec.CommandContext(ctx, exe, args...)
-	cmd.Stdout = io.Discard
-	cmd.Stderr = io.Discard
-	cmd.Env = os.Environ()
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	return cmd.Process.Release()
+// newGitCommand builds a git subprocess with the environment applied at
+// construction time. git runs hooks, clean/smudge filters, pagers, and any helper a
+// repository or the user configures, so those programs run in the child's
+// environment: ti holds the TiDB Cloud API keys, the filesystem bearer token, and
+// vault tokens there, and none of them is needed by git, so every git invocation
+// starts from a scrubbed environment instead of os.Environ().
+func newGitCommand(ctx context.Context, args ...string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = credentialenv.ScrubbedEnviron()
+	return cmd
 }
 
 func sanitizeGitRepoURL(raw string) string {

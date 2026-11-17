@@ -1154,6 +1154,25 @@ command and should follow Drive9 public CLI behavior.
 `delete-secret`, grants, audit, and `run-with-secret`, but not for the vault
 mount consumption path.
 
+`run-with-secret` injection is a security boundary too: a vault field supplies a
+value, never process configuration. Reject any field name that normalizes to a
+variable which changes which program runs or which code is loaded (the
+`vaultEnvKeyDenylist` table in `internal/fs/vault_secret_env.go`: `PATH`, `COMSPEC`, shell
+startup and evaluation names, `LD_*`/`DYLD_*` loader names, language-runtime
+names, and helper-selection names such as `SSH_AUTH_SOCK` and
+`GIT_SSH_COMMAND`) with `vault.env_key_forbidden` before the child is spawned,
+listing every rejected field in sorted order. The check runs on the normalized
+key, so case variants cannot bypass it, and it is exact-name so plausible secret
+names such as `SSH_PRIVATE_KEY` stay usable. Two shapes escape a pure exact-name
+table and are closed by `vaultEnvKeyDenied`: prefix families whose suffix the
+field name chooses (`DYLD_*`, `LD_32_*`, `LD_64_*`, `GIT_CONFIG_KEY_<n>`,
+`GIT_CONFIG_VALUE_<n>`), and trailing all-digit version segments, which are
+stripped before the lookup because a runtime may read a versioned spelling first
+(`LUA_INIT_5_4`, `LUA_PATH_5_4`, `LUA_CPATH_5_4`, `LD_PRELOAD_32` therefore
+resolve to their base entries). The denylist and the env construction live in
+`internal/fs/vault_secret_env.go`.
+`read-secret --format env` only prints values and keeps converting those names.
+
 Mount-time overlay unpack is a security boundary. `ti fs mount-file-system`
 unpacks a local overlay when auto-unpack is enabled and the effective pack-path
 set is non-empty (`portable` supplies `/` by default; `--pack-path` adds more),
@@ -1229,10 +1248,16 @@ inherited `DRIVE9_*` values so user shell state cannot override ti selection.
 Debug and error output must redact TiDB Cloud keys, ti fs API keys, vault tokens, SQL
 credentials, file contents, and secret values. One canonical credential-env
 denylist (`internal/credentialenv`) covers the `TIDB_CLOUD_*`, `TDC_*`,
-`DRIVE9_*`, `TI_FS_*`, and `TI_VAULT_*` families; both the companion environment
-builder and the `ti fs-vault run-with-secret` child environment must scrub
-through it, so non-credential `TI_*` variables such as `TI_PROFILE` and test
-controls stay inherited.
+`DRIVE9_*`, `TI_FS_*`, and `TI_VAULT_*` families; the companion environment
+builder, the `ti fs-vault run-with-secret` child environment, and every
+subprocess with no legitimate use for a ti credential must scrub through it, so
+non-credential `TI_*` variables such as `TI_PROFILE` and test controls stay
+inherited. Every git invocation goes through `newGitCommand` in
+`internal/fs/git.go`, which applies `credentialenv.ScrubbedEnviron()` at
+construction time because git runs hooks, clean/smudge filters, pagers, and
+configured helpers; the `ti update` subprocesses (`validateInstalledBinary` and
+the downloaded companion help probe) spawn with the same scrubbed environment. A
+new subprocess must not inherit `os.Environ()` verbatim.
 
 `ti db format-db-connection-string` and `ti db execute-sql-statement` use
 read-write credentials by default. `--read-write`, `--read-only`, and `--admin`
