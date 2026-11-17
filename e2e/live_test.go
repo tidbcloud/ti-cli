@@ -2560,10 +2560,16 @@ func liveFSDisplayName(t *testing.T, bin, profileName string, profile *config.Pr
 	var described struct {
 		DisplayName string `json:"display_name"`
 	}
-	if err := json.Unmarshal([]byte(result.stdout), &described); err != nil || strings.TrimSpace(described.DisplayName) == "" {
+	if err := json.Unmarshal([]byte(result.stdout), &described); err != nil {
 		t.Fatalf("decode live fs describe result: %v\n%s", err, result.stdout)
 	}
-	return described.DisplayName
+	// The backend falls back to the File System ID when no display name is set,
+	// and delete-file-system confirms that same effective name, so a File System
+	// without a display name must be confirmed by its ID instead of failing.
+	if name := strings.TrimSpace(described.DisplayName); name != "" {
+		return name
+	}
+	return profile.FSTenantID
 }
 
 // liveFSConfirmName returns the delete confirmation for an FS the suite
