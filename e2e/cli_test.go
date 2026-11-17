@@ -89,9 +89,9 @@ func TestHelpAndVersion(t *testing.T) {
 
 	deleteFileSystem := runTI(t, bin, "fs", "delete-file-system", "help")
 	deleteFileSystem.wantExitCode(0)
-	deleteFileSystem.wantStdoutContains("--file-system-id")
+	deleteFileSystem.wantStdoutContains("--file-system-id <string> (required)")
+	deleteFileSystem.wantStdoutContains("--confirm-file-system-name <string> (required)")
 	deleteFileSystem.wantStdoutNotContains("--file-system-name")
-	deleteFileSystem.wantStdoutNotContains("--confirm-file-system-name")
 	createFileSystem := runTI(t, bin, "fs", "create-file-system", "help")
 	createFileSystem.wantExitCode(0)
 	createFileSystem.wantStdoutContains("[--display-name <string>]")
@@ -210,9 +210,9 @@ func TestErrorsAreRenderedAtCLIBoundary(t *testing.T) {
 	unknown.wantExitCode(2)
 	unknown.wantStderrContains(`ti [ERROR]: unknown command "missing-command" for "ti db"`)
 
-	removedConfirmation := runTI(t, bin, "fs", "delete-file-system", "--file-system-id", "tenant-workspace", "--confirm-file-system-name", "workspace")
-	removedConfirmation.wantExitCode(2)
-	removedConfirmation.wantStderrContains(`unknown flag: --confirm-file-system-name`)
+	missingDeleteConfirmation := runTI(t, bin, "fs", "delete-file-system", "--file-system-id", "tenant-workspace")
+	missingDeleteConfirmation.wantExitCode(2)
+	missingDeleteConfirmation.wantStderrContains("--confirm-file-system-name is required")
 
 	releaseServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/releases/latest" {
@@ -1051,8 +1051,31 @@ func TestFSRemoteInventoryAndIDCredentialSelectionAcrossCommandFamilies(t *testi
 	}
 
 	deleteScratch := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_TOKEN="+drive9TestToken("tenant-aws-us-west-2")), "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-file-system", "--file-system-id", "tenant-aws-us-west-2")
-	deleteScratch.wantExitCode(0)
-	deleteScratch.wantStdoutContains(`"status": "deleting"`)
+	deleteScratch.wantExitCode(2)
+	deleteScratch.wantStderrContains("--confirm-file-system-name is required")
+	if got := westControl.requestCount(); got != requestsBeforeTokenOnlyDelete {
+		t.Fatalf("unconfirmed delete sent a remote request: before=%d after=%d", requestsBeforeTokenOnlyDelete, got)
+	}
+
+	mismatchedDelete := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_TOKEN="+drive9TestToken("tenant-aws-us-west-2")), "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-file-system", "--file-system-id", "tenant-aws-us-west-2", "--confirm-file-system-name", "agent-workspace")
+	mismatchedDelete.wantExitCode(2)
+	mismatchedDelete.wantStderrContains(`--confirm-file-system-name "agent-workspace" does not match the target file system display name "tenant-aws-us-west-2"`)
+	if westControl.hasRequest(http.MethodDelete, "/v1/admin/tenants/tenant-aws-us-west-2") {
+		t.Fatalf("mismatched confirmation deleted the file system: %#v", westControl.requests)
+	}
+
+	requestsBeforeDeleteDryRun := westControl.requestCount()
+	deleteDryRun := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_TOKEN="+drive9TestToken("tenant-aws-us-west-2")), "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-file-system", "--file-system-id", "tenant-aws-us-west-2", "--confirm-file-system-name", "tenant-aws-us-west-2", "--dry-run")
+	deleteDryRun.wantExitCode(0)
+	deleteDryRun.wantStdoutContains(`"delete_confirmation"`)
+	deleteDryRun.wantStdoutContains(`"dry_run": true`)
+	if got := westControl.requestCount(); got != requestsBeforeDeleteDryRun {
+		t.Fatalf("delete dry-run sent a remote request: before=%d after=%d", requestsBeforeDeleteDryRun, got)
+	}
+
+	confirmedDelete := runTIWithInput(t, bin, "", append(baseEnv, "TI_FS_TOKEN="+drive9TestToken("tenant-aws-us-west-2")), "--profile", "stage", "--region", "aws-us-west-2", "fs", "delete-file-system", "--file-system-id", "tenant-aws-us-west-2", "--confirm-file-system-name", "tenant-aws-us-west-2")
+	confirmedDelete.wantExitCode(0)
+	confirmedDelete.wantStdoutContains(`"status": "deleting"`)
 	afterDelete := runTIWithInput(t, bin, "", baseEnv, "--profile", "stage", "fs", "list-file-systems")
 	afterDelete.wantExitCode(0)
 	afterDelete.wantStdoutContains(`"file_system_id": "tenant-aws-us-east-1"`)

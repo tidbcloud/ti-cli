@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -215,7 +216,7 @@ func TestTenantControlDescribeAndDeleteUseIDs(t *testing.T) {
 	if text := described.Human(); !strings.Contains(text, "Quota max media LLM files: 100") || !strings.Contains(text, "Usage video file count: 3") {
 		t.Fatalf("describe text = %q", text)
 	}
-	deleted, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1"})
+	deleted, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1", ConfirmFileSystemName: "workspace-one"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,14 +247,17 @@ func TestTenantControlDescribeAndDeleteRequireExplicitIDAndTiDBCloudCredentials(
 	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile}); apperr.CodeFor(err) != "fs.missing_file_system_id" || !strings.Contains(err.Error(), "FS tokens cannot select or authorize file system deletion") {
 		t.Fatalf("missing delete ID error = %v", err)
 	}
+	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1"}); apperr.CodeFor(err) != "fs.missing_confirmation" {
+		t.Fatalf("missing delete confirmation error = %v", err)
+	}
 	if requests != 0 {
-		t.Fatalf("missing IDs sent %d remote requests", requests)
+		t.Fatalf("missing IDs or confirmation sent %d remote requests", requests)
 	}
 
 	withoutCredentials := *profile
 	withoutCredentials.TiDBCloudPublicKey = ""
 	withoutCredentials.TiDBCloudPrivateKey = ""
-	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: &withoutCredentials, FileSystemID: "tenant-1"}); apperr.CodeFor(err) != "auth.missing_credentials" {
+	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: &withoutCredentials, FileSystemID: "tenant-1", ConfirmFileSystemName: "tenant-1"}); apperr.CodeFor(err) != "auth.missing_credentials" {
 		t.Fatalf("missing TiDB Cloud credentials error = %v", err)
 	}
 	if requests != 0 {
@@ -438,16 +442,105 @@ func TestTenantControlDeleteFailurePreservesCredential(t *testing.T) {
 	if _, err := fscred.StoreCredential(home, profile, "tenant-1", "aws-us-east-1", fsTestToken(t, "tenant-1"), false); err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": "tenant-1", "display_name": "workspace-one"})
+			return
+		}
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":"temporary backend failure"}`))
 	}))
 	defer server.Close()
-	if _, err := directTenantService(home, server.URL).DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1"}); err == nil {
+	if _, err := directTenantService(home, server.URL).DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1", ConfirmFileSystemName: "workspace-one"}); err == nil {
 		t.Fatal("delete should fail")
 	}
 	if _, err := fscred.GetCredential(home, profile.Name, "tenant-1"); err != nil {
 		t.Fatalf("failed delete removed credentials: %v", err)
+	}
+}
+
+// TestTenantControlDeleteRequiresMatchingConfirmation pins the irreversible
+// delete guard: a missing confirmation never reaches the network, and a
+// confirmation that does not repeat the target display name reads the target
+// but never sends the delete request.
+func TestTenantControlDeleteRequiresMatchingConfirmation(t *testing.T) {
+	home := t.TempDir()
+	profile := testProfile()
+	if _, err := fscred.StoreCredential(home, profile, "tenant-1", "aws-us-east-1", fsTestToken(t, "tenant-1"), false); err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		mu.Unlock()
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": "tenant-1", "display_name": "workspace-one"})
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": "tenant-1", "status": "deleting"})
+		}
+	}))
+	defer server.Close()
+	service := directTenantService(home, server.URL)
+
+	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1"}); apperr.CodeFor(err) != "fs.missing_confirmation" || !strings.Contains(apperr.MessageFor(err), "--confirm-file-system-name is required") {
+		t.Fatalf("missing confirmation error = %v", err)
+	}
+	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1", ConfirmFileSystemName: "   "}); apperr.CodeFor(err) != "fs.missing_confirmation" {
+		t.Fatalf("blank confirmation error = %v", err)
+	}
+	if len(requests) != 0 {
+		t.Fatalf("missing confirmation sent remote requests: %#v", requests)
+	}
+
+	_, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1", ConfirmFileSystemName: "workspace-two"})
+	if apperr.CodeFor(err) != "fs.delete_confirmation_mismatch" || !strings.Contains(apperr.MessageFor(err), `"workspace-two" does not match the target file system display name "workspace-one"`) {
+		t.Fatalf("mismatched confirmation error = %v", err)
+	}
+	mu.Lock()
+	mismatchRequests := append([]string(nil), requests...)
+	mu.Unlock()
+	if len(mismatchRequests) != 1 || mismatchRequests[0] != "GET /v1/admin/tenants/tenant-1" {
+		t.Fatalf("mismatched confirmation requests = %#v", mismatchRequests)
+	}
+	if _, err := fscred.GetCredential(home, profile.Name, "tenant-1"); err != nil {
+		t.Fatalf("rejected delete removed credentials: %v", err)
+	}
+
+	deleted, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1", ConfirmFileSystemName: " workspace-one "})
+	if err != nil || deleted.Status != "deleting" || !deleted.CredentialsRemoved {
+		t.Fatalf("confirmed delete = %#v err=%v", deleted, err)
+	}
+	mu.Lock()
+	confirmedRequests := append([]string(nil), requests...)
+	mu.Unlock()
+	if len(confirmedRequests) != 3 || confirmedRequests[2] != "DELETE /v1/admin/tenants/tenant-1" {
+		t.Fatalf("confirmed delete requests = %#v", confirmedRequests)
+	}
+}
+
+// TestTenantControlDeleteConfirmationFallsBackToID covers a File System whose
+// backend metadata carries no display name; its effective name is the ID, which
+// list and describe already report.
+func TestTenantControlDeleteConfirmationFallsBackToID(t *testing.T) {
+	home := t.TempDir()
+	profile := testProfile()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": "tenant-1", "display_name": ""})
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"tenant_id": "tenant-1", "status": "deleting"})
+		}
+	}))
+	defer server.Close()
+	service := directTenantService(home, server.URL)
+	if _, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1", ConfirmFileSystemName: "tenant-1"}); err != nil {
+		t.Fatalf("ID confirmation on a display-name-less file system failed: %v", err)
 	}
 }
 
@@ -577,7 +670,7 @@ func TestTenantControlMissingCredentialsFailBeforeNetwork(t *testing.T) {
 			return err
 		}},
 		{name: "delete", run: func() error {
-			_, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1"})
+			_, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-1", ConfirmFileSystemName: "tenant-1"})
 			return err
 		}},
 	}
@@ -690,7 +783,7 @@ func TestTenantControlMigratesLegacyCredentialForDescribeAndDelete(t *testing.T)
 	if err != nil || !described.HasLocalToken {
 		t.Fatalf("describe = %#v err=%v", described, err)
 	}
-	deleted, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-legacy"})
+	deleted, err := service.DeleteFileSystem(context.Background(), DeleteFileSystemOptions{Profile: profile, FileSystemID: "tenant-legacy", ConfirmFileSystemName: "legacy-workspace"})
 	if err != nil || !deleted.CredentialsRemoved {
 		t.Fatalf("delete = %#v err=%v", deleted, err)
 	}

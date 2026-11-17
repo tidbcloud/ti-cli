@@ -66,6 +66,10 @@ type ListFileSystemsOptions struct {
 type DeleteFileSystemOptions struct {
 	Profile      *config.Profile
 	FileSystemID string
+	// ConfirmFileSystemName is the explicit, irreversible-delete
+	// confirmation. It must match the target File System's display name
+	// (or its ID when the backend has no display name).
+	ConfirmFileSystemName string
 }
 
 type CheckFileSystemOptions struct {
@@ -219,6 +223,7 @@ func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string,
 	checks := []dryrun.Check{
 		{Name: "config_and_credentials", Status: "passed", Message: fmt.Sprintf("profile %q loaded", profileName(opts.Profile))},
 		{Name: "permission_requirement", Status: "passed", Message: string(authz.FSVolumeDelete)},
+		{Name: "delete_confirmation", Status: "passed", Message: fmt.Sprintf("%q is compared with the target display name before deletion", strings.TrimSpace(opts.ConfirmFileSystemName))},
 	}
 	checks = append(checks, dryrun.Check{Name: "file_system_id", Status: "passed", Message: fileSystemID})
 	homeDir, err := s.homeDir()
@@ -241,7 +246,7 @@ func (s Service) DryRunDeleteFileSystem(ctx context.Context, commandPath string,
 		dryrun.RequestSummary{
 			Method:      http.MethodDelete,
 			Path:        "/v1/admin/tenants/" + fileSystemID,
-			Description: "normal execution authenticates with TiDB Cloud API-key headers and removes matching local credentials only after the backend accepts deletion",
+			Description: "normal execution authenticates with TiDB Cloud API-key headers, reads the target to match --confirm-file-system-name against its display name, sends the irreversible delete request, and removes matching local credentials only after the backend accepts deletion",
 		},
 		checks...,
 	), nil

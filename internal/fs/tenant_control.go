@@ -242,6 +242,16 @@ func (s Service) deleteFileSystem(ctx context.Context, opts DeleteFileSystemOpti
 	if err != nil {
 		return DeleteResult{}, err
 	}
+	target, err := client.GetAdminTenant(ctx, creds, id)
+	if err != nil {
+		return DeleteResult{}, mapAdminTenantError(err, "get", id, opts.Profile.PlacementRegionCode)
+	}
+	if target.TenantID != "" && target.TenantID != id {
+		return DeleteResult{}, apiContractError(fmt.Sprintf("delete target identified file system %q instead of %q", target.TenantID, id), nil)
+	}
+	if err := matchDeleteConfirmation(opts.ConfirmFileSystemName, effectiveTenantDisplayName(id, target.DisplayName)); err != nil {
+		return DeleteResult{}, err
+	}
 	response, err := client.DeleteAdminTenant(ctx, creds, id)
 	if err != nil {
 		return DeleteResult{}, mapAdminTenantError(err, "delete", id, opts.Profile.PlacementRegionCode)
@@ -280,23 +290,66 @@ func (s Service) adminCreateInputs(ctx context.Context, opts CreateFileSystemOpt
 }
 
 func (s Service) adminDeleteInputs(ctx context.Context, opts DeleteFileSystemOptions) (string, *apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
-	return s.adminItemEndpointInputs(ctx, opts.Profile, opts.FileSystemID, authz.FSVolumeDelete, "delete a file system")
+	id, err := adminFileSystemID(opts.FileSystemID, authz.FSVolumeDelete)
+	if err != nil {
+		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
+	}
+	if err := ValidateDeleteConfirmation(opts.ConfirmFileSystemName); err != nil {
+		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
+	}
+	client, creds, endpoint, err := s.adminTenantClient(ctx, opts.Profile, authz.FSVolumeDelete, "delete a file system")
+	return id, client, creds, endpoint, err
+}
+
+// ValidateDeleteFileSystemInputs validates the local delete-file-system flags.
+// The CLI calls it before profile and credential loading so missing or invalid
+// flags are usage errors, and the service calls it again before remote work.
+func ValidateDeleteFileSystemInputs(fileSystemID, confirm string) error {
+	if _, err := adminFileSystemID(fileSystemID, authz.FSVolumeDelete); err != nil {
+		return err
+	}
+	return ValidateDeleteConfirmation(confirm)
+}
+
+// ValidateDeleteConfirmation rejects a deletion that carries no explicit
+// confirmation. The CLI calls it before loading credentials or a profile, and
+// the service calls it again before any credential, region, or network work.
+func ValidateDeleteConfirmation(confirm string) error {
+	if strings.TrimSpace(confirm) == "" {
+		return apperr.New("fs.missing_confirmation", "usage", 2, "--confirm-file-system-name is required for delete-file-system; deletion is irreversible, so the value must repeat the target file system display name")
+	}
+	return nil
+}
+
+// matchDeleteConfirmation requires the explicit confirmation to repeat the
+// target File System display name, which the backend falls back to its ID when
+// no display name is set.
+func matchDeleteConfirmation(confirm, displayName string) error {
+	confirm = strings.TrimSpace(confirm)
+	if confirm == displayName {
+		return nil
+	}
+	return apperr.New("fs.delete_confirmation_mismatch", "usage", 2, fmt.Sprintf("--confirm-file-system-name %q does not match the target file system display name %q; confirm the exact display name reported by ti fs describe-file-system", confirm, displayName))
 }
 
 func (s Service) adminItemEndpointInputs(ctx context.Context, profile *config.Profile, fileSystemID string, permission authz.Permission, action string) (string, *apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
-	if strings.TrimSpace(fileSystemID) == "" {
-		message := "--file-system-id is required for describe-file-system; describing a file system requires TiDB Cloud API credentials"
-		if permission == authz.FSVolumeDelete {
-			message = "--file-system-id is required for delete-file-system; FS tokens cannot select or authorize file system deletion"
-		}
-		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, apperr.New("fs.missing_file_system_id", "usage", 2, message)
-	}
-	id, err := fscred.ValidateFileSystemID(fileSystemID)
+	id, err := adminFileSystemID(fileSystemID, permission)
 	if err != nil {
 		return "", nil, apifs.TiDBCloudCredentials{}, endpoints.Endpoint{}, err
 	}
 	client, creds, endpoint, err := s.adminTenantClient(ctx, profile, permission, action)
 	return id, client, creds, endpoint, err
+}
+
+func adminFileSystemID(fileSystemID string, permission authz.Permission) (string, error) {
+	if strings.TrimSpace(fileSystemID) == "" {
+		message := "--file-system-id is required for describe-file-system; describing a file system requires TiDB Cloud API credentials"
+		if permission == authz.FSVolumeDelete {
+			message = "--file-system-id is required for delete-file-system; FS tokens cannot select or authorize file system deletion"
+		}
+		return "", apperr.New("fs.missing_file_system_id", "usage", 2, message)
+	}
+	return fscred.ValidateFileSystemID(fileSystemID)
 }
 
 func (s Service) adminTenantClient(ctx context.Context, profile *config.Profile, permission authz.Permission, action string) (*apifs.Client, apifs.TiDBCloudCredentials, endpoints.Endpoint, error) {
