@@ -284,6 +284,92 @@ fi
 echo companion
 `
 
+// TestUpdateValidationSubprocessesDoNotInheritCredentials covers the reported
+// leak: `ti update` never needs a ti credential, yet it used to hand the
+// downloaded companion and the staged ti binary the full os.Environ(), including
+// the TiDB Cloud API keys and the filesystem bearer token.
+func TestUpdateValidationSubprocessesDoNotInheritCredentials(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	dir := t.TempDir()
+	dump := filepath.Join(dir, "env.txt")
+	// The shim records its environment and succeeds, so it satisfies both the
+	// `--version` validation and the companion help probe.
+	shim := filepath.Join(dir, "staged-ti")
+	if err := os.WriteFile(shim, []byte("#!/bin/sh\nenv > \"$UPDATE_ENV_DUMP\"\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("UPDATE_ENV_DUMP", dump)
+	t.Setenv("TIDB_CLOUD_PUBLIC_KEY", "org-public")
+	t.Setenv("TIDB_CLOUD_PRIVATE_KEY", "org-private")
+	t.Setenv("TI_FS_TOKEN", "fs-bearer")
+	t.Setenv("TI_VAULT_TOKEN", "vault-token")
+	t.Setenv("DRIVE9_PRIVATE_KEY", "drive9-private")
+	t.Setenv("UPDATE_SUBPROCESS_SAFE_VAR", "kept")
+
+	for _, tc := range []struct {
+		name string
+		run  func(context.Context) error
+	}{
+		{"validateInstalledBinary", func(ctx context.Context) error {
+			return validateInstalledBinary(ctx, shim)
+		}},
+		{"drive9HelpOutput", func(ctx context.Context) error {
+			_, err := drive9HelpOutput(ctx, shim, "exec", "--help")
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := os.Remove(dump); err != nil && !os.IsNotExist(err) {
+				t.Fatal(err)
+			}
+			if err := tc.run(context.Background()); err != nil {
+				t.Fatalf("%s failed: %v", tc.name, err)
+			}
+			values := updateEnvDump(t, dump)
+			for _, key := range []string{
+				"TIDB_CLOUD_PUBLIC_KEY", "TIDB_CLOUD_PRIVATE_KEY", "TI_FS_TOKEN",
+				"TI_VAULT_TOKEN", "DRIVE9_PRIVATE_KEY",
+			} {
+				if _, ok := values[key]; ok {
+					t.Fatalf("%s handed %s to a subprocess", tc.name, key)
+				}
+			}
+			if values["UPDATE_SUBPROCESS_SAFE_VAR"] != "kept" {
+				t.Fatalf("%s did not pass the ordinary environment through: %#v", tc.name, values)
+			}
+		})
+	}
+
+	// The logging override still applies on top of the scrubbed environment.
+	if err := validateInstalledBinary(context.Background(), shim); err != nil {
+		t.Fatal(err)
+	}
+	if values := updateEnvDump(t, dump); values["TI_LOGGING"] != "off" {
+		t.Fatalf("validateInstalledBinary lost its logging override: %#v", values)
+	}
+}
+
+// updateEnvDump reads the environment a shim subprocess recorded.
+func updateEnvDump(t *testing.T, path string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read shim environment: %v", err)
+	}
+	values := map[string]string{}
+	for _, line := range strings.Split(strings.TrimRight(string(data), "\n"), "\n") {
+		if key, value, ok := strings.Cut(line, "="); ok {
+			values[key] = value
+		}
+	}
+	if len(values) == 0 {
+		t.Fatal("shim recorded no environment")
+	}
+	return values
+}
+
 func TestApplyRefusesProtectedTargetWithoutChangingFiles(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("Windows self-update is unsupported")

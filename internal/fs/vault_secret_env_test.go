@@ -3,6 +3,8 @@ package fs
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -79,6 +81,206 @@ func TestVaultSecretChildEnvNormalizesFieldKeys(t *testing.T) {
 	}
 	if _, err := vaultSecretChildEnv(nil, map[string]string{"DB_URL": "a\x00b"}); apperr.CodeFor(err) != "vault.invalid_env_value" {
 		t.Fatalf("control byte error = %v", err)
+	}
+}
+
+// TestVaultSecretChildEnvRejectsProcessConfigurationKeys covers the injection
+// finding: a vault field may carry a secret value, but a field name that
+// configures how the child resolves programs or loads code would let the secret's
+// author pick what the child executes, so the name is rejected instead of
+// injected. Case variants must be caught too, because normalization upper-cases
+// the name before the denylist is consulted.
+func TestVaultSecretChildEnvRejectsProcessConfigurationKeys(t *testing.T) {
+	for _, field := range []string{
+		"PATH",
+		"path",
+		"Path",
+		"LD_PRELOAD",
+		"ld_preload",
+		"LD_LIBRARY_PATH",
+		"DYLD_INSERT_LIBRARIES",
+		"BASH_ENV",
+		"ENV",
+		"IFS",
+		"PYTHONPATH",
+		"NODE_OPTIONS",
+		"JAVA_TOOL_OPTIONS",
+		"SSH_AUTH_SOCK",
+		"GIT_SSH_COMMAND",
+		"GIT_CONFIG_GLOBAL",
+		"PAGER",
+		"COMSPEC",
+		"PSModulePath",
+		// Lua reads the versioned spellings before the unsuffixed ones, so the
+		// trailing-version rule has to resolve them to the same entry; the Solaris
+		// loader has the same shape with LD_PRELOAD_32.
+		"LUA_INIT_5_4",
+		"lua_init_5_4",
+		"LUA_PATH_5_4",
+		"LUA_CPATH_5_1",
+		"LD_PRELOAD_32",
+		"LD_LIBRARY_PATH_64",
+		// Prefix families whose suffix is chosen by the field name.
+		"DYLD_PRINT_LIBRARIES",
+		"dYlD_pRiNt_lIbRaRiEs",
+		"LD_32_PRELOAD",
+		"LD_64_LIBRARY_PATH",
+		"GIT_CONFIG_KEY_0",
+		"GIT_CONFIG_VALUE_0",
+		// Same class as the entries above, added after the second review round.
+		"JDK_JAVA_OPTIONS",
+		"IBM_JAVA_OPTIONS",
+		"OPENJ9_JAVA_OPTIONS",
+		"GIT_CONFIG_PARAMETERS",
+		"GIT_EXTERNAL_DIFF",
+		"GIT_DIR",
+		"GIT_COMMON_DIR",
+		"GIT_WORK_TREE",
+		"PYTHONUSERBASE",
+		"PYTHONBREAKPOINT",
+		"OPENSSL_CONF",
+		"OPENSSL_ENGINES",
+		"OPENSSL_MODULES",
+		"DOTNET_STARTUP_HOOKS",
+		"CORECLR_PROFILER",
+		"COR_PROFILER_PATH",
+		"GLIBC_TUNABLES",
+		"LD_ORIGIN_PATH",
+		"PERL5SHELL",
+		"FPATH",
+		"SUDO_ASKPASS",
+	} {
+		_, err := vaultSecretChildEnv(nil, map[string]string{field: "attacker-controlled"})
+		if apperr.CodeFor(err) != "vault.env_key_forbidden" {
+			t.Fatalf("field %q error = %v, want vault.env_key_forbidden", field, err)
+		}
+		message := apperr.MessageFor(err)
+		if !strings.Contains(message, "rename those fields") {
+			t.Fatalf("field %q error is not actionable: %q", field, message)
+		}
+		if exit := apperr.ExitCodeFor(err); exit != 2 {
+			t.Fatalf("field %q exit code = %d, want 2", field, exit)
+		}
+	}
+}
+
+// TestVaultSecretChildEnvAllowsSecretLikeKeys pins the other side of the exact-name
+// rule: plausible secret field names, including ones that share a prefix with a
+// rejected name or end in a version-looking segment, stay injectable.
+func TestVaultSecretChildEnvAllowsSecretLikeKeys(t *testing.T) {
+	fields := map[string]string{
+		"DB_URL":            "mysql://user:pass@host/db",
+		"PGPASSWORD":        "s3cr3t",
+		"SSH_PRIVATE_KEY":   "-----BEGIN OPENSSH PRIVATE KEY-----",
+		"GIT_TOKEN":         "ghp_example",
+		"LD_PRELOAD_BACKUP": "not-a-loader-variable",
+		"PATH_EXTRA":        "/opt/bin",
+		// The trailing-version rule only applies to a denied base name.
+		"LUA_VERSION":  "5.4",
+		"DB_URL_2":     "mysql://user:pass@host/db2",
+		"PGPASSWORD_5": "s3cr3t-5",
+		// Neither the exact-name table nor the prefix families cover these.
+		"GIT_DIR_BACKUP": "/tmp/backup",
+		"OPENSSL_CERT":   "/tmp/cert.pem",
+	}
+	env, err := vaultSecretChildEnv(nil, fields)
+	if err != nil {
+		t.Fatalf("secret-like fields rejected: %v", err)
+	}
+	values := environmentMapFS(env)
+	for key, want := range fields {
+		if values[key] != want {
+			t.Fatalf("field %q was not injected: %#v", key, values)
+		}
+	}
+}
+
+// TestTrimVaultEnvVersionSuffix pins the version-segment stripping edges: only
+// all-digit segments are removed, the name is never reduced to nothing, and a name
+// without such a segment reports no change.
+func TestTrimVaultEnvVersionSuffix(t *testing.T) {
+	for _, tc := range []struct {
+		key      string
+		wantBase string
+		wantTrim bool
+	}{
+		{"LUA_INIT_5_4", "LUA_INIT", true},
+		{"LUA_PATH_5_1", "LUA_PATH", true},
+		{"LUA_CPATH_10", "LUA_CPATH", true},
+		{"LUA_INIT", "LUA_INIT", false},
+		{"LUA_INIT_", "LUA_INIT_", false},
+		{"_9LIVES", "_9LIVES", false},
+		{"DB_URL_2", "DB_URL", true},
+		{"PATH", "PATH", false},
+	} {
+		base, trimmed := trimVaultEnvVersionSuffix(tc.key)
+		if base != tc.wantBase || trimmed != tc.wantTrim {
+			t.Fatalf("trimVaultEnvVersionSuffix(%q) = (%q, %v), want (%q, %v)", tc.key, base, trimmed, tc.wantBase, tc.wantTrim)
+		}
+	}
+}
+
+// TestVaultSecretChildEnvForbiddenKeyMessageIsStable pins the deterministic error
+// text when a secret carries several rejected names: every rejected name is
+// reported once, in sorted order, so the message is stable across map iteration.
+func TestVaultSecretChildEnvForbiddenKeyMessageIsStable(t *testing.T) {
+	message := ""
+	for i := 0; i < 50; i++ {
+		_, err := vaultSecretChildEnv(nil, map[string]string{"PATH": "a", "LD_PRELOAD": "b", "IFS": "c"})
+		if apperr.CodeFor(err) != "vault.env_key_forbidden" {
+			t.Fatalf("forbidden key error = %v", err)
+		}
+		got := apperr.MessageFor(err)
+		if message == "" {
+			message = got
+			continue
+		}
+		if got != message {
+			t.Fatalf("forbidden key message changed across runs: %q vs %q", message, got)
+		}
+	}
+	if !strings.Contains(message, `"IFS" (shell word splitting), "LD_PRELOAD" (the dynamic loader), "PATH" (the child's command lookup)`) {
+		t.Fatalf("forbidden key message does not list every rejected name in sorted order: %q", message)
+	}
+	if strings.Count(message, `"PATH"`) != 1 {
+		t.Fatalf("forbidden key message repeats a rejected name: %q", message)
+	}
+}
+
+// TestRunVaultSecretCommandRefusesProtectedFieldBeforeSpawn proves the rejection
+// happens before the child exists: the command must not run at all.
+func TestRunVaultSecretCommandRefusesProtectedFieldBeforeSpawn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fixture is Unix-only")
+	}
+	marker := filepath.Join(t.TempDir(), "spawned")
+	err := runVaultSecretCommand(context.Background(), VaultRunWithSecretOptions{
+		Command: []string{"/bin/sh", "-c", "touch " + marker},
+	}, map[string]string{"LD_PRELOAD": "/tmp/evil.so"})
+	if apperr.CodeFor(err) != "vault.env_key_forbidden" {
+		t.Fatalf("error code = %q: %v", apperr.CodeFor(err), err)
+	}
+	if _, statErr := os.Stat(marker); !os.IsNotExist(statErr) {
+		t.Fatalf("child ran with a protected environment key injected: %v", statErr)
+	}
+}
+
+// TestVaultSecretChildEnvCannotExportShellFunctions pins why the denylist needs no
+// BASH_FUNC_*%% entry: the normalizer rewrites '%', so an injected field can never
+// reach bash in the exported-function shape.
+func TestVaultSecretChildEnvCannotExportShellFunctions(t *testing.T) {
+	env, err := vaultSecretChildEnv(nil, map[string]string{"BASH_FUNC_x%%": "() { :; }"})
+	if err != nil {
+		t.Fatalf("exported-function field rejected: %v", err)
+	}
+	values := environmentMapFS(env)
+	if values["BASH_FUNC_X__"] != "() { :; }" {
+		t.Fatalf("BASH_FUNC field was not normalized: %#v", values)
+	}
+	for key := range values {
+		if strings.Contains(key, "%") {
+			t.Fatalf("child env key %q can still carry the exported-function marker: %#v", key, values)
+		}
 	}
 }
 

@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/credentialenv"
 	"github.com/tidbcloud/ti-cli/internal/version"
 )
 
@@ -722,7 +723,9 @@ func validateInstalledBinary(ctx context.Context, targetPath string) error {
 	validateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(validateCtx, targetPath, "--version")
-	cmd.Env = append(os.Environ(), "TI_LOGGING=off")
+	// `ti update` never reads a ti credential, and the binary under test only has
+	// to answer --version, so it runs without them.
+	cmd.Env = append(credentialenv.ScrubbedEnviron(), "TI_LOGGING=off")
 	if output, err := cmd.CombinedOutput(); err != nil {
 		return apperr.Wrap(
 			"update.validation_failed",
@@ -813,6 +816,9 @@ func drive9HelpOutput(ctx context.Context, path string, args ...string) (string,
 	validateCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(validateCtx, path, args...)
+	// The downloaded companion is only asked for its help text, but it is still a
+	// freshly unpacked binary, so it must not see the credentials ti holds.
+	cmd.Env = credentialenv.ScrubbedEnviron()
 	output, err := cmd.CombinedOutput()
 	return strings.TrimSpace(string(output)), err
 }

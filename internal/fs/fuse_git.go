@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -193,7 +192,7 @@ func (r *remoteFuseRuntime) gitReadFile(ctx context.Context, entry fuseGitEntry)
 	if err != nil {
 		return nil, os.ErrInvalid
 	}
-	cmd := exec.CommandContext(ctx, "git", "-C", repoRoot, "cat-file", "-p", objectSHA)
+	cmd := newGitCommand(ctx, "-C", repoRoot, "cat-file", "-p", objectSHA)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
