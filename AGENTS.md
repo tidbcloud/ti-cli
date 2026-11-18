@@ -1066,6 +1066,25 @@ credential when ti learns about the File System (create/import) and refreshed by
 `ti fs list-regions`. Region-to-address resolution for data-plane traffic must
 never consult the network.
 
+Every HTTP client that carries a credential - Digest, Bearer, Basic auth, or a
+custom credential header - must use the shared `transport.SameOriginRedirect`
+policy, and a caller-supplied `CheckRedirect` is composed through
+`transport.SameOriginThen`, so a caller may narrow redirects (refuse all of them,
+for example) but can never re-enable a cross-origin hop. The Filesystem region
+catalog spends the organization API key pair through
+`internal/api/transport.NewDigest`, and that transport answers any 401 challenge
+it receives; the SQL HTTPS API spends the cluster's SQL user password through
+Basic auth, and net/http still copies `Authorization` across same-host port
+changes, subdomain redirects, and https->http downgrades. A refused redirect is
+reported instead of followed: `api.fs_regions_redirect_refused` (fsregion),
+`api.redirect_refused` / `api.redirect_loop` (internal/api), and
+`db.sql_http_redirect_refused` / `db.sql_http_redirect_loop` (sqlhttp). The
+catalog endpoint itself must be `https`, or plain `http` only on a loopback host,
+without embedded credentials, a query, or a fragment, and a rejected endpoint is
+described through `describeRejectedOrigin` so a password or token in the URL
+never reaches stderr. Never build a credential-bearing client with a nil
+`CheckRedirect`.
+
 Do not store secrets in logs, telemetry, generated docs examples, or test
 fixtures.
 

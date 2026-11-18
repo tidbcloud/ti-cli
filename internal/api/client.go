@@ -26,7 +26,7 @@ const defaultMaxRetries = 2
 
 // maxRedirects matches net/http's default limit, which a custom CheckRedirect
 // replaces.
-const maxRedirects = 10
+const maxRedirects = apitransport.MaxRedirects
 
 type Client struct {
 	BaseURL     *url.URL
@@ -84,11 +84,12 @@ func New(opts Options) (*Client, error) {
 			Timeout:   opts.Timeout,
 		}
 	}
-	if httpClient.CheckRedirect == nil {
-		copied := *httpClient
-		copied.CheckRedirect = sameOriginRedirect
-		httpClient = &copied
-	}
+	// The credential-bearing transports must never follow a cross-origin redirect,
+	// so the mandatory rule runs under any caller-supplied policy: a caller can
+	// narrow redirects, never widen them.
+	copiedClient := *httpClient
+	copiedClient.CheckRedirect = apitransport.SameOriginThen(httpClient.CheckRedirect)
+	httpClient = &copiedClient
 
 	maxRetries := opts.MaxRetries
 	if maxRetries == 0 {
@@ -275,26 +276,10 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 	return nil, lastErr
 }
 
-// sameOriginRedirect follows a redirect only when it keeps the scheme and host
-// of the original request. The digest and bearer transports add credentials on
-// every round trip, so following a redirect to another origin would send them
-// there. A refused redirect comes back as the 3xx response.
-func sameOriginRedirect(req *http.Request, via []*http.Request) error {
-	if len(via) >= maxRedirects {
-		return errTooManyRedirects
-	}
-	if !sameOrigin(req.URL, via[0].URL) {
-		return http.ErrUseLastResponse
-	}
-	return nil
-}
-
-var errTooManyRedirects = fmt.Errorf("stopped after %d redirects", maxRedirects)
-
 // requestError maps a failed round trip to an API error. A same-origin
 // redirect loop is reported as such rather than as a network problem.
 func requestError(req *http.Request, err error) error {
-	if errors.Is(err, errTooManyRedirects) {
+	if errors.Is(err, apitransport.ErrTooManyRedirects) {
 		return &Error{
 			Code:     "api.redirect_loop",
 			Category: "api",
@@ -310,10 +295,6 @@ func requestError(req *http.Request, err error) error {
 		Message:  "API request failed: check network connectivity and try again",
 		Cause:    err,
 	}
-}
-
-func sameOrigin(a, b *url.URL) bool {
-	return a.Scheme == b.Scheme && strings.EqualFold(a.Host, b.Host)
 }
 
 func retryable(statusCode int) bool {
@@ -339,14 +320,14 @@ func (c *Client) statusError(req *http.Request, res *http.Response) error {
 	apiMessage := remoteError.Message
 	requestID := responseRequestID(res.Header)
 	if res.StatusCode >= 300 && res.StatusCode < 400 {
-		if target, err := res.Location(); err == nil && !sameOrigin(target, req.URL) {
+		if fromOrigin, toOrigin, crossOrigin := apitransport.CrossOriginRedirect(res, req); crossOrigin {
 			return &Error{
 				Code:       "api.redirect_refused",
 				Category:   "api",
 				ExitCode:   1,
 				StatusCode: res.StatusCode,
 				RequestID:  requestID,
-				Message:    fmt.Sprintf("refused a redirect from %s://%s to %s://%s: ti follows redirects only within the same scheme and host", req.URL.Scheme, req.URL.Host, target.Scheme, target.Host),
+				Message:    fmt.Sprintf("refused a redirect from %s to %s: ti follows redirects only within the same scheme and host", fromOrigin, toOrigin),
 				Body:       string(body),
 			}
 		}

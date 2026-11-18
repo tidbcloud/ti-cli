@@ -214,6 +214,8 @@ func TestNormalizeServiceAddress(t *testing.T) {
 		{value: "http://drive9.example", ok: false},
 		{value: "https://user:pass@drive9.example", ok: false},
 		{value: "https://drive9.example/#fragment", ok: false},
+		{value: "https://drive9.example?", ok: false},
+		{value: "https://:8443", ok: false},
 		{value: "https://", ok: false},
 		{value: "", ok: false},
 	} {
@@ -272,5 +274,209 @@ func TestDeriveServiceAddress(t *testing.T) {
 		if _, err := DeriveServiceAddress(bad); err == nil {
 			t.Fatalf("expected %q to be rejected", bad)
 		}
+	}
+}
+
+// TestFetchRefusesCrossOriginRedirect covers the reported leak: the catalog
+// request is Digest-authenticated with the organization API key pair, so a
+// redirect to another origin must never be followed, and the second origin must
+// not even receive the request.
+func TestFetchRefusesCrossOriginRedirect(t *testing.T) {
+	var attackerHits atomic.Int32
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHits.Add(1)
+		w.Header().Set("WWW-Authenticate", `Digest realm="attacker", nonce="nonce", qop="auth"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(attacker.Close)
+
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL+RegionsPath, http.StatusFound)
+	}))
+	t.Cleanup(catalog.Close)
+
+	_, err := Client{BaseURL: catalog.URL, Credentials: testCredentials()}.Fetch(context.Background())
+	if apperr.CodeFor(err) != "api.fs_regions_redirect_refused" {
+		t.Fatalf("error code = %q, want api.fs_regions_redirect_refused: %v", apperr.CodeFor(err), err)
+	}
+	message := apperr.MessageFor(err)
+	if !strings.Contains(message, "refused a Filesystem region catalog redirect") ||
+		!strings.Contains(message, "to "+attacker.URL) {
+		t.Fatalf("refusal message is not actionable: %q", message)
+	}
+	if got := attackerHits.Load(); got != 0 {
+		t.Fatalf("the redirect target received %d request(s); credentials could have leaked", got)
+	}
+}
+
+// TestFetchAppliesRedirectPolicyToCallerClient pins that the policy survives the
+// caller-supplied client seam the resolver uses for tests.
+func TestFetchAppliesRedirectPolicyToCallerClient(t *testing.T) {
+	var attackerHits atomic.Int32
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHits.Add(1)
+	}))
+	t.Cleanup(attacker.Close)
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL+RegionsPath, http.StatusTemporaryRedirect)
+	}))
+	t.Cleanup(catalog.Close)
+
+	_, err := Client{
+		BaseURL:     catalog.URL,
+		HTTPClient:  &http.Client{},
+		Credentials: testCredentials(),
+	}.Fetch(context.Background())
+	if apperr.CodeFor(err) != "api.fs_regions_redirect_refused" {
+		t.Fatalf("error code = %q: %v", apperr.CodeFor(err), err)
+	}
+	if got := attackerHits.Load(); got != 0 {
+		t.Fatalf("the redirect target received %d request(s)", got)
+	}
+}
+
+// TestFetchFollowsSameOriginRedirect keeps ordinary same-origin redirects working.
+func TestFetchFollowsSameOriginRedirect(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/moved"+RegionsPath {
+			http.Redirect(w, r, "/moved"+RegionsPath, http.StatusFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"regions":[` + regionJSON("aws-us-east-1", "aws", "https://aws-us-east-1.drive9.ai", "ACTIVE") + `],"totalSize":1,"nextPageToken":""}`))
+	}))
+	t.Cleanup(server.Close)
+
+	catalog, err := Client{BaseURL: server.URL, Credentials: testCredentials()}.Fetch(context.Background())
+	if err != nil {
+		t.Fatalf("same-origin redirect failed: %v", err)
+	}
+	if len(catalog.Entries) != 1 || catalog.Entries[0].RegionCode != "aws-us-east-1" {
+		t.Fatalf("catalog = %#v", catalog.Entries)
+	}
+}
+
+// TestFetchEnforcesSameOriginUnderCallerRedirectPolicy pins that the mandatory
+// same-origin check cannot be relaxed by a caller-supplied client: it runs before
+// the caller's policy, so a permissive caller cannot re-enable cross-origin
+// redirects while a stricter caller can still narrow them further.
+func TestFetchEnforcesSameOriginUnderCallerRedirectPolicy(t *testing.T) {
+	var attackerHits atomic.Int32
+	attacker := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attackerHits.Add(1)
+		w.Header().Set("WWW-Authenticate", `Digest realm="attacker", nonce="nonce", qop="auth"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(attacker.Close)
+	catalog := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, attacker.URL+RegionsPath, http.StatusFound)
+	}))
+	t.Cleanup(catalog.Close)
+
+	permissive := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return nil }}
+	_, err := Client{
+		BaseURL:     catalog.URL,
+		HTTPClient:  permissive,
+		Credentials: testCredentials(),
+	}.Fetch(context.Background())
+	if apperr.CodeFor(err) != "api.fs_regions_redirect_refused" {
+		t.Fatalf("permissive caller policy error = %v, want api.fs_regions_redirect_refused", err)
+	}
+	if got := attackerHits.Load(); got != 0 {
+		t.Fatalf("the redirect target received %d request(s)", got)
+	}
+}
+
+// TestFetchHonorsStricterCallerRedirectPolicy keeps the composition honest: a
+// caller that refuses all redirects still wins over the same-origin policy.
+func TestFetchHonorsStricterCallerRedirectPolicy(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/moved"+RegionsPath, http.StatusFound)
+	}))
+	t.Cleanup(server.Close)
+
+	noRedirects := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	_, err := Client{
+		BaseURL:     server.URL,
+		HTTPClient:  noRedirects,
+		Credentials: testCredentials(),
+	}.Fetch(context.Background())
+	if apperr.CodeFor(err) != "api.fs_regions_unavailable" {
+		t.Fatalf("stricter caller policy error = %v, want a 3xx catalog failure", err)
+	}
+}
+
+// TestFetchRejectsInsecureCatalogEndpoint pins the base-URL rule: the endpoint
+// spends the organization API key pair, so it must be https (or a loopback test
+// server) before any request is made. Each rejection names the actual problem
+// instead of blaming the wrong part of the URL.
+func TestFetchRejectsInsecureCatalogEndpoint(t *testing.T) {
+	for _, tc := range []struct {
+		baseURL string
+		want    string
+	}{
+		{"http://fs.tidbapi.com", "scheme must be https"},
+		{"ftp://fs.tidbapi.com", "scheme must be https"},
+		{"https://user:pass@fs.tidbapi.com", "credentials, query, and fragment are not allowed"},
+		{"https://fs.tidbapi.com?region=aws-us-east-1", "credentials, query, and fragment are not allowed"},
+		{"https://fs.tidbapi.com?", "credentials, query, and fragment are not allowed"},
+		{"https://fs.tidbapi.com#frag", "credentials, query, and fragment are not allowed"},
+		{"https://:8443", "it needs a scheme and a host name"},
+		{"//fs.tidbapi.com", "it needs a scheme and a host name"},
+		{"fs.tidbapi.com", "it needs a scheme and a host name"},
+	} {
+		_, err := Client{BaseURL: tc.baseURL, Credentials: testCredentials()}.Fetch(context.Background())
+		if apperr.CodeFor(err) != "api.fs_regions_request" {
+			t.Fatalf("endpoint %q error = %v, want api.fs_regions_request", tc.baseURL, err)
+		}
+		if exit := apperr.ExitCodeFor(err); exit != 2 {
+			t.Fatalf("endpoint %q exit code = %d, want 2", tc.baseURL, exit)
+		}
+		message := apperr.MessageFor(err)
+		if !strings.Contains(message, tc.want) {
+			t.Fatalf("endpoint %q message = %q, want it to contain %q", tc.baseURL, message, tc.want)
+		}
+	}
+	if message := apperr.MessageFor(func() error {
+		_, err := Client{BaseURL: "fs.tidbapi.com", Credentials: testCredentials()}.Fetch(context.Background())
+		return err
+	}()); strings.Contains(message, "credentials, query") {
+		t.Fatalf("a missing scheme must not be reported as a credentials/query problem: %q", message)
+	}
+}
+
+// TestRejectedOriginsNeverEchoSecrets pins the redaction rule: a rejected
+// endpoint or service address must not print the embedded password or query
+// token to stderr.
+func TestRejectedOriginsNeverEchoSecrets(t *testing.T) {
+	const password = "sup3r-s3cret"
+	const queryToken = "token-value"
+	for _, raw := range []string{
+		"https://user:" + password + "@fs.tidbapi.com",
+		"https://fs.tidbapi.com?pageToken=" + queryToken,
+		"https://user:" + password + "@fs.tidbapi.com?pageToken=" + queryToken + "#frag",
+		// Inputs that do not parse as a hierarchical URL must not be echoed either:
+		// Opaque carries "user:secret@host" and Path can carry a pasted token.
+		"https:user:" + password + "@fs.tidbapi.com",
+		password + "@fs.tidbapi.com",
+		"ti_fs_" + queryToken,
+	} {
+		_, catalogErr := Client{BaseURL: raw, Credentials: testCredentials()}.Fetch(context.Background())
+		if catalogErr == nil {
+			t.Fatalf("endpoint %q was accepted", raw)
+		}
+		if message := apperr.MessageFor(catalogErr); strings.Contains(message, password) || strings.Contains(message, queryToken) {
+			t.Fatalf("catalog endpoint error echoed a secret: %q", message)
+		}
+		if _, serviceErr := NormalizeServiceAddress(raw); serviceErr == nil {
+			t.Fatalf("service address %q was accepted", raw)
+		} else if message := apperr.MessageFor(serviceErr); strings.Contains(message, password) || strings.Contains(message, queryToken) {
+			t.Fatalf("service address error echoed a secret: %q", message)
+		}
+	}
+
+	if _, err := (Client{BaseURL: "http://127.0.0.1:1", Credentials: testCredentials()}).Fetch(context.Background()); apperr.CodeFor(err) != "api.fs_regions_unavailable" {
+		t.Fatalf("loopback http endpoint error = %v, want a transport failure", err)
 	}
 }

@@ -74,9 +74,12 @@ func (c Client) Fetch(ctx context.Context) (Catalog, error) {
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
-	parsedBase, err := url.Parse(baseURL)
-	if err != nil || parsedBase.Scheme == "" || parsedBase.Host == "" {
-		return Catalog{}, apperr.New("api.fs_regions_request", "api", 1, fmt.Sprintf("invalid Filesystem region catalog endpoint %q", baseURL))
+	// This request carries the organization API key pair, so the endpoint itself
+	// must be a secure origin, and a rejected endpoint is described without the
+	// parts that could carry secrets.
+	parsedBase, err := parseSecureOrigin(baseURL)
+	if err != nil {
+		return Catalog{}, apperr.New("api.fs_regions_request", "config", 2, describeRejectedOrigin("Filesystem region catalog endpoint", parsedBase, err))
 	}
 	endpoint := strings.TrimRight(parsedBase.String(), "/") + RegionsPath
 
@@ -101,7 +104,7 @@ func (c Client) Fetch(ctx context.Context) (Catalog, error) {
 		if err != nil {
 			return Catalog{}, apperr.Wrap("api.fs_regions_unavailable", "api", 1, "the Filesystem region catalog is unavailable", err)
 		}
-		pageData, readErr := c.readCatalogPage(response)
+		pageData, readErr := c.readCatalogPage(request, response)
 		response.Body.Close()
 		if readErr != nil {
 			return Catalog{}, readErr
@@ -128,21 +131,30 @@ func (c Client) Fetch(ctx context.Context) (Catalog, error) {
 
 func (c Client) httpClient() *http.Client {
 	var base http.RoundTripper = http.DefaultTransport
-	if c.HTTPClient != nil && c.HTTPClient.Transport != nil {
-		base = c.HTTPClient.Transport
+	if c.HTTPClient != nil {
+		if c.HTTPClient.Transport != nil {
+			base = c.HTTPClient.Transport
+		}
 	}
 	redactor := apitransport.Redactor{Secrets: []string{c.Credentials.PublicKey, c.Credentials.PrivateKey}}
 	transport := apitransport.NewDebugRoundTripper(base, c.Debug, redactor)
 	transport = apitransport.NewDigest(c.Credentials.PublicKey, c.Credentials.PrivateKey, transport)
+
+	// The catalog request is Digest-authenticated, and the digest transport answers
+	// any 401 challenge it receives, so a redirect to another origin would hand the
+	// organization API key pair to that host. The same-origin rule is composed under
+	// any caller-supplied policy: a caller can narrow redirects further, never widen
+	// them past this origin check.
 	client := &http.Client{Transport: transport, Timeout: catalogTimeout}
 	if c.HTTPClient != nil {
-		copied := *c.HTTPClient
-		copied.Transport = transport
-		if copied.Timeout == 0 {
-			copied.Timeout = catalogTimeout
+		caller := *c.HTTPClient
+		if caller.Timeout == 0 {
+			caller.Timeout = catalogTimeout
 		}
-		client = &copied
+		client = &caller
+		client.Transport = transport
 	}
+	client.CheckRedirect = apitransport.SameOriginThen(client.CheckRedirect)
 	return client
 }
 
@@ -155,7 +167,18 @@ func catalogQuery(pageToken string) url.Values {
 	return query
 }
 
-func (c Client) readCatalogPage(response *http.Response) (catalogPage, error) {
+func (c Client) readCatalogPage(request *http.Request, response *http.Response) (catalogPage, error) {
+	// A refused cross-origin redirect was never followed: report the origin change
+	// instead of a generic catalog failure so the hardening is visible. A same-origin
+	// redirect that a caller policy refused keeps its normal status handling.
+	if fromOrigin, toOrigin, crossOrigin := apitransport.CrossOriginRedirect(response, request); crossOrigin {
+		return catalogPage{}, apperr.New(
+			"api.fs_regions_redirect_refused",
+			"api",
+			1,
+			fmt.Sprintf("refused a Filesystem region catalog redirect from %s to %s: ti follows redirects only within the same scheme and host", fromOrigin, toOrigin),
+		)
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		// The catalog is a Digest-authenticated TiDB Cloud control-plane
 		// endpoint, so credential, authorization, and not-found failures keep the
