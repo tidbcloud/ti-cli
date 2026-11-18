@@ -26,12 +26,13 @@ import (
 const defaultLiveProfile = "live-e2e"
 
 var (
-	liveFSResourceMu            sync.Mutex
-	liveFSResourceAutoCreatedID string
-	liveFSTokenAutoCreatedID    string
-	liveFSTokenAutoFileSystemID string
-	liveFSSelectedID            string
-	liveProfileConfigureMu      sync.Mutex
+	liveFSResourceMu              sync.Mutex
+	liveFSResourceAutoCreatedID   string
+	liveFSResourceAutoCreatedName string
+	liveFSTokenAutoCreatedID      string
+	liveFSTokenAutoFileSystemID   string
+	liveFSSelectedID              string
+	liveProfileConfigureMu        sync.Mutex
 )
 
 func TestMain(m *testing.M) {
@@ -117,6 +118,7 @@ func TestLiveFSRemoteInventoryLifecycle(t *testing.T) {
 	}
 	liveFSResourceMu.Lock()
 	liveFSResourceAutoCreatedID = created.FileSystemID
+	liveFSResourceAutoCreatedName = created.DisplayName
 	liveFSSelectedID = created.FileSystemID
 	liveFSResourceMu.Unlock()
 
@@ -297,6 +299,7 @@ func TestLiveFSCommandSurface(t *testing.T) {
 	bin := tiBinary(t)
 	profileName := liveProfileName(t)
 	selected := ensureLiveFSResource(t, bin, profileName)
+	selectedDisplayName := liveFSDisplayName(t, bin, profileName, selected)
 	testLiveHelpCommands(t, bin, [][]string{
 		{"fs", "help"},
 		{"fs", "create-file-system", "help"}, {"fs", "import-file-system-token", "help"}, {"fs", "list-file-systems", "help"},
@@ -323,7 +326,7 @@ func TestLiveFSCommandSurface(t *testing.T) {
 	})
 	testLiveMutatingDryRuns(t, bin, profileName, [][]string{
 		{"fs", "create-file-system", "--display-name", "ti-e2e-dry-run", "--label", "environment=test", "--wait"},
-		{"fs", "delete-file-system", "--file-system-id", selected.FSTenantID},
+		{"fs", "delete-file-system", "--file-system-id", selected.FSTenantID, "--confirm-file-system-name", selectedDisplayName},
 		{"fs", "update-file-system-extract-configuration", "--file-system-id", selected.FSTenantID, "--media-type", "image", "--enabled", "false"},
 		{"fs", "update-file-system-embedding-configuration", "--file-system-id", selected.FSTenantID, "--enabled", "false"},
 		{"fs", "create-layer", "--layer-id", "layer-1", "--base-root-path", "/workspace", "--layer-name", "dev"},
@@ -2347,11 +2350,13 @@ func ensureLiveFSResource(t *testing.T, bin, profileName string) *config.Profile
 	create.wantStdoutContains(`"status": "ready"`)
 	var created struct {
 		FileSystemID string `json:"file_system_id"`
+		DisplayName  string `json:"display_name"`
 	}
 	if err := json.Unmarshal([]byte(create.stdout), &created); err != nil || created.FileSystemID == "" {
 		t.Fatalf("decode created live fs resource: %v", err)
 	}
 	liveFSResourceAutoCreatedID = created.FileSystemID
+	liveFSResourceAutoCreatedName = created.DisplayName
 	liveFSSelectedID = created.FileSystemID
 	selected := resolveLiveFSResourceByID(t, profile, created.FileSystemID)
 	return selected
@@ -2497,6 +2502,7 @@ func cleanupAutoCreatedLiveFSResource() {
 		"--profile", profileName,
 		"fs", "delete-file-system",
 		"--file-system-id", fileSystemID,
+		"--confirm-file-system-name", liveFSConfirmName(fileSystemID),
 	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
@@ -2532,10 +2538,49 @@ func releaseAutoCreatedLiveFSResource(t *testing.T, bin, profileName string) {
 		"--profile", profileName,
 		"fs", "delete-file-system",
 		"--file-system-id", fileSystemID,
+		"--confirm-file-system-name", liveFSConfirmName(fileSystemID),
 	)
 	result.wantExitCode(0)
 	liveFSResourceAutoCreatedID = ""
+	liveFSResourceAutoCreatedName = ""
 	liveFSSelectedID = ""
+}
+
+// liveFSDisplayName reads the authoritative display name of the selected live
+// File System so destructive-command tests can pass the exact confirmation.
+func liveFSDisplayName(t *testing.T, bin, profileName string, profile *config.Profile) string {
+	t.Helper()
+	args := []string{"--profile", profileName}
+	if profile.FSPlacementRegionCode != "" {
+		args = append(args, "--region", profile.FSPlacementRegionCode)
+	}
+	args = append(args, "fs", "describe-file-system", "--file-system-id", profile.FSTenantID)
+	result := runTI(t, bin, args...)
+	result.wantExitCode(0)
+	var described struct {
+		DisplayName string `json:"display_name"`
+	}
+	if err := json.Unmarshal([]byte(result.stdout), &described); err != nil {
+		t.Fatalf("decode live fs describe result: %v\n%s", err, result.stdout)
+	}
+	// The backend falls back to the File System ID when no display name is set,
+	// and delete-file-system confirms that same effective name, so a File System
+	// without a display name must be confirmed by its ID instead of failing.
+	if name := strings.TrimSpace(described.DisplayName); name != "" {
+		return name
+	}
+	return profile.FSTenantID
+}
+
+// liveFSConfirmName returns the delete confirmation for an FS the suite
+// created itself. The create response reports the authoritative display name;
+// an empty value means the backend kept no display name, so the effective name
+// is the File System ID.
+func liveFSConfirmName(fileSystemID string) string {
+	if name := strings.TrimSpace(liveFSResourceAutoCreatedName); name != "" {
+		return name
+	}
+	return fileSystemID
 }
 
 func liveProfileName(t *testing.T) string {

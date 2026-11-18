@@ -433,7 +433,12 @@ Follow these rules unless `docs/priciples.md` is updated:
   root to become readable through the public Drive9 CLI. It must retain the
   resource and local credentials when waiting fails.
 - `ti fs delete-file-system` is asynchronous. After Drive9 accepts deletion,
-  output status is `deleting`, not `deleted`.
+  output status is `deleting`, not `deleted`. It always requires both
+  `--file-system-id` and `--confirm-file-system-name`; the confirmation must
+  equal the target File System display name (or its ID when the backend keeps
+  no display name), is checked before profile and credential loading, and is
+  matched against the remote display name before the irreversible delete
+  request. Deletion has no backend recovery period.
 - `ti fs mount-file-system` and `ti fs-vault mount-vault` are background-only
   public commands. They wait for readiness, return a structured result, and
   persist a local mount locator for the matching unmount command. Do not expose
@@ -588,8 +593,8 @@ Implemented command behavior:
 - `ti fs enable-file-system-token --file-system-id <file-system-id> --token-id <token-id>`
 - `ti fs delete-file-system-token --file-system-id <file-system-id> --token-id <token-id>`
 - `ti fs refresh-file-system-token --file-system-id <file-system-id>`
-- `ti fs delete-file-system --file-system-id <file-system-id>`
-- `ti fs delete-file-system --file-system-id <file-system-id> --dry-run`
+- `ti fs delete-file-system --file-system-id <file-system-id> --confirm-file-system-name <display-name>`
+- `ti fs delete-file-system --file-system-id <file-system-id> --confirm-file-system-name <display-name> --dry-run`
 - `ti fs list-file-systems`
 - `ti fs list-regions`
 - `ti fs list-regions --output text`
@@ -1014,7 +1019,8 @@ can therefore use an existing resource with only a canonical region and FS
 token; the ID is derived in memory from the token. Do not persist ephemeral
 flag/environment credentials or create a synthetic `[env]` profile. `ti fs create-file-system`, remote list/describe, and
 `ti fs delete-file-system` remain TiDB Cloud-authenticated. Delete requires an
-ID but does not require a locally stored owner token.
+ID and an explicit display-name confirmation but does not require a locally
+stored owner token.
 
 Filesystem token generate/list/enable/disable/delete commands also use only
 TiDB Cloud public/private keys and always require an explicit File System ID.

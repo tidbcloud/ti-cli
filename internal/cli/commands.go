@@ -1642,11 +1642,17 @@ func newFSUpdateFileSystemEmbeddingConfigurationCommand(info version.Info) *cobr
 
 func newFSDeleteFileSystemCommand(info version.Info) *cobra.Command {
 	cmd := newControlPlaneCommand(controlPlaneCommandSpec{
-		Use:        "delete-file-system",
-		Short:      "Delete a file system from TiDB Cloud.",
+		Use:   "delete-file-system",
+		Short: "Delete a file system from TiDB Cloud.",
+		Long: "Delete a file system from TiDB Cloud. Deletion is asynchronous and irreversible: the backend keeps no recovery period, so the command requires " +
+			"--confirm-file-system-name to repeat the target file system display name exactly. Read it with ti fs describe-file-system first.",
 		Mutation:   mutatingCommand,
 		Permission: authz.FSVolumeDelete,
 		Run: func(ctx commandContext) (any, error) {
+			confirmName, err := fsDeleteFileSystemConfirmation(ctx)
+			if err != nil {
+				return nil, err
+			}
 			service, profile, err := fsTIServiceAndProfile(ctx)
 			if err != nil {
 				return nil, err
@@ -1656,11 +1662,16 @@ func newFSDeleteFileSystemCommand(info version.Info) *cobra.Command {
 				return nil, err
 			}
 			return service.DeleteFileSystem(ctx.cmd.Context(), tifs.DeleteFileSystemOptions{
-				Profile:      profile,
-				FileSystemID: fileSystemID,
+				Profile:               profile,
+				FileSystemID:          fileSystemID,
+				ConfirmFileSystemName: confirmName,
 			})
 		},
 		DryRun: func(ctx commandContext) (dryrun.Result, error) {
+			confirmName, err := fsDeleteFileSystemConfirmation(ctx)
+			if err != nil {
+				return dryrun.Result{}, err
+			}
 			service, profile, err := fsTIServiceAndProfile(ctx)
 			if err != nil {
 				return dryrun.Result{}, err
@@ -1670,14 +1681,34 @@ func newFSDeleteFileSystemCommand(info version.Info) *cobra.Command {
 				return dryrun.Result{}, err
 			}
 			return service.DryRunDeleteFileSystem(ctx.cmd.Context(), ctx.CommandPath(), tifs.DeleteFileSystemOptions{
-				Profile:      profile,
-				FileSystemID: fileSystemID,
+				Profile:               profile,
+				FileSystemID:          fileSystemID,
+				ConfirmFileSystemName: confirmName,
 			})
 		},
 	}, info)
 	cmd.Flags().String("file-system-id", "", "The file system ID. FS tokens cannot select or authorize file system deletion.")
-	markUsageRequired(cmd, "file-system-id")
+	cmd.Flags().String("confirm-file-system-name", "", "The target file system display name. The value must match the remote display name exactly; deletion is irreversible.")
+	markUsageRequired(cmd, "file-system-id", "confirm-file-system-name")
 	return cmd
+}
+
+// fsDeleteFileSystemConfirmation enforces the explicit ID and confirmation
+// requirements before profile and credential loading, so missing flags are
+// usage errors instead of authentication errors.
+func fsDeleteFileSystemConfirmation(ctx commandContext) (string, error) {
+	fileSystemID, err := ctx.StringFlag("file-system-id")
+	if err != nil {
+		return "", err
+	}
+	confirmName, err := ctx.StringFlag("confirm-file-system-name")
+	if err != nil {
+		return "", err
+	}
+	if err := tifs.ValidateDeleteFileSystemInputs(fileSystemID, confirmName); err != nil {
+		return "", err
+	}
+	return confirmName, nil
 }
 
 func newFSImportFileSystemTokenCommand(info version.Info) *cobra.Command {

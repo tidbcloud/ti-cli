@@ -147,6 +147,10 @@ export FILE_SYSTEM_ID="$(bin/ti fs create-file-system \
   --wait \
   --query file_system_id \
   --output text)"
+export FILE_SYSTEM_NAME="$(bin/ti fs describe-file-system \
+  --file-system-id "$FILE_SYSTEM_ID" \
+  --query display_name \
+  --output text)"
 
 bin/ti fs list-file-systems --output text
 bin/ti fs describe-file-system \
@@ -373,11 +377,17 @@ bin/ti fs-vault delete-secret \
 rm -f /tmp/ti-demo-token.txt
 ```
 
-删除 Filesystem 资源及其本地 credential entry：
+删除 Filesystem 资源及其本地 credential entry。删除是异步且不可恢复的，因此必须用 `--confirm-file-system-name` 重复目标 Filesystem 的 display name；dry-run 只校验本地参数，真实执行会先读取远端 display name 再比对：
 
 ```bash
 bin/ti fs delete-file-system \
-  --file-system-id "$FILE_SYSTEM_ID"
+  --file-system-id "$FILE_SYSTEM_ID" \
+  --confirm-file-system-name "$FILE_SYSTEM_NAME" \
+  --dry-run
+
+bin/ti fs delete-file-system \
+  --file-system-id "$FILE_SYSTEM_ID" \
+  --confirm-file-system-name "$FILE_SYSTEM_NAME"
 ```
 
 删除演示 cluster：

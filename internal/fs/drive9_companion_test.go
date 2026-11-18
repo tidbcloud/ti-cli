@@ -635,8 +635,9 @@ func TestDryRunDeleteFileSystemReportsCredentialFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := (Service{HomeDir: home, Resolver: testFSRegionResolver(t, "aws-us-east-1", "https://fs.test")}).DryRunDeleteFileSystem(context.Background(), "ti fs delete-file-system", DeleteFileSystemOptions{
-		Profile:      profile,
-		FileSystemID: "tenant-1",
+		Profile:               profile,
+		FileSystemID:          "tenant-1",
+		ConfirmFileSystemName: "tenant-1",
 	})
 	if err != nil {
 		t.Fatalf("DryRunDeleteFileSystem failed: %v", err)

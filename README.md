@@ -278,7 +278,7 @@ ti fs generate-file-system-scoped-token \
 
 `TI_FS_TOKEN` may contain either token kind. Scoped tokens work only for allowed paths and operations and can self-refresh; they cannot generate child tokens or manage token inventory. Explicit `--fs-token` takes precedence over the environment. Token list, enable, disable, and delete use an explicit/environment owner token when present, otherwise they use configured TiDB Cloud API keys. With owner Bearer authentication, enable and disable apply only to scoped targets; TiDB Cloud credentials can manage either token kind. Because the token JWT does not expose its kind or scopes, the FS backend is the final permission authority.
 
-An owner FS token authorizes Filesystem use and token management, but it is not a TiDB Cloud administrative credential. Creating, listing, describing, and deleting Filesystem resources require TiDB Cloud API keys. In particular, `ti fs delete-file-system` always requires an explicit `--file-system-id`; `TI_FS_TOKEN` cannot select or authorize deletion of the Filesystem itself. For token list, enable, disable, and delete commands, `--file-system-id` is required only when the command uses TiDB Cloud API keys. When an owner token is supplied through `--fs-token` or `TI_FS_TOKEN`, `ti` derives the Filesystem ID from that token.
+An owner FS token authorizes Filesystem use and token management, but it is not a TiDB Cloud administrative credential. Creating, listing, describing, and deleting Filesystem resources require TiDB Cloud API keys. In particular, `ti fs delete-file-system` always requires an explicit `--file-system-id` plus `--confirm-file-system-name` matching the target Filesystem display name; deletion is asynchronous and irreversible because the backend keeps no recovery period, and `TI_FS_TOKEN` cannot select or authorize deletion of the Filesystem itself. For token list, enable, disable, and delete commands, `--file-system-id` is required only when the command uses TiDB Cloud API keys. When an owner token is supplied through `--fs-token` or `TI_FS_TOKEN`, `ti` derives the Filesystem ID from that token.
 
 Filesystem AI provider configuration is optional. Without it, existing create, mount, file, search, layer, vault, journal, and Git workflows continue to work normally. Organization administrators can inspect or customize image, audio, and video extraction and OpenAI-compatible 1024-dimension embedding for an explicit Filesystem ID:
 
@@ -371,7 +371,7 @@ ti fs enable-file-system-token
 ti fs disable-file-system-token
 ti fs delete-file-system-token
 ti fs refresh-file-system-token
-ti fs delete-file-system
+ti fs delete-file-system --file-system-id <file-system-id> --confirm-file-system-name <display-name>
 ti fs list-file-systems
 ti fs describe-file-system
 ti fs describe-file-system-extract-configuration
