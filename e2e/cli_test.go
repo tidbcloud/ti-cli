@@ -1227,6 +1227,45 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 		"--mount-path", mountPath,
 	)
 	mount.wantExitCode(0)
+	mount.wantStdoutContains(`"durability": "interactive"`)
+	strictMountPath := filepath.Join(home, "mount-close-sync")
+	strictMount := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", strictMountPath,
+		"--durability", "close-sync",
+	)
+	strictMount.wantExitCode(0)
+	strictMount.wantStdoutContains(`"durability": "close-sync"`)
+	invalidDurability := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", filepath.Join(home, "mount-invalid"),
+		"--durability", "turbo",
+	)
+	invalidDurability.wantExitCode(2)
+	invalidDurability.wantStderrContains("auto, interactive, fsync, close-sync, write-sync")
+	webdavDurability := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", filepath.Join(home, "mount-webdav-strict"),
+		"--driver", "webdav",
+		"--durability", "write-sync",
+	)
+	webdavDurability.wantExitCode(2)
+	webdavDurability.wantStderrContains("is not supported for WebDAV mounts")
+	webdavMountPath := filepath.Join(home, "mount-webdav")
+	webdavMount := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", webdavMountPath,
+		"--driver", "webdav",
+	)
+	webdavMount.wantExitCode(0)
+	webdavMount.wantStdoutContains(`"durability": "auto"`)
+	for _, path := range []string{strictMountPath, webdavMountPath} {
+		strictUnmount := runTIWithInput(t, bin, "", baseEnv,
+			"fs", "unmount-file-system",
+			"--mount-path", path,
+		)
+		strictUnmount.wantExitCode(0)
+	}
 	drain := runTIWithInput(t, bin, "", baseEnv,
 		"fs", "drain-file-system",
 		"--mount-path", mountPath,
@@ -1269,6 +1308,11 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	assertFakeDrive9Call(t, calls, []string{"fs", "ls"}, drive9TestToken("tenant-sandbox"), home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
 	assertFakeDrive9Call(t, calls, []string{"mount", "drain"}, "", home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
 	assertFakeDrive9Call(t, calls, []string{"umount"}, "", home, "default", "tenant-sandbox", "https://fs-east.test", "aws-us-east-1")
+	// The durability tier is forwarded verbatim, and a WebDAV mount forwards
+	// none because the engine has no durability tiers there.
+	assertFakeDrive9FlagValue(t, calls, "mount", mountPath, "--durability", "interactive")
+	assertFakeDrive9FlagValue(t, calls, "mount", strictMountPath, "--durability", "close-sync")
+	assertFakeDrive9FlagValue(t, calls, "mount", webdavMountPath, "--durability", "")
 }
 
 func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {
@@ -1521,7 +1565,7 @@ func TestFSLayerForkWorkflowCommands(t *testing.T) {
 	mounted := runTIWithInput(t, bin, "", env, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", "/workspace", "--driver", "fuse", "--layer-ref", "child-id", "--checkpoint-id", "seed")
 	mounted.wantExitCode(0)
 	mounted.wantStdoutContains(`"read_only": true`)
-	mounted.wantStdoutContains(`"write_back_cache": false`)
+	mounted.wantStdoutContains(`"durability": "auto"`)
 	mounted.wantStdoutContains(`"checkpoint_id": "seed"`)
 
 	explicitWritable := runTIWithInput(t, bin, "", env, "fs", "mount-file-system", "--mount-path", filepath.Join(home, "writable-checkpoint"), "--driver", "fuse", "--layer-ref", "child-id", "--checkpoint-id", "seed", "--read-only=false")
@@ -2099,6 +2143,32 @@ func assertFakeDrive9Args(t *testing.T, calls []fakeDrive9Call, want []string) {
 		}
 	}
 	t.Fatalf("missing exact fake Drive9 args %v in %#v", want, calls)
+}
+
+// assertFakeDrive9FlagValue finds the companion call for one mount path and
+// asserts the flag/value pair it was invoked with. An empty value asserts the
+// flag was not forwarded at all.
+func assertFakeDrive9FlagValue(t *testing.T, calls []fakeDrive9Call, command, mountPath, flag, value string) {
+	t.Helper()
+	for _, call := range calls {
+		if len(call.Args) == 0 || call.Args[0] != command || call.Args[len(call.Args)-1] != mountPath {
+			continue
+		}
+		found := ""
+		for i := 0; i < len(call.Args); i++ {
+			if call.Args[i] != flag {
+				continue
+			}
+			if i+1 < len(call.Args) {
+				found = call.Args[i+1]
+			}
+		}
+		if found == value {
+			return
+		}
+		t.Fatalf("%s for %s used %s=%q, want %q in %#v", command, mountPath, flag, found, value, call.Args)
+	}
+	t.Fatalf("missing fake Drive9 %s call for mount path %s", command, mountPath)
 }
 
 func assertFakeDrive9TransientCall(t *testing.T, calls []fakeDrive9Call, prefix []string, apiKey, persistentHome, server, regionCode string) {

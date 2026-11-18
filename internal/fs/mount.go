@@ -30,18 +30,28 @@ const (
 )
 
 type MountFileSystemOptions struct {
-	Profile           *config.Profile
-	FileSystemName    string
-	MountPath         string
-	RemotePath        string
-	Driver            string
-	ReadOnly          bool
-	ReadOnlySet       bool
-	ReadyTimeout      time.Duration
-	CacheDir          string
-	ReadCacheMB       int64
-	ReadCacheFileMB   int64
-	ReadCacheTTL      time.Duration
+	Profile         *config.Profile
+	FileSystemName  string
+	MountPath       string
+	RemotePath      string
+	Driver          string
+	ReadOnly        bool
+	ReadOnlySet     bool
+	ReadyTimeout    time.Duration
+	CacheDir        string
+	ReadCacheMB     int64
+	ReadCacheFileMB int64
+	ReadCacheTTL    time.Duration
+	// Durability is the write-durability tier forwarded to the companion as
+	// `mount --durability`. Normalization always leaves an effective tier here.
+	Durability string
+	// DurabilitySet records whether --durability was explicitly supplied.
+	DurabilitySet bool
+	// DurabilityExplicit records whether either --durability or the legacy
+	// --write-back-cache alias was explicitly supplied. Normalization sets it.
+	DurabilityExplicit bool
+	// WriteBackCache is the legacy boolean alias of --durability: true means
+	// interactive, false means auto.
 	WriteBackCache    bool
 	WriteBackCacheSet bool
 	MountProfile      string
@@ -84,7 +94,7 @@ type MountResult struct {
 	Checks         []MountRuntimeCheck  `json:"checks,omitempty"`
 	Remote         *MountRemoteSnapshot `json:"remote,omitempty"`
 	CacheDir       string               `json:"cache_dir,omitempty"`
-	WriteBackCache bool                 `json:"write_back_cache"`
+	Durability     string               `json:"durability"`
 	MountProfile   string               `json:"mount_profile,omitempty"`
 	LocalRoot      string               `json:"local_root,omitempty"`
 	PackPaths      []string             `json:"pack_paths,omitempty"`
@@ -146,10 +156,20 @@ func (s Service) MountFileSystem(ctx context.Context, opts MountFileSystemOption
 }
 
 // normalizeMountOptions trims the flag values the unpack predicate and the
-// companion argv must agree on, then applies the layer rules.
+// companion argv must agree on, resolves the durability tier, applies the layer
+// rules, and refuses a tier the effective driver cannot honor.
 func normalizeMountOptions(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
 	opts.UnpackArchivePath = strings.TrimSpace(opts.UnpackArchivePath)
-	return normalizeLayerMountOptions(opts)
+	var err error
+	opts, err = normalizeMountDurability(opts)
+	if err != nil {
+		return MountFileSystemOptions{}, err
+	}
+	opts, err = normalizeLayerMountOptions(opts)
+	if err != nil {
+		return MountFileSystemOptions{}, err
+	}
+	return rejectUnsupportedMountDurability(opts)
 }
 
 func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, opts MountFileSystemOptions) (dryrun.Result, error) {
@@ -198,6 +218,7 @@ func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, 
 			Path:        "/v1/status",
 			Body: map[string]any{
 				"driver":        opts.Driver,
+				"durability":    opts.Durability,
 				"layer_ref":     opts.LayerRef,
 				"checkpoint_id": opts.CheckpointID,
 				"read_only":     opts.ReadOnly,
@@ -229,8 +250,14 @@ func normalizeLayerMountOptions(opts MountFileSystemOptions) (MountFileSystemOpt
 		if opts.WriteBackCacheSet && opts.WriteBackCache {
 			return MountFileSystemOptions{}, apperr.New("fs.checkpoint_mount_read_only", "usage", 2, "checkpoint mounts are read-only; remove --write-back-cache=true")
 		}
+		if opts.DurabilityExplicit && opts.Durability != MountDurabilityAuto {
+			return MountFileSystemOptions{}, apperr.New("fs.checkpoint_mount_read_only", "usage", 2, fmt.Sprintf("checkpoint mounts are read-only; remove --durability=%s", opts.Durability))
+		}
 		opts.ReadOnly = true
 		opts.WriteBackCache = false
+		// A checkpoint view never writes, so ti forwards no tier and reports
+		// the engine's own default instead of the interactive mount default.
+		opts.Durability = MountDurabilityAuto
 	}
 	driverName := strings.TrimSpace(opts.Driver)
 	if driverName == "" {
@@ -389,6 +416,7 @@ type mountInputs struct {
 	readCacheFileBytes int64
 	readCacheTTL       time.Duration
 	writeBackCache     bool
+	durability         string
 	mountProfile       string
 	localRoot          string
 	packPaths          []string
@@ -493,7 +521,8 @@ func (s Service) mountInputs(opts MountFileSystemOptions) (mountInputs, error) {
 		readCacheBytes:     readCacheBytes,
 		readCacheFileBytes: readCacheFileBytes,
 		readCacheTTL:       readCacheTTL,
-		writeBackCache:     opts.WriteBackCache,
+		writeBackCache:     mountDurabilityUsesWriteBack(opts.Durability),
+		durability:         opts.Durability,
 		mountProfile:       mountProfile,
 		localRoot:          localRoot,
 		packPaths:          packPaths,
@@ -572,7 +601,7 @@ func mountResult(status string, inputs mountInputs, remote apifs.StatusResponse,
 		Checks:         checks,
 		Remote:         &snapshot,
 		CacheDir:       inputs.cacheDir,
-		WriteBackCache: inputs.writeBackCache,
+		Durability:     inputs.durability,
 		MountProfile:   inputs.mountProfile,
 		LocalRoot:      inputs.localRoot,
 		PackPaths:      append([]string(nil), inputs.packPaths...),

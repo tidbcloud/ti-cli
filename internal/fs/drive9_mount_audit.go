@@ -96,9 +96,9 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		if opts.ReadCacheTTL > 0 {
 			args = append(args, "--read-cache-ttl", opts.ReadCacheTTL.String())
 		}
-		if opts.WriteBackCache {
-			args = append(args, "--durability", "interactive")
-		}
+	}
+	if mountDurabilityForwarded(opts) {
+		appendFlagValue(&args, "--durability", opts.Durability)
 	}
 	appendFlagValue(&args, "--profile", opts.MountProfile)
 	appendFlagValue(&args, "--local-root", opts.LocalRoot)
@@ -165,7 +165,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	if driver == "" {
 		driver = "auto"
 	}
-	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: auditRoot, PackPaths: opts.PackPaths, WriteBackCache: opts.WriteBackCache, LayerRef: opts.LayerRef, CheckpointID: opts.CheckpointID, ReadOnly: opts.ReadOnly}, nil
+	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: auditRoot, PackPaths: opts.PackPaths, Durability: opts.Durability, LayerRef: opts.LayerRef, CheckpointID: opts.CheckpointID, ReadOnly: opts.ReadOnly}, nil
 }
 
 // stopMountAfterUnsafeAudit tears down a mount whose overlay failed the audit. It

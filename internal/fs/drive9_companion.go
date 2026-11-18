@@ -1283,7 +1283,7 @@ func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (
 	if err := s.waitForMountReady(ctx, opts.MountPath, opts.ReadyTimeout, fmt.Sprintf("; to stop it run: ti fs-vault unmount-vault --mount-path %q", opts.MountPath)); err != nil {
 		return MountResult{}, err
 	}
-	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: "vault", MountPath: opts.MountPath, RemotePath: "/n/vault", Driver: "fuse"}, nil
+	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: "vault", MountPath: opts.MountPath, RemotePath: "/n/vault", Driver: "fuse", Durability: MountDurabilityAuto}, nil
 }
 
 func (s Service) drive9PackFileSystem(ctx context.Context, opts PackFileSystemOptions) (PackFileSystemResult, error) {
