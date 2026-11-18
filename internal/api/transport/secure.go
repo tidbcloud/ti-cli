@@ -69,10 +69,11 @@ func SecureTransferClient(base *http.Client) *http.Client {
 	return &copied
 }
 
-// DoSecure checks req.URL with CheckSecureURL before sending it with client. When
-// the client's redirect policy refuses a hop, it returns the policy error alone:
-// net/http wraps it in a *url.Error that repeats the full request URL, presigned
-// signature included.
+// DoSecure checks req.URL with CheckSecureURL before sending it with client.
+// net/http wraps every failure in a *url.Error that repeats the full request URL,
+// presigned signature included. A refused redirect comes back as the policy error
+// alone; any other failure keeps its *url.Error with the URL's user info, query,
+// and fragment removed.
 func DoSecure(client *http.Client, req *http.Request) (*http.Response, error) {
 	if err := CheckSecureURL(req.URL); err != nil {
 		return nil, err
@@ -80,12 +81,32 @@ func DoSecure(client *http.Client, req *http.Request) (*http.Response, error) {
 	res, err := client.Do(req)
 	if err != nil {
 		var urlErr *url.Error
-		if errors.As(err, &urlErr) && (errors.Is(err, ErrInsecureURL) || errors.Is(err, ErrTooManyRedirects)) {
+		if !errors.As(err, &urlErr) {
+			return nil, err
+		}
+		if errors.Is(err, ErrInsecureURL) || errors.Is(err, ErrTooManyRedirects) {
 			return nil, urlErr.Err
 		}
-		return nil, err
+		redacted := *urlErr
+		redacted.URL = redactURL(urlErr.URL)
+		return nil, &redacted
 	}
 	return res, nil
+}
+
+// redactURL drops the parts of a URL that can carry credentials: user info, the
+// query (where presigned signatures live), and the fragment.
+func redactURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "[redacted URL]"
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.ForceQuery = false
+	u.Fragment = ""
+	u.RawFragment = ""
+	return u.String()
 }
 
 // isLoopbackHost reports whether host is localhost or a loopback IP address.

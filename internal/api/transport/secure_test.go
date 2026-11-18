@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestCheckSecureURL(t *testing.T) {
@@ -96,6 +98,33 @@ func TestDoSecureRefusesRedirectToHTTP(t *testing.T) {
 	}
 }
 
+func TestDoSecureRedactsNetworkErrors(t *testing.T) {
+	failure := errors.New("connection refused")
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, failure
+	})}
+	req, err := http.NewRequest(http.MethodPut, "https://bucket.example.com/key?X-Amz-Signature=secret-signature#frag", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = DoSecure(SecureTransferClient(client), req)
+	if !errors.Is(err, failure) {
+		t.Fatalf("DoSecure error = %v, want the transport failure", err)
+	}
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) || urlErr.Op != "Put" {
+		t.Fatalf("DoSecure error = %#v, want a *url.Error for Put", err)
+	}
+	for _, leaked := range []string{"secret-signature", "X-Amz", "frag"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("DoSecure error %q leaks %q", err, leaked)
+		}
+	}
+	if !strings.Contains(err.Error(), "https://bucket.example.com/key") {
+		t.Fatalf("DoSecure error %q lost the scheme, host, and path", err)
+	}
+}
+
 func TestDoSecureFollowsRelativeRedirect(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/start" {
@@ -129,7 +158,10 @@ func TestDoSecureStopsAfterMaxRedirects(t *testing.T) {
 	}))
 	defer server.Close()
 
-	req, err := http.NewRequest(http.MethodGet, server.URL+"/start", nil)
+	// The timeout makes a missing limit fail fast instead of redirecting forever.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, server.URL+"/start", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
