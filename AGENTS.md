@@ -661,6 +661,7 @@ Implemented command behavior:
 - `ti fs drain-file-system --mount-path ./workspace --timeout 30s`
 - `ti fs unmount-file-system --mount-path ./workspace`
 - `ti fs unmount-file-system --mount-path ./workspace --ignore-absent`
+- `ti fs unmount-file-system --mount-path ./workspace --force`
 - `ti fs-vault create-secret --secret-name db-prod --field DB_URL=mysql://example --field PASSWORD=@./password.txt`
 - `ti fs-vault replace-secret --secret-path /n/vault/db-prod --from-directory ./secret-fields`
 - `ti fs-vault read-secret --secret-name db-prod`
@@ -1149,6 +1150,21 @@ Background FS and vault mounts write only a non-secret locator under
 `~/.ti/mounts/`. Drain and unmount must route through that locator to the
 original resource-scoped companion HOME without requiring the FS token again.
 Successful unmount removes the locator; failed unmount preserves it for retry.
+
+`ti fs unmount-file-system` drains before it detaches a FUSE mount and must never
+report success while write-back work is still local. Parse the companion's
+`mount drain --json` report instead of discarding it: `ti fs drain-file-system`
+returns it as `response`, prints the pending counters in text output, and fails
+with `fs.drain_pending_work` when work remains. The unmount records the driver
+the companion actually mounted in the non-secret mount locator, gates only FUSE
+mounts on the drain (and never a `vault` locator: the engine drains only
+file-system mounts), blocks with the locator preserved while work is pending,
+and treats `--force` as the explicit "accept the loss" escape hatch (reported as
+`drain.status: "skipped"`). `--ignore-absent` may continue past a drain failure
+but must still report `drain.status: "failed"`. A locator written before the
+driver was recorded is never gated, so an upgrade cannot block an existing
+unmount. Do not drop these outcomes from the result, and do not reimplement the
+drain in ti: the mount control socket belongs to the companion.
 
 `ti fs mount-file-system` forwards the selected write-durability tier to the
 companion as `mount --durability`. The flag accepts `auto`, `interactive`,

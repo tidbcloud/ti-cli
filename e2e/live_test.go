@@ -1587,6 +1587,11 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 	if strings.Contains(mount.stdout, `"driver": "fuse"`) {
 		drain := runTIWithInput(t, bin, "", locatorEnv, "fs", "drain-file-system", "--mount-path", mountPath, "--timeout", "30s")
 		drain.wantExitCode(0)
+		// The drain report must be surfaced: the pending counters are how an
+		// operator tells "fully uploaded" from "the upload never finished".
+		drain.wantStdoutContains(`"response"`)
+		drain.wantStdoutContains(`"pending"`)
+		drain.wantStdoutContains(`"open_handles"`)
 	}
 	unmount := runTIWithInput(t, bin, "", locatorEnv, "fs", "unmount-file-system", "--mount-path", mountPath)
 	unmount.wantExitCode(0)

@@ -1271,7 +1271,7 @@ func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (
 	if _, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{Profile: opts.Profile, Args: args, IncludeFSAPIKey: true, VaultToken: opts.VaultToken}); err != nil {
 		return MountResult{}, err
 	}
-	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "vault"); err != nil {
+	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "vault", "fuse"); err != nil {
 		if umountErr := s.umountMount(ctx, MountFileSystemOptions{Profile: opts.Profile, MountPath: opts.MountPath}); umountErr != nil {
 			// Compose an apperr error: the CLI renders apperr.MessageFor, which
 			// reads only the embedded apperr message, so a fmt.Errorf wrapper would
@@ -1359,28 +1359,35 @@ func (s Service) drive9UnpackFileSystem(ctx context.Context, opts UnpackFileSyst
 }
 
 func (s Service) drive9DrainFileSystem(ctx context.Context, opts DrainFileSystemOptions) (DrainResult, error) {
-	profile, err := s.drive9MountLocatorProfile(opts.Profile, opts.MountPath)
+	locator, profile, err := s.mountLocatorProfile(opts.Profile, opts.MountPath)
 	if err != nil {
 		return DrainResult{}, err
 	}
-	args := []string{"mount", "drain", "--json"}
-	if opts.Timeout > 0 {
-		args = append(args, "--timeout", opts.Timeout.String())
-	}
-	args = append(args, opts.MountPath)
-	if _, err := s.drive9Run(ctx, profile, args, true); err != nil {
+	// The companion's report is the only place the undrained work is counted,
+	// so keep it in the result instead of discarding it.
+	drain, err := s.drainMount(ctx, profile, opts.MountPath, opts.Timeout)
+	if err != nil {
 		return DrainResult{}, err
 	}
-	return DrainResult{Status: "drained", MountPath: opts.MountPath}, nil
+	return DrainResult{Status: drain.Status, MountPath: opts.MountPath, Driver: locator.Driver, Response: drain.Response}, nil
 }
 
 func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSystemOptions) (UnmountResult, error) {
-	profile, err := s.drive9MountLocatorProfile(opts.Profile, opts.MountPath)
+	locator, profile, err := s.mountLocatorProfile(opts.Profile, opts.MountPath)
 	if err != nil {
 		if opts.IgnoreAbsent && apperr.CodeFor(err) == "fs.mount_locator_not_found" {
 			return UnmountResult{Status: "absent", MountPath: opts.MountPath}, nil
 		}
 		return UnmountResult{}, err
+	}
+	// Detaching the kernel mount stops the client from noticing that local
+	// write-back work never reached the remote, so drain first and refuse to
+	// detach while writes are still pending. --force skips the gate, and
+	// --ignore-absent tolerates a drain that fails because the mount is already
+	// gone.
+	drain, drainErr := s.drainBeforeUnmount(ctx, profile, locator, opts)
+	if drainErr != nil && !opts.IgnoreAbsent {
+		return UnmountResult{}, drainErr
 	}
 	args := []string{"umount"}
 	if opts.Timeout > 0 {
@@ -1402,7 +1409,7 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 			if removeErr := mountlocator.Remove(homeDir, opts.MountPath); removeErr != nil {
 				return UnmountResult{}, apperr.Wrap("fs.remove_mount_locator", "runtime", 1, "remove stale ti fs mount locator", removeErr)
 			}
-			return UnmountResult{Status: "absent", MountPath: opts.MountPath}, nil
+			return UnmountResult{Status: "absent", MountPath: opts.MountPath, Driver: locator.Driver, Drain: &drain}, nil
 		}
 		return UnmountResult{}, err
 	}
@@ -1413,10 +1420,16 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 	if err := mountlocator.Remove(homeDir, opts.MountPath); err != nil {
 		return UnmountResult{}, apperr.Wrap("fs.remove_mount_locator", "runtime", 1, "remove ti fs mount locator", err)
 	}
-	return UnmountResult{Status: "unmounted", MountPath: opts.MountPath}, nil
+	result := UnmountResult{Status: "unmounted", MountPath: opts.MountPath, Driver: locator.Driver, Drain: &drain}
+	if drainErr != nil {
+		// --ignore-absent asked ti to continue past a drain it could not
+		// complete, so the outcome must still say the writes may be lost.
+		result.Checks = append(result.Checks, MountRuntimeCheck{Name: "drain", Status: "failed", Message: apperr.MessageFor(drainErr)})
+	}
+	return result, nil
 }
 
-func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kind string, mountOpts ...MountFileSystemOptions) error {
+func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kind, driver string, mountOpts ...MountFileSystemOptions) error {
 	if profile == nil {
 		return apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
@@ -1432,7 +1445,7 @@ func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kin
 	if err != nil {
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "construct ti fs mount locator", err)
 	}
-	locator = locator.WithTokenCorrelation(profile.FSTenantID, profile.FSTokenID, fsTokenFingerprint(profile.FSAPIKey)).WithServiceAddress(profile.FSServiceAddress)
+	locator = locator.WithTokenCorrelation(profile.FSTenantID, profile.FSTokenID, fsTokenFingerprint(profile.FSAPIKey)).WithServiceAddress(profile.FSServiceAddress).WithDriver(driver)
 	if len(mountOpts) > 0 {
 		opts := mountOpts[0]
 		locator = locator.WithLayerView(opts.RemotePath, opts.LayerRef, opts.CheckpointID, opts.ReadOnly)
@@ -1444,27 +1457,35 @@ func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kin
 }
 
 func (s Service) drive9MountLocatorProfile(base *config.Profile, mountPath string) (*config.Profile, error) {
+	_, profile, err := s.mountLocatorProfile(base, mountPath)
+	return profile, err
+}
+
+// mountLocatorProfile resolves the ti-owned mount locator for a mount path and
+// rebuilds the companion profile from it. Callers that also need locator facts
+// (the recorded driver, for example) use this instead of reading it twice.
+func (s Service) mountLocatorProfile(base *config.Profile, mountPath string) (mountlocator.Locator, *config.Profile, error) {
 	homeDir, err := s.homeDir()
 	if err != nil {
-		return nil, err
+		return mountlocator.Locator{}, nil, err
 	}
 	locator, _, err := mountlocator.Read(homeDir, mountPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, apperr.New("fs.mount_locator_not_found", "runtime", 1, fmt.Sprintf("no ti fs mount locator found for %q", mountPath))
+			return mountlocator.Locator{}, nil, apperr.New("fs.mount_locator_not_found", "runtime", 1, fmt.Sprintf("no ti fs mount locator found for %q", mountPath))
 		}
-		return nil, apperr.Wrap("fs.read_mount_locator", "runtime", 1, fmt.Sprintf("read ti fs mount locator for %q", mountPath), err)
+		return mountlocator.Locator{}, nil, apperr.Wrap("fs.read_mount_locator", "runtime", 1, fmt.Sprintf("read ti fs mount locator for %q", mountPath), err)
 	}
 	expectedHome, err := fscred.CompanionHome(homeDir, locator.Profile, locator.FileSystemName)
 	if err != nil {
-		return nil, err
+		return mountlocator.Locator{}, nil, err
 	}
 	if filepath.Clean(expectedHome) != filepath.Clean(locator.CompanionHome) {
-		return nil, apperr.New("fs.mount_locator_invalid", "config", 2, "ti fs mount locator companion home does not match its profile and file system")
+		return mountlocator.Locator{}, nil, apperr.New("fs.mount_locator_invalid", "config", 2, "ti fs mount locator companion home does not match its profile and file system")
 	}
 	placement, err := region.ParseCanonicalCode(locator.RegionCode)
 	if err != nil {
-		return nil, apperr.Wrap("fs.mount_locator_invalid", "config", 2, "ti fs mount locator has an invalid region", err)
+		return mountlocator.Locator{}, nil, apperr.Wrap("fs.mount_locator_invalid", "config", 2, "ti fs mount locator has an invalid region", err)
 	}
 	profile := config.Profile{HomeDir: homeDir}
 	if base != nil {
@@ -1488,7 +1509,7 @@ func (s Service) drive9MountLocatorProfile(base *config.Profile, mountPath strin
 			profile.FSServiceAddress = credential.ServiceAddress
 		}
 	}
-	return &profile, nil
+	return locator, &profile, nil
 }
 
 func drive9CopyArgs(opts CopyFileOptions) ([]string, string, string, error) {

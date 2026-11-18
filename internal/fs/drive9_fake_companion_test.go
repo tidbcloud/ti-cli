@@ -98,6 +98,21 @@ func main() {
 			"region_code":    os.Getenv("DRIVE9_REGION_CODE"),
 			"server":         os.Getenv("DRIVE9_SERVER"),
 		})
+	case len(args) >= 2 && args[0] == "mount" && args[1] == "drain":
+		pending := os.Getenv("TI_FAKE_DRIVE9_DRAIN_PENDING") == "1"
+		report := map[string]any{
+			"ok": !pending, "mount_point": args[len(args)-1], "duration_ms": 7,
+			"native_syncfs_supported": false, "pending": map[string]any{},
+		}
+		if pending {
+			report["error"] = "writeback uploader: 2 entries remain"
+			report["error_kind"] = "pending_work_remaining"
+			report["pending"] = map[string]any{"commit_queue_pending": 2, "uploader_queued": 2}
+		}
+		_ = json.NewEncoder(os.Stdout).Encode(report)
+		if pending {
+			os.Exit(1)
+		}
 	case args[0] == "umount":
 		if os.Getenv("TI_FAKE_UMOUNT_FAIL") == "1" {
 			fmt.Fprintln(os.Stderr, "umount: mount is busy")

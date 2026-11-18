@@ -20,6 +20,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountcontrol"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountdriver"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 )
 
@@ -127,6 +128,19 @@ type UnmountResult struct {
 	PID       int                 `json:"pid,omitempty"`
 	StateFile string              `json:"state_file,omitempty"`
 	Checks    []MountRuntimeCheck `json:"checks,omitempty"`
+	// Drain records the pre-unmount drain pass: drained, failed, or skipped
+	// with the reason. A failed drain is only reported when the caller asked to
+	// continue anyway (--force or --ignore-absent).
+	Drain *MountDrain `json:"drain,omitempty"`
+}
+
+// MountDrain is the pre-unmount drain outcome. Response carries the engine's
+// own drain report, including the pending counters, so a lost write is
+// attributable instead of silent.
+type MountDrain struct {
+	Status   string                      `json:"status"`
+	Message  string                      `json:"message,omitempty"`
+	Response *mountcontrol.DrainResponse `json:"response,omitempty"`
 }
 
 type DrainResult struct {
@@ -324,7 +338,7 @@ func (s Service) DrainFileSystem(ctx context.Context, opts DrainFileSystemOption
 }
 
 func (s Service) DryRunDrainFileSystem(ctx context.Context, commandPath string, opts DrainFileSystemOptions) (dryrun.Result, error) {
-	profile, err := s.drive9MountLocatorProfile(opts.Profile, opts.MountPath)
+	locator, profile, err := s.mountLocatorProfile(opts.Profile, opts.MountPath)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -339,11 +353,12 @@ func (s Service) DryRunDrainFileSystem(ctx context.Context, commandPath string, 
 		dryrun.Check{Name: "mount_locator", Status: "passed", Message: opts.MountPath},
 		dryrun.Check{Name: "file_system_id", Status: "passed", Message: profile.FSTenantID},
 		dryrun.Check{Name: "region", Status: "passed", Message: profile.FSPlacementRegionCode},
+		dryrun.Check{Name: "drain_support", Status: "passed", Message: drainSupportDryRunMessage(locator)},
 	), nil
 }
 
 func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string, opts UnmountFileSystemOptions) (dryrun.Result, error) {
-	profile, err := s.drive9MountLocatorProfile(opts.Profile, opts.MountPath)
+	locator, profile, err := s.mountLocatorProfile(opts.Profile, opts.MountPath)
 	if err != nil {
 		if opts.IgnoreAbsent && apperr.CodeFor(err) == "fs.mount_locator_not_found" {
 			return dryrun.New(
@@ -366,7 +381,25 @@ func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string
 		dryrun.Check{Name: "mount_locator", Status: "passed", Message: opts.MountPath},
 		dryrun.Check{Name: "file_system_id", Status: "passed", Message: profile.FSTenantID},
 		dryrun.Check{Name: "region", Status: "passed", Message: profile.FSPlacementRegionCode},
+		dryrun.Check{Name: "pre_unmount_drain", Status: "passed", Message: describeDryRunDrainGate(locator, opts)},
 	), nil
+}
+
+// drainSupportDryRunMessage says whether the mount can be drained at all.
+func drainSupportDryRunMessage(locator mountlocator.Locator) string {
+	if drainable, reason := mountDrainGate(locator, false); !drainable {
+		return "not applicable: " + reason
+	}
+	return "FUSE mount with a drain control socket"
+}
+
+// describeDryRunDrainGate reports what the pre-unmount drain would do without
+// running it.
+func describeDryRunDrainGate(locator mountlocator.Locator, opts UnmountFileSystemOptions) string {
+	if drainable, reason := mountDrainGate(locator, opts.Force); !drainable {
+		return "skipped: " + reason
+	}
+	return "drain pending writes before detaching the mount"
 }
 
 func (s Service) readDrainMountState(mountPathInput string) (mountstate.State, string, string, []MountRuntimeCheck, error) {
@@ -774,21 +807,33 @@ func (r MountResult) Human() string {
 func (r UnmountResult) Human() string {
 	var out strings.Builder
 	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(writer, "STATUS\tMOUNT_PATH\tDRIVER\tPID")
-	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%d\n", r.Status, r.MountPath, r.Driver, r.PID)
+	_, _ = fmt.Fprintln(writer, "STATUS\tMOUNT_PATH\tDRIVER\tDRAIN")
+	drain := ""
+	if r.Drain != nil {
+		drain = r.Drain.Status
+	}
+	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", r.Status, r.MountPath, r.Driver, drain)
 	_ = writer.Flush()
+	if r.Drain != nil {
+		if r.Drain.Message != "" {
+			_, _ = fmt.Fprintf(&out, "drain: %s\n", r.Drain.Message)
+		}
+		if r.Drain.Response != nil {
+			_, _ = fmt.Fprintf(&out, "pending: %s\n", drainPendingSummary(r.Drain.Response.Pending))
+		}
+	}
 	return strings.TrimRight(out.String(), "\n")
 }
 
 func (r DrainResult) Human() string {
 	var out strings.Builder
 	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(writer, "STATUS\tMOUNT_PATH\tDRIVER\tPID\tDURATION_MS")
+	_, _ = fmt.Fprintln(writer, "STATUS\tMOUNT_PATH\tDRIVER\tDURATION_MS")
 	duration := int64(0)
 	if r.Response != nil {
 		duration = r.Response.DurationMS
 	}
-	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%d\n", r.Status, r.MountPath, r.Driver, r.PID, duration)
+	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%d\n", r.Status, r.MountPath, r.Driver, duration)
 	_ = writer.Flush()
 	if r.Response != nil {
 		p := r.Response.Pending

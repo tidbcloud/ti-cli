@@ -232,6 +232,24 @@ func main() {
 		fmt.Println(`{"status":"unpacked"}`)
 		return
 	}
+	if hasPrefix(args, "mount", "drain") {
+		ok := os.Getenv("FAKE_DRIVE9_DRAIN_PENDING") != "1"
+		report := map[string]any{
+			"ok": ok, "mount_point": args[len(args)-1], "duration_ms": 5,
+			"native_syncfs_supported": false, "pending": map[string]any{},
+		}
+		if !ok {
+			report["error"] = "writeback uploader: 2 entries remain"
+			report["error_kind"] = "pending_work_remaining"
+			report["pending"] = map[string]any{"commit_queue_pending": 2, "uploader_queued": 2}
+		}
+		encoded, _ := json.Marshal(report)
+		fmt.Println(string(encoded))
+		if !ok {
+			os.Exit(1)
+		}
+		return
+	}
 	if hasPrefix(args, "mount") {
 		fmt.Fprintln(os.Stderr, "drive9: mount mode: "+mountMode(args))
 		if mountPath := args[len(args)-1]; len(args) >= 2 && len(mountPath) > 0 && mountPath[0] != '-' {

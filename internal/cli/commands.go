@@ -2675,7 +2675,7 @@ func newFSUnmountFileSystemCommand(info version.Info) *cobra.Command {
 	}, info)
 	cmd.Flags().String("mount-path", "", "The local mounted path.")
 	cmd.Flags().Duration("timeout", 30*time.Second, "Time to wait for the mount process to exit.")
-	cmd.Flags().Bool("force", false, "Kill the mount process if graceful unmount times out.")
+	cmd.Flags().Bool("force", false, "Skip the pre-unmount drain gate and unmount even when local writes are still pending.")
 	cmd.Flags().Bool("ignore-absent", false, "Return success when no file system mount state exists for the specified path.")
 	cmd.Flags().String("pack-archive-path", "", "Pack archive to write after unmount")
 	cmd.Flags().Bool("no-auto-pack", false, "Skip the portable mount profile's default auto-pack action.")

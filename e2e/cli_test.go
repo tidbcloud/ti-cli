@@ -1259,23 +1259,61 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	)
 	webdavMount.wantExitCode(0)
 	webdavMount.wantStdoutContains(`"durability": "auto"`)
-	for _, path := range []string{strictMountPath, webdavMountPath} {
-		strictUnmount := runTIWithInput(t, bin, "", baseEnv,
-			"fs", "unmount-file-system",
-			"--mount-path", path,
-		)
-		strictUnmount.wantExitCode(0)
-	}
+	webdavUnmount := runTIWithInput(t, bin, "", baseEnv,
+		"fs", "unmount-file-system",
+		"--mount-path", webdavMountPath,
+	)
+	webdavUnmount.wantExitCode(0)
 	drain := runTIWithInput(t, bin, "", baseEnv,
 		"fs", "drain-file-system",
 		"--mount-path", mountPath,
 	)
 	drain.wantExitCode(0)
+	// The drain result must carry the engine's report instead of dropping the
+	// companion's --json output, and text output must show the counters.
+	drain.wantStdoutContains(`"response"`)
+	drain.wantStdoutContains(`"pending"`)
+	drainText := runTIWithInput(t, bin, "", baseEnv,
+		"fs", "drain-file-system",
+		"--mount-path", mountPath,
+		"--output", "text",
+	)
+	drainText.wantExitCode(0)
+	drainText.wantStdoutContains("pending:")
+	drainText.wantStdoutContains("open_handles=")
 	unmount := runTIWithInput(t, bin, "", baseEnv,
 		"fs", "unmount-file-system",
 		"--mount-path", mountPath,
 	)
 	unmount.wantExitCode(0)
+	unmount.wantStdoutContains(`"drain"`)
+	unmount.wantStdoutContains(`"status": "drained"`)
+
+	// A pending drain blocks the unmount, keeps the locator for retry, and
+	// --force is the explicit way to accept the loss.
+	pendingDrainEnv := append(append([]string{}, baseEnv...), "FAKE_DRIVE9_DRAIN_PENDING=1")
+	pendingDrain := runTIWithInput(t, bin, "", pendingDrainEnv,
+		"fs", "drain-file-system",
+		"--mount-path", strictMountPath,
+	)
+	pendingDrain.wantExitCode(1)
+	pendingDrain.wantStderrContains("error_kind=pending_work_remaining")
+	pendingDrain.wantStderrContains("commit_queue_pending=2")
+	pendingUnmount := runTIWithInput(t, bin, "", pendingDrainEnv,
+		"fs", "unmount-file-system",
+		"--mount-path", strictMountPath,
+	)
+	pendingUnmount.wantExitCode(1)
+	pendingUnmount.wantStderrContains("error_kind=pending_work_remaining")
+	pendingUnmount.wantStderrContains("unmount with --force")
+	forcedUnmount := runTIWithInput(t, bin, "", pendingDrainEnv,
+		"fs", "unmount-file-system",
+		"--mount-path", strictMountPath,
+		"--force",
+	)
+	forcedUnmount.wantExitCode(0)
+	forcedUnmount.wantStdoutContains(`"status": "skipped"`)
+	forcedUnmount.wantStdoutContains("--force skips the pre-unmount drain")
 
 	for _, path := range []string{
 		filepath.Join(home, ".tdc", "config"),
@@ -1313,6 +1351,13 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	assertFakeDrive9FlagValue(t, calls, "mount", mountPath, "--durability", "interactive")
 	assertFakeDrive9FlagValue(t, calls, "mount", strictMountPath, "--durability", "close-sync")
 	assertFakeDrive9FlagValue(t, calls, "mount", webdavMountPath, "--durability", "")
+	// A FUSE unmount drains before detaching; a WebDAV unmount has no control
+	// socket and must not try.
+	for _, call := range calls {
+		if len(call.Args) >= 2 && call.Args[0] == "mount" && call.Args[1] == "drain" && call.Args[len(call.Args)-1] == webdavMountPath {
+			t.Fatalf("webdav unmount drained: %#v", call.Args)
+		}
+	}
 }
 
 func TestRuntimeExecCommandSurfaceAndFailureContract(t *testing.T) {

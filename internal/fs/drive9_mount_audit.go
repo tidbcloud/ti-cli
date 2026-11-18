@@ -126,7 +126,10 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		}
 		return MountResult{}, runErr
 	}
-	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", opts); err != nil {
+	// Record the driver the companion actually mounted with, so the matching
+	// unmount knows whether the mount supports the drain gate.
+	mountedDriver := drive9MountedDriver(result.Stderr, opts.Driver)
+	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", mountedDriver, opts); err != nil {
 		// A partially completed unpack can leave an escaping link behind, and a
 		// later mount would record it as pre-existing state, so audit before
 		// deciding whether the failed mount can be torn down.
@@ -161,7 +164,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		return MountResult{}, readyErr
 	}
 	endpoint, _ := s.resolveFS(opts.Profile)
-	driver := drive9MountedDriver(result.Stderr, opts.Driver)
+	driver := mountedDriver
 	if driver == "" {
 		driver = "auto"
 	}
