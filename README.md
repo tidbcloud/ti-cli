@@ -226,7 +226,7 @@ ti fs list-layer-chain --layer-ref experiment-a --output text
 
 Use `ti fs delete-layer --layer-ref experiment-a` to abandon a rejected leaf. Deleting a layer with live descendants fails unless `--cascade` is supplied explicitly. Layer names are not durable unique identifiers because abandoned layers remain visible; automation should capture returned layer IDs and use run-unique checkpoint IDs.
 
-`ti fs list-regions` lists the Filesystem regions published by TiDB Cloud Filesystem, with their cloud provider, display name, state, and regional service address. It uses TiDB Cloud credentials, always asks the API, and refreshes the recorded `service_address` of locally stored File System credentials:
+`ti fs list-regions` lists the Filesystem regions published by TiDB Cloud Filesystem, with their cloud provider, display name, state, and regional service address. It uses TiDB Cloud credentials, always asks the API, and refreshes the recorded `service_address` of locally stored File System credentials. The catalog request is Digest-authenticated with the organization API key pair, so `ti` follows a redirect only when it keeps the same scheme and host and otherwise fails with `api.fs_regions_redirect_refused`; the catalog endpoint itself must be `https` (plain `http` is accepted only for a loopback test server) and must not embed credentials, a query, or a fragment:
 
 ```shell
 ti fs list-regions

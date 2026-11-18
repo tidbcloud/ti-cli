@@ -154,28 +154,6 @@ func TestRefusedDowngradeRedirectNamesBothSchemes(t *testing.T) {
 	}
 }
 
-func TestSameOriginRedirectRules(t *testing.T) {
-	via := []*http.Request{{URL: mustParseURL(t, "https://api.example.com/v1/a")}}
-	for _, tc := range []struct {
-		target string
-		allow  bool
-	}{
-		{"https://api.example.com/v1/b", true},
-		{"https://API.example.com/v1/b", true},
-		{"http://api.example.com/v1/b", false},
-		{"https://api.example.com:8443/v1/b", false},
-		{"https://evil.example/v1/b", false},
-	} {
-		err := sameOriginRedirect(&http.Request{URL: mustParseURL(t, tc.target)}, via)
-		if tc.allow && err != nil {
-			t.Fatalf("%s: expected redirect to be followed, got %v", tc.target, err)
-		}
-		if !tc.allow && !errors.Is(err, http.ErrUseLastResponse) {
-			t.Fatalf("%s: expected redirect to be refused, got %v", tc.target, err)
-		}
-	}
-}
-
 func TestNewKeepsCallerRedirectPolicyAndDoesNotMutateClient(t *testing.T) {
 	shared := &http.Client{}
 	client, err := New(Options{Endpoint: endpoints.Endpoint{BaseURL: "https://api.example.com"}, HTTPClient: shared})
@@ -196,6 +174,17 @@ func TestNewKeepsCallerRedirectPolicyAndDoesNotMutateClient(t *testing.T) {
 	}
 	if err := client.HTTPClient.CheckRedirect(&http.Request{URL: mustParseURL(t, "https://api.example.com/x")}, []*http.Request{{URL: mustParseURL(t, "https://api.example.com/")}}); !errors.Is(err, http.ErrUseLastResponse) {
 		t.Fatalf("expected the caller's CheckRedirect to be kept, got %v", err)
+	}
+
+	// A caller policy that allows every redirect must not widen the client past
+	// the credential-bearing same-origin rule.
+	permissive := func(*http.Request, []*http.Request) error { return nil }
+	client, err = New(Options{Endpoint: endpoints.Endpoint{BaseURL: "https://api.example.com"}, HTTPClient: &http.Client{CheckRedirect: permissive}})
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	if err := client.HTTPClient.CheckRedirect(&http.Request{URL: mustParseURL(t, "https://evil.example/x")}, []*http.Request{{URL: mustParseURL(t, "https://api.example.com/")}}); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("a permissive caller re-enabled a cross-origin redirect: %v", err)
 	}
 }
 

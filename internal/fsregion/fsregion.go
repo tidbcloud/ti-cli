@@ -9,12 +9,14 @@
 package fsregion
 
 import (
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"sort"
 	"strings"
 
+	apitransport "github.com/tidbcloud/ti-cli/internal/api/transport"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config/region"
 )
@@ -153,17 +155,57 @@ func NormalizeServiceAddress(value string) (string, error) {
 	if trimmed == "" {
 		return "", invalid("the Filesystem region catalog entry is missing service_address")
 	}
-	parsed, err := url.Parse(trimmed)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return "", invalid(fmt.Sprintf("invalid Filesystem service address %q", trimmed))
-	}
-	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())) {
-		return "", invalid(fmt.Sprintf("invalid Filesystem service address %q: scheme must be https", trimmed))
-	}
-	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return "", invalid(fmt.Sprintf("invalid Filesystem service address %q: credentials, query, and fragment are not allowed", trimmed))
+	parsed, err := parseSecureOrigin(trimmed)
+	if err != nil {
+		return "", invalid(describeRejectedOrigin("Filesystem service address", parsed, err))
 	}
 	return strings.TrimRight(parsed.String(), "/"), nil
+}
+
+// parseSecureOrigin parses a URL that ti will spend credentials on and enforces
+// the origin rules shared by the catalog endpoint and published service
+// addresses: an absolute https URL (plain http only for a loopback test server)
+// with a host name and without embedded credentials, a query - including a bare
+// trailing "?" - or a fragment.
+//
+// The returned URL is safe to describe in an error only through
+// describeRejectedOrigin; the raw input may embed a password or token.
+func parseSecureOrigin(value string) (*url.URL, error) {
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return nil, errOriginUnparsable
+	}
+	if parsed.Scheme == "" || parsed.Hostname() == "" {
+		return parsed, errOriginNeedsHost
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" {
+		return parsed, errOriginCarriesSecrets
+	}
+	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())) {
+		return parsed, errOriginInsecureScheme
+	}
+	return parsed, nil
+}
+
+var (
+	errOriginUnparsable     = errors.New("it cannot be parsed as a URL")
+	errOriginNeedsHost      = errors.New("it needs a scheme and a host name")
+	errOriginCarriesSecrets = errors.New("credentials, query, and fragment are not allowed")
+	errOriginInsecureScheme = errors.New("scheme must be https, and plain http is allowed only for localhost")
+)
+
+// describeRejectedOrigin phrases a rejected URL without echoing the parts that
+// can carry secrets, so a rejected endpoint never prints a password or query
+// token to stderr.
+func describeRejectedOrigin(kind string, parsed *url.URL, reason error) string {
+	// Only the scheme and host are echoed. Formatting the parsed URL, or any other
+	// field of it, would echo secrets for inputs that do not parse as a hierarchical
+	// URL: "https:user:secret@host" becomes Opaque, and a pasted token becomes Path.
+	display := apitransport.Origin(parsed)
+	if display == "" {
+		return fmt.Sprintf("invalid %s: %v", kind, reason)
+	}
+	return fmt.Sprintf("invalid %s %q: %v", kind, display, reason)
 }
 
 // isLoopbackHost reports whether host is localhost or a loopback IP address.

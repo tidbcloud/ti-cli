@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tidbcloud/ti-cli/internal/api/transport"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/db/sqlcred"
 	"github.com/tidbcloud/ti-cli/internal/db/sqlresult"
@@ -42,6 +44,13 @@ func Execute(ctx context.Context, opts Options) (sqlresult.Result, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 30 * time.Second}
 	}
+	// SQL HTTPS API requests carry the cluster's SQL user credentials in Basic auth.
+	// net/http still copies Authorization across same-host port changes, subdomain
+	// redirects, and https->http downgrades, so the credential-bearing same-origin
+	// rule is enforced here too, composed under any caller-supplied policy.
+	copied := *client
+	copied.CheckRedirect = transport.SameOriginThen(client.CheckRedirect)
+	client = &copied
 	endpoint, err := endpointURL(opts)
 	if err != nil {
 		return sqlresult.Result{}, err
@@ -74,9 +83,18 @@ func Execute(ctx context.Context, opts Options) (sqlresult.Result, error) {
 	res, err := client.Do(req)
 	recordSQLHTTPEvent(ctx, traceID, res, err, time.Since(start))
 	if err != nil {
+		if errors.Is(err, transport.ErrTooManyRedirects) {
+			return sqlresult.Result{}, apperr.Wrap("db.sql_http_redirect_loop", "database", 1, "SQL HTTPS API redirect loop: ti follows redirects only within the same scheme and host", err)
+		}
 		return sqlresult.Result{}, apperr.Wrap("db.sql_http_network", "database", 1, "SQL HTTPS API request failed: check network connectivity and cluster endpoint", err)
 	}
 	defer res.Body.Close()
+	if fromOrigin, toOrigin, crossOrigin := transport.CrossOriginRedirect(res, req); crossOrigin {
+		// The cross-origin redirect was refused instead of followed: report the
+		// origin change rather than the bare status code. A same-origin redirect that
+		// a caller policy refused keeps its normal status handling.
+		return sqlresult.Result{}, apperr.New("db.sql_http_redirect_refused", "database", 1, fmt.Sprintf("refused a SQL HTTPS API redirect from %s to %s: ti follows redirects only within the same scheme and host", fromOrigin, toOrigin))
+	}
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return sqlresult.Result{}, statusError(res)
 	}
@@ -113,6 +131,11 @@ func recordSQLHTTPEvent(ctx context.Context, traceID string, res *http.Response,
 	}
 	if requestErr != nil {
 		event.ErrorCode = "db.sql_http_network"
+		if errors.Is(requestErr, transport.ErrTooManyRedirects) {
+			// Execute reports this as db.sql_http_redirect_loop; the operation log must
+			// not contradict the command error.
+			event.ErrorCode = "db.sql_http_redirect_loop"
+		}
 		event.ErrorCategory = "database"
 	}
 	oplog.FromContext(ctx).Record(ctx, event)
