@@ -135,14 +135,21 @@ func (c Config) Validate() error {
 	if c.RateLimitPerMinute <= 0 || c.RateLimitBurst <= 0 {
 		return fmt.Errorf("telemetry rate limits must be positive")
 	}
-	if c.TiDBDSN == "" {
+	return ValidateTiDBDSN(c.Environment, c.TiDBDSN)
+}
+
+// ValidateTiDBDSN checks TIDB_DSN the same way for the API server and the
+// migration runner: it must parse, and in production it must use verified TLS.
+// An empty environment means production, as in LoadConfig.
+func ValidateTiDBDSN(environment, rawDSN string) error {
+	if rawDSN == "" {
 		return fmt.Errorf("TIDB_DSN is required")
 	}
-	dsn, err := mysql.ParseDSN(c.TiDBDSN)
+	dsn, err := mysql.ParseDSN(rawDSN)
 	if err != nil {
 		return fmt.Errorf("TIDB_DSN is invalid")
 	}
-	if strings.EqualFold(c.Environment, "production") {
+	if strings.EqualFold(valueOrDefault(environment, "production"), "production") {
 		switch strings.ToLower(dsn.TLSConfig) {
 		case "", "false", "skip-verify", "preferred":
 			return fmt.Errorf("TIDB_DSN must enable verified TLS in production")

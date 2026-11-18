@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tidbcloud/ti-cli/internal/api"
+	apitransport "github.com/tidbcloud/ti-cli/internal/api/transport"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
@@ -242,8 +243,11 @@ func (c *Client) readRedirectedFile(ctx context.Context, res *http.Response, ran
 	if rangeHeader != "" {
 		req.Header.Set("Range", rangeHeader)
 	}
-	redirected, err := http.DefaultClient.Do(req)
+	redirected, err := apitransport.DoSecure(transferClient, req)
 	if err != nil {
+		if errors.Is(err, apitransport.ErrInsecureURL) {
+			return nil, apperr.Wrap("api.insecure_redirect", "api", 1, "ti fs redirected the download to a URL that is not https", err)
+		}
 		return nil, &api.Error{
 			Code:     "api.network_error",
 			Category: "api",

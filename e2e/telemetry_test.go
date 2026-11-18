@@ -108,7 +108,9 @@ func telemetryMigratorBinary(t *testing.T) string {
 func runTelemetryMigrator(t *testing.T, ctx context.Context, binary, dsn string, args ...string) {
 	t.Helper()
 	command := exec.CommandContext(ctx, binary, args...)
-	command.Env = append(os.Environ(), "TIDB_DSN="+dsn)
+	// Match the API server below: the e2e TiDB is not on verified TLS, and the
+	// migrator, like the API, treats an unset environment as production.
+	command.Env = append(os.Environ(), "TIDB_DSN="+dsn, "TELEMETRY_ENVIRONMENT=telemetry-e2e")
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run telemetry migrator: %v\n%s", err, output)

@@ -23,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	apitransport "github.com/tidbcloud/ti-cli/internal/api/transport"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/credentialenv"
 	"github.com/tidbcloud/ti-cli/internal/version"
@@ -326,12 +327,12 @@ func newClient(info version.Info, baseURL string, httpClient *http.Client) clien
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = DefaultReleaseAPIBaseURL
 	}
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
+	// Release metadata, checksums, the ti archive, and the ti-drive9 companion all
+	// come through this client, and the archive and companion get executed, so
+	// every URL and redirect must be https (http only to loopback for local tests).
 	return client{
 		baseURL:    strings.TrimRight(baseURL, "/"),
-		httpClient: httpClient,
+		httpClient: apitransport.SecureTransferClient(httpClient),
 	}
 }
 
@@ -399,8 +400,11 @@ func (c client) download(ctx context.Context, url string) ([]byte, error) {
 	}
 	req.Header.Set("User-Agent", "ti")
 	req.Header.Set("Accept", "application/json, application/octet-stream")
-	resp, err := c.httpClient.Do(req)
+	resp, err := apitransport.DoSecure(c.httpClient, req)
 	if err != nil {
+		if errors.Is(err, apitransport.ErrInsecureURL) {
+			return nil, apperr.Wrap("update.insecure_url", "runtime", 1, "download release metadata or artifact", err)
+		}
 		return nil, apperr.Wrap("update.network_error", "runtime", 1, "download release metadata or artifact", err)
 	}
 	defer resp.Body.Close()
