@@ -390,7 +390,7 @@ func drainSupportCheck(locator mountlocator.Locator) dryrun.Check {
 	if drainable, reason := drainApplicability(locator); !drainable {
 		return dryrun.Check{Name: "drain_support", Status: "failed", Message: reason}
 	}
-	return dryrun.Check{Name: "drain_support", Status: "passed", Message: "file-system mount with a drain control socket"}
+	return dryrun.Check{Name: "drain_support", Status: "passed", Message: "file-system mount; the drain command asks the companion"}
 }
 
 // describeDryRunDrainGate reports what the pre-unmount drain would do without

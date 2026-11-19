@@ -114,6 +114,11 @@ func main() {
 			report["error_kind"] = "pending_work_remaining"
 			report["pending"] = map[string]any{"commit_queue_pending": 2, "uploader_queued": 2}
 		}
+		if kind := os.Getenv("TI_FAKE_DRIVE9_DRAIN_ZERO_KIND"); kind != "" {
+			report["ok"] = false
+			report["error"] = "drain deadline exceeded with nothing queued"
+			report["error_kind"] = kind
+		}
 		if kind := os.Getenv("TI_FAKE_DRIVE9_DRAIN_PENDING_KIND"); kind != "" {
 			report["ok"] = false
 			report["error"] = "drain deadline exceeded with queued work"

@@ -56,7 +56,7 @@ func drainPendingSummary(pending mountcontrol.DrainPending) string {
 		}
 		rendered = append(rendered, fmt.Sprintf("%s=%d", counter.name, counter.value))
 	}
-	if len(rendered) == 0 {
+	if len(rendered) == 0 || !pending.HasPendingWork() {
 		return "none"
 	}
 	return strings.Join(rendered, " ")
@@ -83,12 +83,13 @@ func describeDrainFailure(response *mountcontrol.DrainResponse) string {
 }
 
 // hasPendingWork reports whether the engine's report shows undrained write-side
-// work. It is the authoritative signal for "the writes are still only local",
-// independent of how the engine classified the failure: a drain that hits its
-// timeout with a write-back backlog reports a non-pending error_kind but is
-// exactly the loss this gate exists to prevent.
+// work. The predicate is an explicit enumeration of the counters, never the
+// operator-facing rendering: rewording the summary must not be able to change a
+// data-safety decision. It is independent of how the engine classified the
+// failure, because a drain that hits its timeout with a write-back backlog
+// reports a non-pending error_kind and is exactly the loss this gate prevents.
 func hasPendingWork(pending mountcontrol.DrainPending) bool {
-	return drainPendingSummary(pending) != "none"
+	return pending.HasPendingWork()
 }
 
 // drainErrorCode classifies a drain failure. Undrained write-back work is the
@@ -197,10 +198,11 @@ func (s Service) drainMount(ctx context.Context, profile *config.Profile, mountP
 		if runErr != nil {
 			reason = fmt.Sprintf("%v", runErr)
 		}
-		code := "fs.drain_failed"
-		if apperr.CodeFor(decodeErr) == "fs.drain_report_invalid" {
-			code = "fs.drain_report_invalid"
-		}
+		// Keep the report-shaped code: "no report" and "unparseable report"
+		// tell an operator different things (a gone mount or an old companion
+		// versus a broken companion), and both are tolerated by
+		// --ignore-absent because neither shows pending work.
+		code := apperr.CodeFor(decodeErr)
 		return record, apperr.New(code, "runtime", 1, fmt.Sprintf("drain %s produced no report: %s; %s", mountPath, reason, drainRemedy(code, mountPath)))
 	}
 	if runErr != nil || !response.OK {

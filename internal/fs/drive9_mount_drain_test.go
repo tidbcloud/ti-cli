@@ -9,6 +9,7 @@ import (
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/fs/fscred"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountcontrol"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
 )
 
@@ -403,6 +404,92 @@ func TestUnmountIgnoreAbsentStillBlocksParsedPendingWork(t *testing.T) {
 		if len(call.Args) > 0 && call.Args[0] == "umount" {
 			t.Fatalf("unmount ran with queued work: %#v", call.Args)
 		}
+	}
+}
+
+// TestUnmountIgnoreAbsentToleratesZeroCounterFailure pins the tolerated shape:
+// a parsed report with a non-pending classification and no queued counters
+// reports drain.status "failed" but lets the cleanup unmount continue.
+func TestUnmountIgnoreAbsentToleratesZeroCounterFailure(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(home, companion)
+	service.mountPointActive = trueMountEvidence
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, Driver: "fuse",
+	}); err != nil {
+		t.Fatalf("mount failed: %v", err)
+	}
+	t.Setenv("TI_FAKE_DRIVE9_DRAIN_ZERO_KIND", "deadline_exceeded")
+
+	result, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{Profile: dataProfile(), MountPath: mountPath, IgnoreAbsent: true})
+	if err != nil {
+		t.Fatalf("ignore-absent unmount failed: %v", err)
+	}
+	if result.Status != "unmounted" || result.Drain == nil || result.Drain.Status != "failed" {
+		t.Fatalf("unexpected unmount result: %#v", result)
+	}
+	if result.Drain.Response == nil || result.Drain.Response.Pending.HasPendingWork() {
+		t.Fatalf("fixture was supposed to report no queued work: %#v", result.Drain.Response)
+	}
+}
+
+// TestDryRunDrainSupportForDriverlessLocator keeps the drain dry run honest for
+// mounts whose locator predates the recorded driver: the drain command still
+// accepts them, so the check must not claim it cannot run.
+func TestDryRunDrainSupportForDriverlessLocator(t *testing.T) {
+	home := t.TempDir()
+	companion, _ := buildFakeDrive9(t)
+	service := testCompanionService(home, companion)
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	if _, err := mountlocator.Write(home, legacyTestLocator(t, home, mountPath)); err != nil {
+		t.Fatalf("write locator: %v", err)
+	}
+	result, err := service.DryRunDrainFileSystem(context.Background(), "ti fs drain-file-system", DrainFileSystemOptions{Profile: dataProfile(), MountPath: mountPath})
+	if err != nil {
+		t.Fatalf("dry run failed: %v", err)
+	}
+	for _, check := range result.Checks {
+		if check.Name != "drain_support" {
+			continue
+		}
+		if check.Status != "passed" {
+			t.Fatalf("driver-less drain dry run = %#v, want passed", check)
+		}
+		return
+	}
+	t.Fatal("drain_support check missing")
+}
+
+// TestHasPendingWorkIsIndependentOfRendering keeps the safety predicate from
+// ever depending on the operator-facing summary.
+func TestHasPendingWorkIsIndependentOfRendering(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		pending mountcontrol.DrainPending
+		want    bool
+	}{
+		{name: "empty", pending: mountcontrol.DrainPending{}, want: false},
+		{name: "open handles", pending: mountcontrol.DrainPending{OpenHandles: 1}, want: true},
+		{name: "dirty handles", pending: mountcontrol.DrainPending{DirtyHandles: 1}, want: true},
+		{name: "commit queue", pending: mountcontrol.DrainPending{CommitQueuePending: 1}, want: true},
+		{name: "commit bytes", pending: mountcontrol.DrainPending{CommitQueueBytes: 1}, want: true},
+		{name: "uploader queued", pending: mountcontrol.DrainPending{UploaderQueued: 1}, want: true},
+		{name: "uploader cached", pending: mountcontrol.DrainPending{UploaderCached: 1}, want: true},
+		{name: "uploader cached bytes", pending: mountcontrol.DrainPending{UploaderCachedBytes: 1}, want: true},
+		{name: "conflicts", pending: mountcontrol.DrainPending{CommitQueueConflicts: 1}, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasPendingWork(tc.pending); got != tc.want {
+				t.Fatalf("hasPendingWork(%+v) = %t, want %t", tc.pending, got, tc.want)
+			}
+			summary := drainPendingSummary(tc.pending)
+			if tc.want != (summary != "none") {
+				t.Fatalf("summary %q disagrees with the predicate for %+v", summary, tc.pending)
+			}
+		})
 	}
 }
 

@@ -100,8 +100,28 @@ A pending unmount fails with `fs.drain_pending_work`, names the engine's
   can only be bypassed with `--force` (and says `--ignore-absent` will not
   help), while a non-pending or report-less failure points at
   `--ignore-absent` for a mount that may be gone and at `--force` for accepting
-  the loss. A drain that produces no report at all is a structured
-  `fs.drain_failed` with the same guidance instead of a raw companion error.
+  the loss. The gate itself has one authority, the error code: the
+  `fs.drain_pending_work` classification already folds in both the engine's
+  `error_kind` and the parsed counters, so the block condition cannot drift from
+  the message. A drain that produced no report is a structured
+  `fs.drain_report_missing` (no stdout at all) or `fs.drain_report_invalid`
+  (unparseable stdout) with the same guidance, instead of a raw companion error.
+
+### The pending predicate
+
+`DrainPending.HasPendingWork()` is the single data-safety predicate. It is an
+explicit enumeration of the counters, never a parse of the operator-facing
+summary, so rewording the text output cannot change a safety decision.
+
+The engine's own drain-failure exit record counts
+`dirty_handles + commit_queue_pending + uploader_queued` as pending files and
+`commit_queue_bytes + uploader_cached_bytes` as pending bytes, so those counters
+are undrained work by construction. The remaining counters are informational,
+but they are non-zero only while the mount still has unfinished work, so ti
+treats any non-zero counter as pending. That is a deliberate conservative
+over-block: refusing to detach is recoverable, silently detaching from queued
+write-back is not. If Drive9 later publishes a loss-carrying versus
+informational split, tighten the predicate and this section together.
 - The result reports the recorded driver and the drain record. Text output adds
   the `DRAIN` column and the pending counters.
 - `--dry-run` reports the gate in a `pre_unmount_drain` check without running
@@ -167,7 +187,12 @@ remains the client-side mitigation.
   non-pending classification) continues with `drain.status: "failed"` on both
   the `unmounted` and `absent` outcomes.
 - The drain `--dry-run` check is pinned for both directions (WebDAV reports
-  `failed`, an unrecorded driver stays `passed`).
+  `failed`, and a driver-less legacy locator reports `passed` because the drain
+  command still accepts it).
+- Both tolerated shapes have their own fixture: a drain that produces no report
+  (`fs.drain_report_missing`, tolerated) and a parsed report with a non-pending
+  classification and zero counters (tolerated, `drain.status: "failed"`), plus
+  the pending shape that blocks under `--ignore-absent`.
 
 The English PingCAP pages under `docs/pingcap-docs/docs/` are a submodule that
 was not checked out while this spec was implemented. The published mount and

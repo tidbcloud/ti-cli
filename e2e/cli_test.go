@@ -1383,6 +1383,24 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	forcedUnmount.wantStdoutContains(`"status": "skipped"`)
 	forcedUnmount.wantStdoutContains("--force skips the pre-unmount drain")
 
+	// A parsed failure with a non-pending classification and no queued counters
+	// reports the failure but lets the cleanup flag continue.
+	zeroMountPath := filepath.Join(home, "mount-zero")
+	zeroMount := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", zeroMountPath,
+		"--driver", "fuse",
+	)
+	zeroMount.wantExitCode(0)
+	zeroKindEnv := append(append([]string{}, baseEnv...), "FAKE_DRIVE9_DRAIN_ZERO_KIND=deadline_exceeded")
+	zeroKind := runTIWithInput(t, bin, "", zeroKindEnv,
+		"fs", "unmount-file-system",
+		"--mount-path", zeroMountPath,
+		"--ignore-absent",
+	)
+	zeroKind.wantExitCode(0)
+	zeroKind.wantStdoutContains(`"status": "failed"`)
+
 	// A drain that cannot reach the mount is not pending work, so the cleanup
 	// flag may continue, but the outcome still reports the failed drain.
 	goneMountPath := filepath.Join(home, "mount-gone")

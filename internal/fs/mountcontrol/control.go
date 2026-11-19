@@ -52,6 +52,31 @@ type DrainPending struct {
 	UploaderCachedBytes  int64 `json:"uploader_cached_bytes"`
 }
 
+// HasPendingWork reports whether the snapshot lists work the engine has not made
+// durable remotely.
+//
+// The engine's own drain-failure exit record counts exactly
+// dirty_handles + commit_queue_pending + uploader_queued as pending files and
+// commit_queue_bytes + uploader_cached_bytes as pending bytes, so those counters
+// are undrained work by construction. The remaining counters are informational,
+// but they are non-zero only while the mount still has unfinished work, so ti
+// treats any non-zero counter as pending: over-blocking an unmount is safe,
+// silently detaching from queued write-back is not. Keep this conservative until
+// the engine publishes a loss-carrying/informational split.
+func (p DrainPending) HasPendingWork() bool {
+	return p.OpenHandles != 0 ||
+		p.DirtyHandles != 0 ||
+		p.CommitQueuePending != 0 ||
+		p.CommitQueueBytes != 0 ||
+		p.CommitQueueInFlight != 0 ||
+		p.CommitQueueDelayed != 0 ||
+		p.CommitQueueConflicts != 0 ||
+		p.UploaderQueued != 0 ||
+		p.UploaderInFlight != 0 ||
+		p.UploaderCached != 0 ||
+		p.UploaderCachedBytes != 0
+}
+
 type DrainPhase struct {
 	Name       string `json:"name"`
 	DurationMS int64  `json:"duration_ms"`
