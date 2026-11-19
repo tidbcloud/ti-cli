@@ -84,13 +84,22 @@ A pending unmount fails with `fs.drain_pending_work`, names the engine's
   the reason, so a forced unmount is still attributable. It is the only way to
   accept undrained writes.
 - `--ignore-absent` keeps its cleanup idempotency meaning, not loss acceptance:
-  a drain that fails for a reason other than pending work (typically a mount
-  that is already gone) does not block, and the result records
-  `drain.status: "failed"` plus a `drain` runtime check. A
-  `fs.drain_pending_work` failure blocks even under `--ignore-absent`, and the
-  blocked-drain error names both flags so the remedy is unambiguous. Cleanup
-  scripts pass `--ignore-absent` routinely, so letting it bypass the pending
-  check would recreate the silent write loss this spec closes.
+  a drain that produced no report (typically a mount that is already gone) does
+  not block, and the result records `drain.status: "failed"` plus a `drain`
+  runtime check on both the `unmounted` and `absent` outcomes. The block
+  condition is the **parsed pending counters**, not the engine's classification:
+  a drain that hits its timeout against a write-back backlog reports a
+  non-pending `error_kind` while still listing queued work, so trusting the
+  classification alone would detach with exit 0 and print the counters it is
+  discarding. Cleanup scripts pass `--ignore-absent` routinely, so letting it
+  bypass the pending check would recreate the silent write loss this spec
+  closes. `--force` remains the only loss acceptance.
+- The blocked-drain error tail is built from the classification: pending work
+  can only be bypassed with `--force` (and says `--ignore-absent` will not
+  help), while a non-pending or report-less failure points at
+  `--ignore-absent` for a mount that may be gone and at `--force` for accepting
+  the loss. A drain that produces no report at all is a structured
+  `fs.drain_failed` with the same guidance instead of a raw companion error.
 - The result reports the recorded driver and the drain record. Text output adds
   the `DRAIN` column and the pending counters.
 - `--dry-run` reports the gate in a `pre_unmount_drain` check without running
@@ -100,10 +109,12 @@ A pending unmount fails with `fs.drain_pending_work`, names the engine's
 
 `ti fs drain-file-system` runs only for mounts the engine can drain. A non-`fs`
 locator kind (for example a `vault` mount) and a WebDAV driver fail with
-`fs.drain_not_applicable` and an explanation, matching what the drain dry-run
-already reported, instead of forwarding a request the companion rejects with a
-raw error. A locator that records no driver stays drainable: the command itself
-asks for a drain, and only the unmount gate needs the stricter driver check.
+`fs.drain_not_applicable` and an explanation instead of forwarding a request the
+companion rejects with a raw error. A locator that records no driver stays
+drainable: the command itself asks for a drain, and only the unmount gate needs
+the stricter driver check. The drain `--dry-run` reports the same rule in its
+`drain_support` check, with `status: "failed"` when the command would refuse to
+run, so the dry run predicts the execution instead of contradicting it.
 
 The `--force` flag previously promised to "kill the mount process" but no code
 read it; it now means "accept the undrained writes".
@@ -148,9 +159,12 @@ remains the client-side mitigation.
 - The e2e mount expectations pin `--driver fuse` wherever a forwarded tier is
   asserted and branch the automatic-mode case on the host platform, so the
   mandatory `make e2e` gate stays green on macOS and Windows as well as Linux.
-- The `--ignore-absent` cases are covered both ways: pending work still blocks
-  (unit and e2e), and a drain that cannot reach the mount continues with
-  `drain.status: "failed"`.
+- The `--ignore-absent` cases are covered both ways: pending work blocks even
+  when the engine classifies the failure as something else (unit and e2e), and a
+  drain that produced no report continues with `drain.status: "failed"` on both
+  the `unmounted` and `absent` outcomes.
+- The drain `--dry-run` check is pinned for both directions (WebDAV reports
+  `failed`, an unrecorded driver stays `passed`).
 
 The English PingCAP pages under `docs/pingcap-docs/docs/` are a submodule that
 was not checked out while this spec was implemented. The published mount and

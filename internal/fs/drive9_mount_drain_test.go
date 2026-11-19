@@ -342,6 +342,83 @@ func TestUnmountIgnoreAbsentToleratesGoneMount(t *testing.T) {
 	}
 }
 
+// TestUnmountIgnoreAbsentAbsentPathStillReportsDrainFailure keeps the two
+// success shapes aligned: when the unmount itself reports the mount absent, the
+// tolerated drain failure is still recorded.
+func TestUnmountIgnoreAbsentAbsentPathStillReportsDrainFailure(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(home, companion)
+	service.mountPointActive = trueMountEvidence
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, Driver: "fuse",
+	}); err != nil {
+		t.Fatalf("mount failed: %v", err)
+	}
+	t.Setenv("TI_FAKE_DRIVE9_DRAIN_FAIL", "1")
+	t.Setenv("TI_FAKE_UMOUNT_FAIL", "1")
+
+	result, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{Profile: dataProfile(), MountPath: mountPath, IgnoreAbsent: true})
+	if err != nil {
+		t.Fatalf("ignore-absent unmount failed: %v", err)
+	}
+	if result.Status != "absent" || result.Drain == nil || result.Drain.Status != "failed" {
+		t.Fatalf("unexpected absent result: %#v", result)
+	}
+	found := false
+	for _, check := range result.Checks {
+		if check.Name == "drain" && check.Status == "failed" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("absent path did not report the tolerated drain failure: %#v", result.Checks)
+	}
+}
+
+// TestUnmountIgnoreAbsentStillBlocksParsedPendingWork covers the classification
+// hole: a drain that fails with a non-pending error_kind while the report shows
+// queued work must still block.
+func TestUnmountIgnoreAbsentStillBlocksParsedPendingWork(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(home, companion)
+	service.mountPointActive = trueMountEvidence
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, Driver: "fuse",
+	}); err != nil {
+		t.Fatalf("mount failed: %v", err)
+	}
+	t.Setenv("TI_FAKE_DRIVE9_DRAIN_PENDING_KIND", "deadline_exceeded")
+
+	_, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{Profile: dataProfile(), MountPath: mountPath, IgnoreAbsent: true})
+	if apperr.CodeFor(err) != "fs.drain_pending_work" {
+		t.Fatalf("ignore-absent unmount error = %v, want fs.drain_pending_work", err)
+	}
+	for _, call := range readFakeDrive9Calls(t, recordPath) {
+		if len(call.Args) > 0 && call.Args[0] == "umount" {
+			t.Fatalf("unmount ran with queued work: %#v", call.Args)
+		}
+	}
+}
+
+// TestDrainRemedyMatchesClassification keeps the error guidance accurate: only
+// pending work is unbailable by --ignore-absent.
+func TestDrainRemedyMatchesClassification(t *testing.T) {
+	pending := drainRemedy("fs.drain_pending_work", "/mnt")
+	if !strings.Contains(pending, "--force") || !strings.Contains(pending, "--ignore-absent does not skip") {
+		t.Fatalf("pending remedy = %q", pending)
+	}
+	other := drainRemedy("fs.drain_failed", "/mnt")
+	if strings.Contains(other, "does not skip") || !strings.Contains(other, "--ignore-absent") || !strings.Contains(other, "--force") {
+		t.Fatalf("non-pending remedy = %q", other)
+	}
+}
+
 // TestDrainRejectsNonFileSystemMount keeps the drain command from reaching the
 // companion with a mount the engine cannot drain.
 func TestDrainRejectsNonFileSystemMount(t *testing.T) {
@@ -352,6 +429,12 @@ func TestDrainRejectsNonFileSystemMount(t *testing.T) {
 	mountPath := filepath.Join(t.TempDir(), "vault")
 	if _, err := mountlocator.Write(home, legacyTestLocatorWithKind(t, home, mountPath, "vault", "fuse")); err != nil {
 		t.Fatalf("write locator: %v", err)
+	}
+	if drainable, _ := drainApplicability(mountlocator.Locator{Kind: mountKindFileSystem, Driver: "webdav"}); drainable {
+		t.Fatal("webdav locator reported drainable")
+	}
+	if drainable, _ := drainApplicability(mountlocator.Locator{Kind: mountKindFileSystem}); !drainable {
+		t.Fatal("locator with an unrecorded driver must stay drainable")
 	}
 	if _, err := service.DrainFileSystem(context.Background(), DrainFileSystemOptions{Profile: dataProfile(), MountPath: mountPath}); apperr.CodeFor(err) != "fs.drain_not_applicable" {
 		t.Fatalf("vault drain error = %v, want fs.drain_not_applicable", err)

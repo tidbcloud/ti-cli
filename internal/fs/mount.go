@@ -125,7 +125,6 @@ type UnmountResult struct {
 	Status    string              `json:"status"`
 	MountPath string              `json:"mount_path"`
 	Driver    string              `json:"driver,omitempty"`
-	PID       int                 `json:"pid,omitempty"`
 	StateFile string              `json:"state_file,omitempty"`
 	Checks    []MountRuntimeCheck `json:"checks,omitempty"`
 	// Drain records the pre-unmount drain pass: drained, failed, or skipped
@@ -147,7 +146,6 @@ type DrainResult struct {
 	Status        string                      `json:"status"`
 	MountPath     string                      `json:"mount_path"`
 	Driver        string                      `json:"driver,omitempty"`
-	PID           int                         `json:"pid,omitempty"`
 	StateFile     string                      `json:"state_file,omitempty"`
 	ControlSocket string                      `json:"control_socket,omitempty"`
 	Response      *mountcontrol.DrainResponse `json:"response,omitempty"`
@@ -353,7 +351,7 @@ func (s Service) DryRunDrainFileSystem(ctx context.Context, commandPath string, 
 		dryrun.Check{Name: "mount_locator", Status: "passed", Message: opts.MountPath},
 		dryrun.Check{Name: "file_system_id", Status: "passed", Message: profile.FSTenantID},
 		dryrun.Check{Name: "region", Status: "passed", Message: profile.FSPlacementRegionCode},
-		dryrun.Check{Name: "drain_support", Status: "passed", Message: drainSupportDryRunMessage(locator)},
+		drainSupportCheck(locator),
 	), nil
 }
 
@@ -385,12 +383,14 @@ func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string
 	), nil
 }
 
-// drainSupportDryRunMessage says whether the mount can be drained at all.
-func drainSupportDryRunMessage(locator mountlocator.Locator) string {
-	if drainable, reason := mountDrainGate(locator, false); !drainable {
-		return "not applicable: " + reason
+// drainSupportCheck predicts whether `ti fs drain-file-system` will run for
+// this mount. It uses the drain command's own rule, so a dry run cannot claim a
+// drain that normal execution deterministically refuses.
+func drainSupportCheck(locator mountlocator.Locator) dryrun.Check {
+	if drainable, reason := drainApplicability(locator); !drainable {
+		return dryrun.Check{Name: "drain_support", Status: "failed", Message: reason}
 	}
-	return "FUSE mount with a drain control socket"
+	return dryrun.Check{Name: "drain_support", Status: "passed", Message: "file-system mount with a drain control socket"}
 }
 
 // describeDryRunDrainGate reports what the pre-unmount drain would do without

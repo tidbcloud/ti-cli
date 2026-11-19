@@ -82,10 +82,19 @@ func describeDrainFailure(response *mountcontrol.DrainResponse) string {
 	return strings.Join(parts, "; ")
 }
 
+// hasPendingWork reports whether the engine's report shows undrained write-side
+// work. It is the authoritative signal for "the writes are still only local",
+// independent of how the engine classified the failure: a drain that hits its
+// timeout with a write-back backlog reports a non-pending error_kind but is
+// exactly the loss this gate exists to prevent.
+func hasPendingWork(pending mountcontrol.DrainPending) bool {
+	return drainPendingSummary(pending) != "none"
+}
+
 // drainErrorCode classifies a drain failure. Undrained write-back work is the
 // dangerous case (the data is still only local), so it gets its own code.
 func drainErrorCode(response *mountcontrol.DrainResponse) string {
-	if response != nil && response.ErrorKind == "pending_work_remaining" {
+	if response != nil && (response.ErrorKind == "pending_work_remaining" || hasPendingWork(response.Pending)) {
 		return "fs.drain_pending_work"
 	}
 	return "fs.drain_failed"
@@ -143,7 +152,7 @@ func drainApplicability(locator mountlocator.Locator) (bool, string) {
 		return false, fmt.Sprintf("%s mounts have no drain; the engine drains only file-system mounts", kind)
 	}
 	if strings.TrimSpace(locator.Driver) == "webdav" {
-		return false, "webdav mounts have no mount control socket to drain; the companion flushes them when it unmounts"
+		return false, mountDrainSkipReason(locator.Driver)
 	}
 	return true, ""
 }
@@ -154,6 +163,17 @@ func mountDrainSkipReason(driver string) string {
 		return "the mount locator records no driver, so ti cannot confirm the mount supports drain"
 	}
 	return fmt.Sprintf("%s mounts have no mount control socket to drain; the companion flushes them when it unmounts", strings.TrimSpace(driver))
+}
+
+// drainRemedy builds the actionable tail of a drain error from its
+// classification. Pending work can only be skipped with --force; a failure that
+// produced no report is typically a mount that is already gone, which
+// --ignore-absent tolerates on unmount.
+func drainRemedy(code, mountPath string) string {
+	if code == "fs.drain_pending_work" {
+		return fmt.Sprintf("close the writers or let the background upload finish, then retry ti fs drain-file-system --mount-path %q; --force is the only way past this on unmount (--ignore-absent does not skip this check)", mountPath)
+	}
+	return fmt.Sprintf("if the mount is already gone, ti fs unmount-file-system --mount-path %q --ignore-absent continues; --force accepts losing any undrained writes", mountPath)
 }
 
 // drainMount runs the companion's drain and reports its result. It returns the
@@ -168,14 +188,25 @@ func (s Service) drainMount(ctx context.Context, profile *config.Profile, mountP
 	result, runErr := s.drive9Run(ctx, profile, args, true)
 	response, decodeErr := decodeDrive9DrainResponse(result.Stdout)
 	if decodeErr != nil {
+		// No usable report: the mount is most likely gone, or the companion
+		// predates the report. That is a drain failure, not pending work, so
+		// the error has to carry the same unmount escape hatches as a classified
+		// failure instead of surfacing a raw companion error.
+		record := MountDrain{Status: "failed", Message: apperr.MessageFor(decodeErr)}
+		reason := apperr.MessageFor(decodeErr)
 		if runErr != nil {
-			return MountDrain{Status: "failed", Message: apperr.MessageFor(runErr)}, runErr
+			reason = fmt.Sprintf("%v", runErr)
 		}
-		return MountDrain{Status: "failed", Message: apperr.MessageFor(decodeErr)}, decodeErr
+		code := "fs.drain_failed"
+		if apperr.CodeFor(decodeErr) == "fs.drain_report_invalid" {
+			code = "fs.drain_report_invalid"
+		}
+		return record, apperr.New(code, "runtime", 1, fmt.Sprintf("drain %s produced no report: %s; %s", mountPath, reason, drainRemedy(code, mountPath)))
 	}
 	if runErr != nil || !response.OK {
+		code := drainErrorCode(response)
 		record := MountDrain{Status: "failed", Message: describeDrainFailure(response), Response: response}
-		return record, apperr.New(drainErrorCode(response), "runtime", 1, fmt.Sprintf("drain %s did not finish: %s; close the writers or let the background upload finish, then retry ti fs drain-file-system --mount-path %q, or unmount with --force to accept losing the undrained writes (--ignore-absent does not skip this check)", mountPath, describeDrainFailure(response), mountPath))
+		return record, apperr.New(code, "runtime", 1, fmt.Sprintf("drain %s did not finish: %s; %s", mountPath, describeDrainFailure(response), drainRemedy(code, mountPath)))
 	}
 	return MountDrain{Status: "drained", Response: response}, nil
 }

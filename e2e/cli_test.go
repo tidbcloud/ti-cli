@@ -1291,6 +1291,22 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	)
 	webdavMount.wantExitCode(0)
 	webdavMount.wantStdoutContains(`"durability": "auto"`)
+	// The drain dry-run predicts the drain command's own rule: a WebDAV mount
+	// cannot be drained, so the check fails instead of claiming success.
+	webdavDrainDryRun := runTIWithInput(t, bin, "", baseEnv,
+		"fs", "drain-file-system",
+		"--mount-path", webdavMountPath,
+		"--dry-run",
+	)
+	webdavDrainDryRun.wantExitCode(0)
+	webdavDrainDryRun.wantStdoutContains(`"name": "drain_support"`)
+	webdavDrainDryRun.wantStdoutContains(`"status": "failed"`)
+	webdavDrain := runTIWithInput(t, bin, "", baseEnv,
+		"fs", "drain-file-system",
+		"--mount-path", webdavMountPath,
+	)
+	webdavDrain.wantExitCode(2)
+	webdavDrain.wantStderrContains("no mount control socket")
 	for _, path := range []string{webdavMountPath, filepath.Join(home, "mount-text"), autoMountPath} {
 		extraUnmount := runTIWithInput(t, bin, "", baseEnv,
 			"fs", "unmount-file-system",
@@ -1338,7 +1354,7 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	)
 	pendingUnmount.wantExitCode(1)
 	pendingUnmount.wantStderrContains("error_kind=pending_work_remaining")
-	pendingUnmount.wantStderrContains("unmount with --force")
+	pendingUnmount.wantStderrContains("--force is the only way past this on unmount")
 	// --ignore-absent is the cleanup idempotency flag, not loss acceptance: it
 	// must not swallow pending writes either.
 	pendingIgnoreAbsent := runTIWithInput(t, bin, "", pendingDrainEnv,
@@ -1348,6 +1364,16 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	)
 	pendingIgnoreAbsent.wantExitCode(1)
 	pendingIgnoreAbsent.wantStderrContains("--ignore-absent does not skip this check")
+	// A non-pending classification with queued work is still pending work.
+	pendingKindEnv := append(append([]string{}, baseEnv...), "FAKE_DRIVE9_DRAIN_PENDING_KIND=deadline_exceeded")
+	pendingKind := runTIWithInput(t, bin, "", pendingKindEnv,
+		"fs", "unmount-file-system",
+		"--mount-path", strictMountPath,
+		"--ignore-absent",
+	)
+	pendingKind.wantExitCode(1)
+	pendingKind.wantStderrContains("error_kind=deadline_exceeded")
+	pendingKind.wantStderrContains("commit_queue_pending=3")
 	forcedUnmount := runTIWithInput(t, bin, "", pendingDrainEnv,
 		"fs", "unmount-file-system",
 		"--mount-path", strictMountPath,

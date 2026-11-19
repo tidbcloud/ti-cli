@@ -1163,9 +1163,11 @@ in the non-secret mount locator, gates only FUSE file-system mounts on the
 drain, blocks with the locator preserved while work is pending, and treats
 `--force` as the only "accept the loss" path (reported as `drain.status:
 "skipped"`). `--ignore-absent` is a cleanup idempotency flag: it may continue
-past a drain that cannot reach the mount, but it must never swallow
-`fs.drain_pending_work`, and the outcome must still report `drain.status:
-"failed"`. A locator written before the driver was recorded is never gated, so
+past a drain that produced no report (a mount that is already gone), but the
+block condition is the parsed pending counters, never the engine's `error_kind`
+alone, and the outcome must still report `drain.status: "failed"` on both the
+`unmounted` and `absent` paths. A non-pending classification with queued work
+still blocks. A locator written before the driver was recorded is never gated, so
 an upgrade cannot block an existing unmount. The reported `durability` must
 match the driver the companion reported, and `--durability` must reject an
 explicitly empty value instead of treating it as the default. Do not drop these

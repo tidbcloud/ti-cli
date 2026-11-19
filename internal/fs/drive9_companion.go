@@ -1391,10 +1391,14 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 	drain, drainErr := s.drainBeforeUnmount(ctx, profile, locator, opts)
 	if drainErr != nil {
 		// --ignore-absent is the idempotency flag cleanup scripts pass, not a
-		// licence to drop writes: only a drain that failed for another reason
-		// (typically a mount that is already gone) may be tolerated. Accepting
-		// the loss stays --force's job alone, so a pending drain always blocks.
-		if apperr.CodeFor(drainErr) == "fs.drain_pending_work" || !opts.IgnoreAbsent {
+		// licence to drop writes. Block whenever the engine's own report shows
+		// undrained work, regardless of how it classified the failure: a drain
+		// that times out against a write-back backlog is exactly the loss this
+		// gate exists to prevent. Only a failure that produced no report at all
+		// (typically a mount that is already gone) may be tolerated, and
+		// accepting the loss stays --force's job alone.
+		pending := drain.Response != nil && hasPendingWork(drain.Response.Pending)
+		if pending || apperr.CodeFor(drainErr) == "fs.drain_pending_work" || !opts.IgnoreAbsent {
 			return UnmountResult{}, drainErr
 		}
 	}
@@ -1418,7 +1422,11 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 			if removeErr := mountlocator.Remove(homeDir, opts.MountPath); removeErr != nil {
 				return UnmountResult{}, apperr.Wrap("fs.remove_mount_locator", "runtime", 1, "remove stale ti fs mount locator", removeErr)
 			}
-			return UnmountResult{Status: "absent", MountPath: opts.MountPath, Driver: locator.Driver, Drain: &drain}, nil
+			absent := UnmountResult{Status: "absent", MountPath: opts.MountPath, Driver: locator.Driver, Drain: &drain}
+			if drainErr != nil {
+				absent.Checks = append(absent.Checks, MountRuntimeCheck{Name: "drain", Status: "failed", Message: apperr.MessageFor(drainErr)})
+			}
+			return absent, nil
 		}
 		return UnmountResult{}, err
 	}
