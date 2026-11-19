@@ -61,9 +61,12 @@ A pending unmount fails with `fs.drain_pending_work`, names the engine's
   `response` (same shape as `mountcontrol.DrainResponse`) instead of being
   dropped.
 - `status` is `drained`. A drain that leaves write-side work fails with
-  `fs.drain_pending_work`; any other drain failure uses `fs.drain_failed`. Both
-  errors carry `error_kind`, the engine's error text, and the non-zero pending
-  counters, plus the retry command.
+  `fs.drain_pending_work`; a classified failure that reports none uses
+  `fs.drain_failed`; a failure with no usable report uses
+  `fs.drain_report_missing` (no stdout) or `fs.drain_report_invalid`
+  (unparseable stdout). Every error carries `error_kind`, the engine's error
+  text, and the non-zero pending counters when there are any, plus the remedy
+  command.
 - Text output prints the pending counters, so `--output text` is usable in an
   operator runbook.
 
@@ -106,6 +109,10 @@ A pending unmount fails with `fs.drain_pending_work`, names the engine's
   the message. A drain that produced no report is a structured
   `fs.drain_report_missing` (no stdout at all) or `fs.drain_report_invalid`
   (unparseable stdout) with the same guidance, instead of a raw companion error.
+- The result reports the recorded driver and the drain record. Text output adds
+  the `DRAIN` column and the pending counters.
+- `--dry-run` reports the gate in a `pre_unmount_drain` check without running
+  the drain.
 
 ### The pending predicate
 
@@ -122,10 +129,6 @@ treats any non-zero counter as pending. That is a deliberate conservative
 over-block: refusing to detach is recoverable, silently detaching from queued
 write-back is not. If Drive9 later publishes a loss-carrying versus
 informational split, tighten the predicate and this section together.
-- The result reports the recorded driver and the drain record. Text output adds
-  the `DRAIN` column and the pending counters.
-- `--dry-run` reports the gate in a `pre_unmount_drain` check without running
-  the drain.
 
 ### Drain applicability
 

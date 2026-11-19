@@ -56,7 +56,7 @@ func drainPendingSummary(pending mountcontrol.DrainPending) string {
 		}
 		rendered = append(rendered, fmt.Sprintf("%s=%d", counter.name, counter.value))
 	}
-	if len(rendered) == 0 || !pending.HasPendingWork() {
+	if !pending.HasPendingWork() {
 		return "none"
 	}
 	return strings.Join(rendered, " ")
@@ -82,20 +82,10 @@ func describeDrainFailure(response *mountcontrol.DrainResponse) string {
 	return strings.Join(parts, "; ")
 }
 
-// hasPendingWork reports whether the engine's report shows undrained write-side
-// work. The predicate is an explicit enumeration of the counters, never the
-// operator-facing rendering: rewording the summary must not be able to change a
-// data-safety decision. It is independent of how the engine classified the
-// failure, because a drain that hits its timeout with a write-back backlog
-// reports a non-pending error_kind and is exactly the loss this gate prevents.
-func hasPendingWork(pending mountcontrol.DrainPending) bool {
-	return pending.HasPendingWork()
-}
-
 // drainErrorCode classifies a drain failure. Undrained write-back work is the
 // dangerous case (the data is still only local), so it gets its own code.
 func drainErrorCode(response *mountcontrol.DrainResponse) string {
-	if response != nil && (response.ErrorKind == "pending_work_remaining" || hasPendingWork(response.Pending)) {
+	if response != nil && (response.ErrorKind == "pending_work_remaining" || response.Pending.HasPendingWork()) {
 		return "fs.drain_pending_work"
 	}
 	return "fs.drain_failed"
@@ -203,7 +193,7 @@ func (s Service) drainMount(ctx context.Context, profile *config.Profile, mountP
 		// versus a broken companion), and both are tolerated by
 		// --ignore-absent because neither shows pending work.
 		code := apperr.CodeFor(decodeErr)
-		return record, apperr.New(code, "runtime", 1, fmt.Sprintf("drain %s produced no report: %s; %s", mountPath, reason, drainRemedy(code, mountPath)))
+		return record, apperr.New(code, "runtime", 1, fmt.Sprintf("drain %s produced no usable report: %s; %s", mountPath, reason, drainRemedy(code, mountPath)))
 	}
 	if runErr != nil || !response.OK {
 		code := drainErrorCode(response)

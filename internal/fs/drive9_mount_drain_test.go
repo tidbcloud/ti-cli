@@ -463,8 +463,8 @@ func TestDryRunDrainSupportForDriverlessLocator(t *testing.T) {
 	t.Fatal("drain_support check missing")
 }
 
-// TestHasPendingWorkIsIndependentOfRendering keeps the safety predicate from
-// ever depending on the operator-facing summary.
+// TestHasPendingWorkIsIndependentOfRendering pins every counter the predicate
+// enumerates and keeps it from ever depending on the operator-facing summary.
 func TestHasPendingWorkIsIndependentOfRendering(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -474,16 +474,20 @@ func TestHasPendingWorkIsIndependentOfRendering(t *testing.T) {
 		{name: "empty", pending: mountcontrol.DrainPending{}, want: false},
 		{name: "open handles", pending: mountcontrol.DrainPending{OpenHandles: 1}, want: true},
 		{name: "dirty handles", pending: mountcontrol.DrainPending{DirtyHandles: 1}, want: true},
-		{name: "commit queue", pending: mountcontrol.DrainPending{CommitQueuePending: 1}, want: true},
-		{name: "commit bytes", pending: mountcontrol.DrainPending{CommitQueueBytes: 1}, want: true},
+		{name: "commit queue pending", pending: mountcontrol.DrainPending{CommitQueuePending: 1}, want: true},
+		{name: "commit queue bytes", pending: mountcontrol.DrainPending{CommitQueueBytes: 1}, want: true},
+		{name: "commit queue in flight", pending: mountcontrol.DrainPending{CommitQueueInFlight: 1}, want: true},
+		{name: "commit queue delayed", pending: mountcontrol.DrainPending{CommitQueueDelayed: 1}, want: true},
+		{name: "commit queue conflicts", pending: mountcontrol.DrainPending{CommitQueueConflicts: 1}, want: true},
 		{name: "uploader queued", pending: mountcontrol.DrainPending{UploaderQueued: 1}, want: true},
+		{name: "uploader in flight", pending: mountcontrol.DrainPending{UploaderInFlight: 1}, want: true},
 		{name: "uploader cached", pending: mountcontrol.DrainPending{UploaderCached: 1}, want: true},
 		{name: "uploader cached bytes", pending: mountcontrol.DrainPending{UploaderCachedBytes: 1}, want: true},
-		{name: "conflicts", pending: mountcontrol.DrainPending{CommitQueueConflicts: 1}, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := hasPendingWork(tc.pending); got != tc.want {
-				t.Fatalf("hasPendingWork(%+v) = %t, want %t", tc.pending, got, tc.want)
+			got := tc.pending.HasPendingWork()
+			if got != tc.want {
+				t.Fatalf("HasPendingWork(%+v) = %t, want %t", tc.pending, got, tc.want)
 			}
 			summary := drainPendingSummary(tc.pending)
 			if tc.want != (summary != "none") {
