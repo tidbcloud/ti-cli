@@ -81,15 +81,29 @@ A pending unmount fails with `fs.drain_pending_work`, names the engine's
 - A failed or pending drain blocks the unmount and keeps the locator, so the
   caller can close the writers and retry.
 - `--force` skips the gate. The result records `drain.status: "skipped"` with
-  the reason, so a forced unmount is still attributable.
-- `--ignore-absent` keeps its cleanup meaning: a drain that fails because the
-  mount is already gone does not block, but the result records
-  `drain.status: "failed"` and a `drain` runtime check instead of pretending the
-  drain succeeded.
+  the reason, so a forced unmount is still attributable. It is the only way to
+  accept undrained writes.
+- `--ignore-absent` keeps its cleanup idempotency meaning, not loss acceptance:
+  a drain that fails for a reason other than pending work (typically a mount
+  that is already gone) does not block, and the result records
+  `drain.status: "failed"` plus a `drain` runtime check. A
+  `fs.drain_pending_work` failure blocks even under `--ignore-absent`, and the
+  blocked-drain error names both flags so the remedy is unambiguous. Cleanup
+  scripts pass `--ignore-absent` routinely, so letting it bypass the pending
+  check would recreate the silent write loss this spec closes.
 - The result reports the recorded driver and the drain record. Text output adds
   the `DRAIN` column and the pending counters.
 - `--dry-run` reports the gate in a `pre_unmount_drain` check without running
   the drain.
+
+### Drain applicability
+
+`ti fs drain-file-system` runs only for mounts the engine can drain. A non-`fs`
+locator kind (for example a `vault` mount) and a WebDAV driver fail with
+`fs.drain_not_applicable` and an explanation, matching what the drain dry-run
+already reported, instead of forwarding a request the companion rejects with a
+raw error. A locator that records no driver stays drainable: the command itself
+asks for a drain, and only the unmount gate needs the stricter driver check.
 
 The `--force` flag previously promised to "kill the mount process" but no code
 read it; it now means "accept the undrained writes".
@@ -131,7 +145,14 @@ remains the client-side mitigation.
   result carries `response.pending`.
 - `make live-e2e-fs` asserts the real drain report fields on a live FUSE mount;
   the live unmount now drains first.
+- The e2e mount expectations pin `--driver fuse` wherever a forwarded tier is
+  asserted and branch the automatic-mode case on the host platform, so the
+  mandatory `make e2e` gate stays green on macOS and Windows as well as Linux.
+- The `--ignore-absent` cases are covered both ways: pending work still blocks
+  (unit and e2e), and a drain that cannot reach the mount continues with
+  `drain.status: "failed"`.
 
 The English PingCAP pages under `docs/pingcap-docs/docs/` are a submodule that
-was not checked out while this spec was implemented; the drain/unmount page must
-document the gate and `--force` when that submodule is available.
+was not checked out while this spec was implemented. The published mount and
+unmount pages therefore still describe the pre-change CLI; the tracked follow-up
+is issue #98 in this repository and must land before the next release cut.

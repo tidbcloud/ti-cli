@@ -168,7 +168,15 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	if driver == "" {
 		driver = "auto"
 	}
-	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: auditRoot, PackPaths: opts.PackPaths, Durability: opts.Durability, LayerRef: opts.LayerRef, CheckpointID: opts.CheckpointID, ReadOnly: opts.ReadOnly}, nil
+	// Report the tier that is actually in effect. ti forwards --durability only
+	// for mounts its companion-mode mirror calls FUSE; if the companion still
+	// mounted WebDAV, no tier applies and reporting "interactive" would claim a
+	// guarantee the mount does not have.
+	durability := opts.Durability
+	if driver == "webdav" {
+		durability = MountDurabilityAuto
+	}
+	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: auditRoot, PackPaths: opts.PackPaths, Durability: durability, LayerRef: opts.LayerRef, CheckpointID: opts.CheckpointID, ReadOnly: opts.ReadOnly}, nil
 }
 
 // stopMountAfterUnsafeAudit tears down a mount whose overlay failed the audit. It

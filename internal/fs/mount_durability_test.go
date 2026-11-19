@@ -96,6 +96,11 @@ func TestNormalizeMountDurability(t *testing.T) {
 			explicitly: true,
 		},
 		{
+			name:     "explicit empty value is refused",
+			opts:     MountFileSystemOptions{Driver: "fuse", Durability: " ", DurabilitySet: true},
+			wantCode: "fs.missing_mount_durability",
+		},
+		{
 			name:     "unknown tier is refused",
 			opts:     MountFileSystemOptions{Driver: "fuse", Durability: "turbo", DurabilitySet: true},
 			wantCode: "fs.invalid_mount_durability",
@@ -201,9 +206,9 @@ func TestNormalizeMountDurabilityCheckpoint(t *testing.T) {
 	}
 }
 
-// TestEffectiveMountModeMatchesCompanionAutoResolution pins the local mirror of
+// TestCompanionMountModeMatchesCompanionAutoResolution pins the local mirror of
 // the companion's --mode auto rule, which decides whether a tier is forwarded.
-func TestEffectiveMountModeMatchesCompanionAutoResolution(t *testing.T) {
+func TestCompanionMountModeMatchesCompanionAutoResolution(t *testing.T) {
 	wantAuto := "fuse"
 	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 		wantAuto = "webdav"
@@ -214,8 +219,8 @@ func TestEffectiveMountModeMatchesCompanionAutoResolution(t *testing.T) {
 		{driver: " fuse ", want: "fuse"},
 		{driver: "webdav", want: "webdav"},
 	} {
-		if got := effectiveMountMode(tc.driver); got != tc.want {
-			t.Fatalf("effectiveMountMode(%q) = %q, want %q", tc.driver, got, tc.want)
+		if got := companionMountMode(tc.driver); got != tc.want {
+			t.Fatalf("companionMountMode(%q) = %q, want %q", tc.driver, got, tc.want)
 		}
 	}
 }

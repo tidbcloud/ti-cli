@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -233,6 +234,10 @@ func main() {
 		return
 	}
 	if hasPrefix(args, "mount", "drain") {
+		if os.Getenv("FAKE_DRIVE9_DRAIN_FAIL") == "1" {
+			fmt.Fprintln(os.Stderr, "drive9 mount drain: read mount state: no such file or directory")
+			os.Exit(1)
+		}
 		ok := os.Getenv("FAKE_DRIVE9_DRAIN_PENDING") != "1"
 		report := map[string]any{
 			"ok": ok, "mount_point": args[len(args)-1], "duration_ms": 5,
@@ -261,10 +266,15 @@ func main() {
 }
 
 func mountMode(args []string) string {
-	if value := flagValue(args, "--mode"); value != "" {
+	if value := flagValue(args, "--mode"); value != "" && value != "auto" {
 		return value
 	}
-	return "webdav"
+	// Mirror drive9's ResolveMountMode: auto is webdav on macOS/Windows and
+	// fuse everywhere else.
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return "webdav"
+	}
+	return "fuse"
 }
 
 func hasPrefix(args []string, want ...string) bool {

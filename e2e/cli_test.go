@@ -1221,17 +1221,49 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	)
 	mixed.wantExitCode(0)
 
+	// FUSE is pinned wherever the test asserts a forwarded tier, so the
+	// expectations do not depend on the host's automatic mode (auto is WebDAV on
+	// macOS/Windows and FUSE elsewhere). The fake companion never touches real
+	// FUSE, so this costs no coverage.
 	mountPath := filepath.Join(home, "mount")
 	mount := runTIWithInput(t, bin, "", authEnv,
 		"fs", "mount-file-system",
 		"--mount-path", mountPath,
+		"--driver", "fuse",
 	)
 	mount.wantExitCode(0)
 	mount.wantStdoutContains(`"durability": "interactive"`)
+	mount.wantStdoutContains(`"driver": "fuse"`)
+	mountText := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", filepath.Join(home, "mount-text"),
+		"--driver", "fuse",
+		"--output", "text",
+	)
+	mountText.wantExitCode(0)
+	mountText.wantStdoutContains("Durability: interactive")
+	autoMountPath := filepath.Join(home, "mount-auto")
+	autoMount := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", autoMountPath,
+	)
+	autoMount.wantExitCode(0)
+	// auto resolves to WebDAV on macOS/Windows and FUSE elsewhere.
+	wantAutoDurability := `"durability": "interactive"`
+	wantAutoDriver := `"driver": "fuse"`
+	wantAutoForwarded := "interactive"
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		wantAutoDurability = `"durability": "auto"`
+		wantAutoDriver = `"driver": "webdav"`
+		wantAutoForwarded = ""
+	}
+	autoMount.wantStdoutContains(wantAutoDurability)
+	autoMount.wantStdoutContains(wantAutoDriver)
 	strictMountPath := filepath.Join(home, "mount-close-sync")
 	strictMount := runTIWithInput(t, bin, "", authEnv,
 		"fs", "mount-file-system",
 		"--mount-path", strictMountPath,
+		"--driver", "fuse",
 		"--durability", "close-sync",
 	)
 	strictMount.wantExitCode(0)
@@ -1259,11 +1291,13 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	)
 	webdavMount.wantExitCode(0)
 	webdavMount.wantStdoutContains(`"durability": "auto"`)
-	webdavUnmount := runTIWithInput(t, bin, "", baseEnv,
-		"fs", "unmount-file-system",
-		"--mount-path", webdavMountPath,
-	)
-	webdavUnmount.wantExitCode(0)
+	for _, path := range []string{webdavMountPath, filepath.Join(home, "mount-text"), autoMountPath} {
+		extraUnmount := runTIWithInput(t, bin, "", baseEnv,
+			"fs", "unmount-file-system",
+			"--mount-path", path,
+		)
+		extraUnmount.wantExitCode(0)
+	}
 	drain := runTIWithInput(t, bin, "", baseEnv,
 		"fs", "drain-file-system",
 		"--mount-path", mountPath,
@@ -1279,8 +1313,7 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 		"--output", "text",
 	)
 	drainText.wantExitCode(0)
-	drainText.wantStdoutContains("pending:")
-	drainText.wantStdoutContains("open_handles=")
+	drainText.wantStdoutContains("pending: none")
 	unmount := runTIWithInput(t, bin, "", baseEnv,
 		"fs", "unmount-file-system",
 		"--mount-path", mountPath,
@@ -1306,6 +1339,15 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	pendingUnmount.wantExitCode(1)
 	pendingUnmount.wantStderrContains("error_kind=pending_work_remaining")
 	pendingUnmount.wantStderrContains("unmount with --force")
+	// --ignore-absent is the cleanup idempotency flag, not loss acceptance: it
+	// must not swallow pending writes either.
+	pendingIgnoreAbsent := runTIWithInput(t, bin, "", pendingDrainEnv,
+		"fs", "unmount-file-system",
+		"--mount-path", strictMountPath,
+		"--ignore-absent",
+	)
+	pendingIgnoreAbsent.wantExitCode(1)
+	pendingIgnoreAbsent.wantStderrContains("--ignore-absent does not skip this check")
 	forcedUnmount := runTIWithInput(t, bin, "", pendingDrainEnv,
 		"fs", "unmount-file-system",
 		"--mount-path", strictMountPath,
@@ -1314,6 +1356,24 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	forcedUnmount.wantExitCode(0)
 	forcedUnmount.wantStdoutContains(`"status": "skipped"`)
 	forcedUnmount.wantStdoutContains("--force skips the pre-unmount drain")
+
+	// A drain that cannot reach the mount is not pending work, so the cleanup
+	// flag may continue, but the outcome still reports the failed drain.
+	goneMountPath := filepath.Join(home, "mount-gone")
+	goneMount := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", goneMountPath,
+		"--driver", "fuse",
+	)
+	goneMount.wantExitCode(0)
+	goneEnv := append(append([]string{}, baseEnv...), "FAKE_DRIVE9_DRAIN_FAIL=1")
+	goneUnmount := runTIWithInput(t, bin, "", goneEnv,
+		"fs", "unmount-file-system",
+		"--mount-path", goneMountPath,
+		"--ignore-absent",
+	)
+	goneUnmount.wantExitCode(0)
+	goneUnmount.wantStdoutContains(`"status": "failed"`)
 
 	for _, path := range []string{
 		filepath.Join(home, ".tdc", "config"),
@@ -1351,6 +1411,7 @@ func TestFSDataPlaneUsesRecordedCredentialWithoutConfiguration(t *testing.T) {
 	assertFakeDrive9FlagValue(t, calls, "mount", mountPath, "--durability", "interactive")
 	assertFakeDrive9FlagValue(t, calls, "mount", strictMountPath, "--durability", "close-sync")
 	assertFakeDrive9FlagValue(t, calls, "mount", webdavMountPath, "--durability", "")
+	assertFakeDrive9FlagValue(t, calls, "mount", autoMountPath, "--durability", wantAutoForwarded)
 	// A FUSE unmount drains before detaching; a WebDAV unmount has no control
 	// socket and must not try.
 	for _, call := range calls {

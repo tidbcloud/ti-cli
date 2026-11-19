@@ -48,7 +48,9 @@ instead of assuming:
 - `--durability <string>`, default `interactive`, one of `auto`, `interactive`,
   `fsync`, `close-sync`, `write-sync`. The value is trimmed and case-folded
   before validation; anything else fails with `fs.invalid_mount_durability` and
-  exit code 2 before the companion runs.
+  exit code 2 before the companion runs. An explicitly empty value fails with
+  `fs.missing_mount_durability`, matching the CLI's rule for `--region` and
+  `--profile`, instead of being silently treated as the default.
 
 `--write-back-cache` stays as a legacy alias so existing scripts keep working:
 
@@ -61,7 +63,12 @@ instead of assuming:
 
 ti forwards the tier as `mount --durability <tier>` only when the mount resolves
 to FUSE, mirroring the companion's own `--mode auto` rule (WebDAV on macOS and
-Windows, FUSE elsewhere):
+Windows, FUSE elsewhere). That rule lives in one place,
+`internal/fs/mount_durability.go`'s `companionMountMode`. It deliberately does
+not use `mountdriver.Resolve`, which is prerequisite-aware (macFUSE on darwin)
+and would forward a tier to a WebDAV mount the companion chose. The mount result
+reconciles the reported `durability` with the driver the companion reports, so
+the result never claims a tier that is not in effect:
 
 - Explicit `--driver fuse`, and `--driver auto` on a platform whose automatic
   choice is FUSE, forward the tier. An ordinary mount therefore keeps the
@@ -103,15 +110,18 @@ Out of scope:
 ## Verification
 
 - Unit tests pin the tier table, the legacy alias mapping, the conflict error,
-  the WebDAV and checkpoint rejections, the local mirror of the companion's
-  `--mode auto` rule, the forwarded argv for every tier, the interactive
-  default, and the dry-run body.
+  the explicit-empty rejection, the WebDAV and checkpoint rejections, the local
+  mirror of the companion's `--mode auto` rule, the forwarded argv for every
+  tier, the interactive default, and the dry-run body.
 - `make e2e` covers the default and a strict tier end to end through the fake
-  companion, plus the invalid-value and WebDAV rejections.
+  companion, plus the invalid-value and WebDAV rejections. Mounts that assert a
+  forwarded tier pin `--driver fuse`, and the automatic-mode case branches on
+  the host platform, so the gate is green on macOS and Windows too.
 - `make live-e2e-fs` and `make live-e2e-fs-git` mount with an explicit tier
   (`close-sync`) and assert the reported value, and the live WebDAV mount
   asserts `auto`.
 
 The English PingCAP documentation pages under `docs/pingcap-docs/docs/` are a
-submodule that was not checked out while this spec was implemented. The mount
-page must gain the `--durability` section when that submodule is available.
+submodule that was not checked out while this spec was implemented. The
+published mount page must gain the `--durability` section; the tracked follow-up
+is issue #98 in this repository and must land before the next release cut.

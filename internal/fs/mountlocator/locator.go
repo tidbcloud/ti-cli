@@ -72,13 +72,13 @@ func New(profile, fileSystemName, regionCode, companionHome, mountPath, kind str
 	}, nil
 }
 
-// WithServiceAddress records the resolved regional service address.
 // WithDriver records the mount driver reported by the companion.
 func (l Locator) WithDriver(driver string) Locator {
 	l.Driver = strings.TrimSpace(driver)
 	return l
 }
 
+// WithServiceAddress records the resolved regional service address.
 func (l Locator) WithServiceAddress(address string) Locator {
 	l.ServiceAddress = strings.TrimSpace(address)
 	return l

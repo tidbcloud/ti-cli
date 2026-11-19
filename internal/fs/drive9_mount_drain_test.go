@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,8 +41,12 @@ func TestDrive9DrainReportsPendingCounters(t *testing.T) {
 		t.Fatalf("drain duration = %d, want the companion's report", result.Response.DurationMS)
 	}
 	human := result.Human()
-	if !strings.Contains(human, "pending:") || !strings.Contains(human, "open_handles=0") {
+	if !strings.Contains(human, "pending: none") {
 		t.Fatalf("text output dropped the pending counters:\n%s", human)
+	}
+	mountHuman := MountResult{Status: "mounted", MountPath: "/mnt", Driver: "fuse", Durability: MountDurabilityCloseSync}.Human()
+	if !strings.Contains(mountHuman, "Durability: close-sync") {
+		t.Fatalf("mount text output dropped the effective tier:\n%s", mountHuman)
 	}
 }
 
@@ -269,9 +274,10 @@ func TestUnmountSkipsDrainForLegacyLocator(t *testing.T) {
 	}
 }
 
-// TestUnmountIgnoreAbsentReportsDrainFailureStill lets a cleanup path continue,
-// but the outcome has to say the writes may be lost.
-func TestUnmountIgnoreAbsentReportsDrainFailureStill(t *testing.T) {
+// TestUnmountIgnoreAbsentStillBlocksPendingWork keeps --ignore-absent from
+// becoming a silent loss-acceptance flag: it is the idempotency flag cleanup
+// scripts pass, so pending writes must still block the detach.
+func TestUnmountIgnoreAbsentStillBlocksPendingWork(t *testing.T) {
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
@@ -284,6 +290,39 @@ func TestUnmountIgnoreAbsentReportsDrainFailureStill(t *testing.T) {
 		t.Fatalf("mount failed: %v", err)
 	}
 	t.Setenv("TI_FAKE_DRIVE9_DRAIN_PENDING", "1")
+
+	_, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{Profile: dataProfile(), MountPath: mountPath, IgnoreAbsent: true})
+	if apperr.CodeFor(err) != "fs.drain_pending_work" {
+		t.Fatalf("ignore-absent unmount error = %v, want fs.drain_pending_work", err)
+	}
+	if !strings.Contains(apperr.MessageFor(err), "--force") || !strings.Contains(apperr.MessageFor(err), "--ignore-absent does not skip") {
+		t.Fatalf("blocked drain error must name both flags: %v", apperr.MessageFor(err))
+	}
+	if _, _, locErr := mountlocator.Read(home, mountPath); locErr != nil {
+		t.Fatalf("blocked unmount must preserve the locator: %v", locErr)
+	}
+	for _, call := range readFakeDrive9Calls(t, recordPath) {
+		if len(call.Args) > 0 && call.Args[0] == "umount" {
+			t.Fatalf("unmount ran despite pending writes: %#v", call.Args)
+		}
+	}
+}
+
+// TestUnmountIgnoreAbsentToleratesGoneMount keeps cleanup idempotent: a drain
+// that cannot reach the mount (not pending work) may continue.
+func TestUnmountIgnoreAbsentToleratesGoneMount(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(home, companion)
+	service.mountPointActive = trueMountEvidence
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, Driver: "fuse",
+	}); err != nil {
+		t.Fatalf("mount failed: %v", err)
+	}
+	t.Setenv("TI_FAKE_DRIVE9_DRAIN_FAIL", "1")
 
 	result, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{Profile: dataProfile(), MountPath: mountPath, IgnoreAbsent: true})
 	if err != nil {
@@ -300,6 +339,29 @@ func TestUnmountIgnoreAbsentReportsDrainFailureStill(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("unmount did not report the failed drain: %#v", result.Checks)
+	}
+}
+
+// TestDrainRejectsNonFileSystemMount keeps the drain command from reaching the
+// companion with a mount the engine cannot drain.
+func TestDrainRejectsNonFileSystemMount(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(home, companion)
+	mountPath := filepath.Join(t.TempDir(), "vault")
+	if _, err := mountlocator.Write(home, legacyTestLocatorWithKind(t, home, mountPath, "vault", "fuse")); err != nil {
+		t.Fatalf("write locator: %v", err)
+	}
+	if _, err := service.DrainFileSystem(context.Background(), DrainFileSystemOptions{Profile: dataProfile(), MountPath: mountPath}); apperr.CodeFor(err) != "fs.drain_not_applicable" {
+		t.Fatalf("vault drain error = %v, want fs.drain_not_applicable", err)
+	}
+	if _, statErr := os.Stat(recordPath); statErr == nil {
+		for _, call := range readFakeDrive9Calls(t, recordPath) {
+			if len(call.Args) >= 2 && call.Args[0] == "mount" && call.Args[1] == "drain" {
+				t.Fatalf("vault drain reached the companion: %#v", call.Args)
+			}
+		}
 	}
 }
 
@@ -324,6 +386,19 @@ func TestMountRecordsDriverInLocator(t *testing.T) {
 	if locator.Driver != "fuse" {
 		t.Fatalf("locator driver = %q, want fuse", locator.Driver)
 	}
+}
+
+func legacyTestLocatorWithKind(t *testing.T, home, mountPath, kind, driver string) mountlocator.Locator {
+	t.Helper()
+	companionHome, err := fscred.CompanionHome(home, "default", "tenant-1")
+	if err != nil {
+		t.Fatalf("resolve companion home: %v", err)
+	}
+	locator, err := mountlocator.New("default", "tenant-1", "aws-us-east-1", companionHome, mountPath, kind)
+	if err != nil {
+		t.Fatalf("construct locator: %v", err)
+	}
+	return locator.WithDriver(driver)
 }
 
 func legacyTestLocator(t *testing.T, home, mountPath string) mountlocator.Locator {

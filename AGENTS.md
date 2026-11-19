@@ -1154,17 +1154,26 @@ Successful unmount removes the locator; failed unmount preserves it for retry.
 `ti fs unmount-file-system` drains before it detaches a FUSE mount and must never
 report success while write-back work is still local. Parse the companion's
 `mount drain --json` report instead of discarding it: `ti fs drain-file-system`
-returns it as `response`, prints the pending counters in text output, and fails
-with `fs.drain_pending_work` when work remains. The unmount records the driver
-the companion actually mounted in the non-secret mount locator, gates only FUSE
-mounts on the drain (and never a `vault` locator: the engine drains only
-file-system mounts), blocks with the locator preserved while work is pending,
-and treats `--force` as the explicit "accept the loss" escape hatch (reported as
-`drain.status: "skipped"`). `--ignore-absent` may continue past a drain failure
-but must still report `drain.status: "failed"`. A locator written before the
-driver was recorded is never gated, so an upgrade cannot block an existing
-unmount. Do not drop these outcomes from the result, and do not reimplement the
-drain in ti: the mount control socket belongs to the companion.
+returns it as `response`, prints the pending counters in text output with one
+shared formatter, fails with `fs.drain_pending_work` when work remains, and
+refuses mounts the dry-run calls "not applicable" (WebDAV, and any non-`fs`
+locator kind such as `vault`) with `fs.drain_not_applicable` instead of a raw
+companion error. The unmount records the driver the companion actually mounted
+in the non-secret mount locator, gates only FUSE file-system mounts on the
+drain, blocks with the locator preserved while work is pending, and treats
+`--force` as the only "accept the loss" path (reported as `drain.status:
+"skipped"`). `--ignore-absent` is a cleanup idempotency flag: it may continue
+past a drain that cannot reach the mount, but it must never swallow
+`fs.drain_pending_work`, and the outcome must still report `drain.status:
+"failed"`. A locator written before the driver was recorded is never gated, so
+an upgrade cannot block an existing unmount. The reported `durability` must
+match the driver the companion reported, and `--durability` must reject an
+explicitly empty value instead of treating it as the default. Do not drop these
+outcomes from the result, and do not reimplement the drain in ti: the mount
+control socket belongs to the companion. The companion's `--mode auto` rule is
+mirrored in exactly one place (`companionMountMode`), because
+`mountdriver.Resolve` is prerequisite-aware and would disagree with the
+companion; see `docs/spec/done/0038-fs-mount-durability.md`.
 
 `ti fs mount-file-system` forwards the selected write-durability tier to the
 companion as `mount --durability`. The flag accepts `auto`, `interactive`,

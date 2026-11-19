@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"time"
 )
@@ -99,6 +100,10 @@ func main() {
 			"server":         os.Getenv("DRIVE9_SERVER"),
 		})
 	case len(args) >= 2 && args[0] == "mount" && args[1] == "drain":
+		if os.Getenv("TI_FAKE_DRIVE9_DRAIN_FAIL") == "1" {
+			fmt.Fprintln(os.Stderr, "drive9 mount drain: read mount state: no such file or directory")
+			os.Exit(1)
+		}
 		pending := os.Getenv("TI_FAKE_DRIVE9_DRAIN_PENDING") == "1"
 		report := map[string]any{
 			"ok": !pending, "mount_point": args[len(args)-1], "duration_ms": 7,
@@ -120,11 +125,7 @@ func main() {
 		}
 	case args[0] == "mount" && (len(args) == 1 || args[1] != "drain"):
 		fmt.Fprintln(os.Stderr, "component: drive9 mount")
-		if flagValue(args, "--mode") == "fuse" {
-			fmt.Fprintln(os.Stderr, "drive9: mount mode: fuse")
-		} else {
-			fmt.Fprintln(os.Stderr, "drive9: mount mode: webdav")
-		}
+		fmt.Fprintln(os.Stderr, "drive9: mount mode: "+fakeMountMode(args))
 		if os.Getenv("TI_FAKE_DRIVE9_MOUNT_FAIL") == "1" {
 			fmt.Fprintln(os.Stderr, "mount: drive9 mount: background mount exited before becoming ready")
 			os.Exit(1)
@@ -281,6 +282,18 @@ func record(args []string) {
 	}
 	defer f.Close()
 	_ = json.NewEncoder(f).Encode(callRecord{Args: args, Env: env})
+}
+
+// fakeMountMode mirrors drive9's ResolveMountMode: an explicit mode wins, and
+// auto means webdav on macOS/Windows and fuse elsewhere.
+func fakeMountMode(args []string) string {
+	if mode := flagValue(args, "--mode"); mode != "" && mode != "auto" {
+		return mode
+	}
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return "webdav"
+	}
+	return "fuse"
 }
 
 func flagValue(args []string, name string) string {

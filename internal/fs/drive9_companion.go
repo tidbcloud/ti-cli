@@ -1365,6 +1365,9 @@ func (s Service) drive9DrainFileSystem(ctx context.Context, opts DrainFileSystem
 	}
 	// The companion's report is the only place the undrained work is counted,
 	// so keep it in the result instead of discarding it.
+	if drainable, reason := drainApplicability(locator); !drainable {
+		return DrainResult{}, apperr.New("fs.drain_not_applicable", "usage", 2, fmt.Sprintf("ti fs drain %s: %s", opts.MountPath, reason))
+	}
 	drain, err := s.drainMount(ctx, profile, opts.MountPath, opts.Timeout)
 	if err != nil {
 		return DrainResult{}, err
@@ -1386,8 +1389,14 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 	// --ignore-absent tolerates a drain that fails because the mount is already
 	// gone.
 	drain, drainErr := s.drainBeforeUnmount(ctx, profile, locator, opts)
-	if drainErr != nil && !opts.IgnoreAbsent {
-		return UnmountResult{}, drainErr
+	if drainErr != nil {
+		// --ignore-absent is the idempotency flag cleanup scripts pass, not a
+		// licence to drop writes: only a drain that failed for another reason
+		// (typically a mount that is already gone) may be tolerated. Accepting
+		// the loss stays --force's job alone, so a pending drain always blocks.
+		if apperr.CodeFor(drainErr) == "fs.drain_pending_work" || !opts.IgnoreAbsent {
+			return UnmountResult{}, drainErr
+		}
 	}
 	args := []string{"umount"}
 	if opts.Timeout > 0 {
@@ -1454,11 +1463,6 @@ func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kin
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "write ti fs mount locator", err)
 	}
 	return nil
-}
-
-func (s Service) drive9MountLocatorProfile(base *config.Profile, mountPath string) (*config.Profile, error) {
-	_, profile, err := s.mountLocatorProfile(base, mountPath)
-	return profile, err
 }
 
 // mountLocatorProfile resolves the ti-owned mount locator for a mount path and

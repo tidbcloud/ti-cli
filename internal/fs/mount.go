@@ -780,6 +780,9 @@ func (r MountResult) Human() string {
 		"Remote path: " + r.RemotePath,
 		"Driver: " + r.Driver,
 	}
+	if r.Durability != "" {
+		lines = append(lines, "Durability: "+r.Durability)
+	}
 	if r.LayerRef != "" {
 		lines = append(lines, "Layer: "+r.LayerRef)
 	}
@@ -836,19 +839,7 @@ func (r DrainResult) Human() string {
 	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%d\n", r.Status, r.MountPath, r.Driver, duration)
 	_ = writer.Flush()
 	if r.Response != nil {
-		p := r.Response.Pending
-		_, _ = fmt.Fprintf(&out, "pending: open_handles=%d dirty_handles=%d commit_queue=%d commit_bytes=%d commit_in_flight=%d commit_delayed=%d commit_conflicts=%d uploader_queued=%d uploader_in_flight=%d uploader_cached=%d\n",
-			p.OpenHandles,
-			p.DirtyHandles,
-			p.CommitQueuePending,
-			p.CommitQueueBytes,
-			p.CommitQueueInFlight,
-			p.CommitQueueDelayed,
-			p.CommitQueueConflicts,
-			p.UploaderQueued,
-			p.UploaderInFlight,
-			p.UploaderCached,
-		)
+		_, _ = fmt.Fprintf(&out, "pending: %s\n", drainPendingSummary(r.Response.Pending))
 	}
 	return strings.TrimRight(out.String(), "\n")
 }

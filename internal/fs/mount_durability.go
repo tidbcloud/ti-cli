@@ -78,6 +78,13 @@ func mountDurabilityUsesWriteBack(value string) bool {
 func normalizeMountDurability(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
 	value := strings.ToLower(strings.TrimSpace(opts.Durability))
 	if value == "" {
+		// An explicit empty value is a mistake, not a request for the default:
+		// the rest of the CLI rejects explicit empty --region/--profile values
+		// for the same reason, and treating "" as both "unset" and "explicit"
+		// makes --durability "" --write-back-cache=false look like a conflict.
+		if opts.DurabilitySet {
+			return MountFileSystemOptions{}, apperr.New("fs.missing_mount_durability", "usage", 2, fmt.Sprintf("--durability must not be empty; supported values: %s", MountDurabilityHelp()))
+		}
 		value = DefaultMountDurability
 	}
 	if !validMountDurability(value) {
@@ -106,7 +113,7 @@ func normalizeMountDurability(opts MountFileSystemOptions) (MountFileSystemOptio
 // usage error instead of a silent downgrade, so a caller that asked for
 // close-sync or write-sync never believes it got it.
 func rejectUnsupportedMountDurability(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
-	if effectiveMountMode(opts.Driver) != "webdav" {
+	if companionMountMode(opts.Driver) != "webdav" {
 		return opts, nil
 	}
 	if opts.DurabilityExplicit && opts.Durability != MountDurabilityAuto {
@@ -116,12 +123,19 @@ func rejectUnsupportedMountDurability(opts MountFileSystemOptions) (MountFileSys
 	return opts, nil
 }
 
-// effectiveMountMode mirrors the companion's own `--mode auto` resolution
+// companionMountMode mirrors the companion's own `--mode auto` resolution
 // (WebDAV on macOS and Windows, FUSE everywhere else) so ti's durability
-// decision matches the mode the companion will actually mount with. It
-// duplicates the companion rule on purpose: resolving it locally keeps the
-// flag decision deterministic instead of depending on host prerequisites.
-func effectiveMountMode(driver string) string {
+// decision matches the mode the companion will actually mount with.
+//
+// It deliberately does not use mountdriver.Resolve: that resolver is
+// prerequisite-aware and prefers FUSE whenever it is installable (macFUSE on
+// darwin), while the companion's `--mode auto` is GOOS-only. Forwarding a tier
+// based on ti's optimistic resolution would hand a durability flag to a WebDAV
+// mount the companion chose, which the companion rejects. This function is the
+// companion's rule, kept in one place and pinned by
+// TestCompanionMountModeMatchesCompanionAutoResolution; the mount result
+// reconciles the reported tier with the driver the companion reports.
+func companionMountMode(driver string) string {
 	switch strings.TrimSpace(driver) {
 	case "", "auto":
 		if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
@@ -140,5 +154,5 @@ func effectiveMountMode(driver string) string {
 // an ordinary mount keeps the documented interactive default instead of the
 // engine's auto default. Checkpoint mounts are read-only and forward nothing.
 func mountDurabilityForwarded(opts MountFileSystemOptions) bool {
-	return opts.CheckpointID == "" && effectiveMountMode(opts.Driver) == "fuse"
+	return opts.CheckpointID == "" && companionMountMode(opts.Driver) == "fuse"
 }

@@ -110,7 +110,7 @@ func mountDriverSupportsDrain(driver string) bool {
 	case "fuse":
 		return true
 	default:
-		return effectiveMountMode(driver) == "fuse"
+		return companionMountMode(driver) == "fuse"
 	}
 }
 
@@ -129,6 +129,21 @@ func mountDrainGate(locator mountlocator.Locator, force bool) (bool, string) {
 	}
 	if !mountDriverSupportsDrain(locator.Driver) {
 		return false, mountDrainSkipReason(locator.Driver)
+	}
+	return true, ""
+}
+
+// drainApplicability reports whether `ti fs drain-file-system` can run at all.
+// It rejects the mounts whose dry-run already says "not applicable" so the
+// command fails with the same explanation instead of a raw companion error. An
+// unrecorded driver stays drainable: the command itself asks for a drain, and
+// only the unmount gate needs the stricter driver check.
+func drainApplicability(locator mountlocator.Locator) (bool, string) {
+	if kind := strings.TrimSpace(locator.Kind); kind != "" && kind != mountKindFileSystem {
+		return false, fmt.Sprintf("%s mounts have no drain; the engine drains only file-system mounts", kind)
+	}
+	if strings.TrimSpace(locator.Driver) == "webdav" {
+		return false, "webdav mounts have no mount control socket to drain; the companion flushes them when it unmounts"
 	}
 	return true, ""
 }
@@ -160,7 +175,7 @@ func (s Service) drainMount(ctx context.Context, profile *config.Profile, mountP
 	}
 	if runErr != nil || !response.OK {
 		record := MountDrain{Status: "failed", Message: describeDrainFailure(response), Response: response}
-		return record, apperr.New(drainErrorCode(response), "runtime", 1, fmt.Sprintf("drain %s did not finish: %s; close the writers or let the background upload finish, then retry ti fs drain-file-system --mount-path %q, or unmount with --force to accept losing the undrained writes", mountPath, describeDrainFailure(response), mountPath))
+		return record, apperr.New(drainErrorCode(response), "runtime", 1, fmt.Sprintf("drain %s did not finish: %s; close the writers or let the background upload finish, then retry ti fs drain-file-system --mount-path %q, or unmount with --force to accept losing the undrained writes (--ignore-absent does not skip this check)", mountPath, describeDrainFailure(response), mountPath))
 	}
 	return MountDrain{Status: "drained", Response: response}, nil
 }
@@ -173,9 +188,5 @@ func (s Service) drainBeforeUnmount(ctx context.Context, profile *config.Profile
 	if drainable, reason := mountDrainGate(locator, opts.Force); !drainable {
 		return MountDrain{Status: "skipped", Message: reason}, nil
 	}
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = mountcontrol.DefaultDrainTimeout
-	}
-	return s.drainMount(ctx, profile, opts.MountPath, timeout)
+	return s.drainMount(ctx, profile, opts.MountPath, drainTimeout(opts.Timeout))
 }
