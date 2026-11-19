@@ -84,9 +84,11 @@ A pending unmount fails with `fs.drain_pending_work`, names the engine's
   the reason, so a forced unmount is still attributable. It is the only way to
   accept undrained writes.
 - `--ignore-absent` keeps its cleanup idempotency meaning, not loss acceptance:
-  a drain that produced no report (typically a mount that is already gone) does
-  not block, and the result records `drain.status: "failed"` plus a `drain`
-  runtime check on both the `unmounted` and `absent` outcomes. The block
+  it may tolerate only a drain failure that reports **no pending work** — no
+  report at all (typically a mount that is already gone, or a companion that
+  predates the report), or a parsed report whose counters are all zero with a
+  non-pending classification. The result records `drain.status: "failed"` plus a
+  `drain` runtime check on both the `unmounted` and `absent` outcomes. The block
   condition is the **parsed pending counters**, not the engine's classification:
   a drain that hits its timeout against a write-back backlog reports a
   non-pending `error_kind` while still listing queued work, so trusting the
@@ -161,7 +163,8 @@ remains the client-side mitigation.
   mandatory `make e2e` gate stays green on macOS and Windows as well as Linux.
 - The `--ignore-absent` cases are covered both ways: pending work blocks even
   when the engine classifies the failure as something else (unit and e2e), and a
-  drain that produced no report continues with `drain.status: "failed"` on both
+  drain that reports no pending work (no report, or zero counters with a
+  non-pending classification) continues with `drain.status: "failed"` on both
   the `unmounted` and `absent` outcomes.
 - The drain `--dry-run` check is pinned for both directions (WebDAV reports
   `failed`, an unrecorded driver stays `passed`).

@@ -1394,9 +1394,11 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 		// licence to drop writes. Block whenever the engine's own report shows
 		// undrained work, regardless of how it classified the failure: a drain
 		// that times out against a write-back backlog is exactly the loss this
-		// gate exists to prevent. Only a failure that produced no report at all
-		// (typically a mount that is already gone) may be tolerated, and
-		// accepting the loss stays --force's job alone.
+		// gate exists to prevent. --ignore-absent may only tolerate a drain
+		// failure that reports no pending work: no report at all (typically a
+		// mount that is already gone, or a companion that predates the report)
+		// or a parsed report whose counters are all zero with a non-pending
+		// classification. Accepting actual loss stays --force's job alone.
 		pending := drain.Response != nil && hasPendingWork(drain.Response.Pending)
 		if pending || apperr.CodeFor(drainErr) == "fs.drain_pending_work" || !opts.IgnoreAbsent {
 			return UnmountResult{}, drainErr
