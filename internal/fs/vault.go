@@ -274,7 +274,9 @@ func vaultMountResult(status string, inputs vaultMountInputs, checks []MountRunt
 		LogFile:        logFile,
 		Endpoint:       nil,
 		Checks:         checks,
-		WriteBackCache: false,
+		// A vault mount forwards no write-durability tier, so it runs with the
+		// engine default.
+		Durability: MountDurabilityAuto,
 	}
 }
 

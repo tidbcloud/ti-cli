@@ -20,6 +20,7 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountcontrol"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountdriver"
+	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
 )
 
@@ -30,18 +31,28 @@ const (
 )
 
 type MountFileSystemOptions struct {
-	Profile           *config.Profile
-	FileSystemName    string
-	MountPath         string
-	RemotePath        string
-	Driver            string
-	ReadOnly          bool
-	ReadOnlySet       bool
-	ReadyTimeout      time.Duration
-	CacheDir          string
-	ReadCacheMB       int64
-	ReadCacheFileMB   int64
-	ReadCacheTTL      time.Duration
+	Profile         *config.Profile
+	FileSystemName  string
+	MountPath       string
+	RemotePath      string
+	Driver          string
+	ReadOnly        bool
+	ReadOnlySet     bool
+	ReadyTimeout    time.Duration
+	CacheDir        string
+	ReadCacheMB     int64
+	ReadCacheFileMB int64
+	ReadCacheTTL    time.Duration
+	// Durability is the write-durability tier forwarded to the companion as
+	// `mount --durability`. Normalization always leaves an effective tier here.
+	Durability string
+	// DurabilitySet records whether --durability was explicitly supplied.
+	DurabilitySet bool
+	// DurabilityExplicit records whether either --durability or the legacy
+	// --write-back-cache alias was explicitly supplied. Normalization sets it.
+	DurabilityExplicit bool
+	// WriteBackCache is the legacy boolean alias of --durability: true means
+	// interactive, false means auto.
 	WriteBackCache    bool
 	WriteBackCacheSet bool
 	MountProfile      string
@@ -84,7 +95,7 @@ type MountResult struct {
 	Checks         []MountRuntimeCheck  `json:"checks,omitempty"`
 	Remote         *MountRemoteSnapshot `json:"remote,omitempty"`
 	CacheDir       string               `json:"cache_dir,omitempty"`
-	WriteBackCache bool                 `json:"write_back_cache"`
+	Durability     string               `json:"durability"`
 	MountProfile   string               `json:"mount_profile,omitempty"`
 	LocalRoot      string               `json:"local_root,omitempty"`
 	PackPaths      []string             `json:"pack_paths,omitempty"`
@@ -114,16 +125,27 @@ type UnmountResult struct {
 	Status    string              `json:"status"`
 	MountPath string              `json:"mount_path"`
 	Driver    string              `json:"driver,omitempty"`
-	PID       int                 `json:"pid,omitempty"`
 	StateFile string              `json:"state_file,omitempty"`
 	Checks    []MountRuntimeCheck `json:"checks,omitempty"`
+	// Drain records the pre-unmount drain pass: drained, failed, or skipped
+	// with the reason. A failed drain is only reported when the caller asked to
+	// continue anyway (--force or --ignore-absent).
+	Drain *MountDrain `json:"drain,omitempty"`
+}
+
+// MountDrain is the pre-unmount drain outcome. Response carries the engine's
+// own drain report, including the pending counters, so a lost write is
+// attributable instead of silent.
+type MountDrain struct {
+	Status   string                      `json:"status"`
+	Message  string                      `json:"message,omitempty"`
+	Response *mountcontrol.DrainResponse `json:"response,omitempty"`
 }
 
 type DrainResult struct {
 	Status        string                      `json:"status"`
 	MountPath     string                      `json:"mount_path"`
 	Driver        string                      `json:"driver,omitempty"`
-	PID           int                         `json:"pid,omitempty"`
 	StateFile     string                      `json:"state_file,omitempty"`
 	ControlSocket string                      `json:"control_socket,omitempty"`
 	Response      *mountcontrol.DrainResponse `json:"response,omitempty"`
@@ -146,10 +168,20 @@ func (s Service) MountFileSystem(ctx context.Context, opts MountFileSystemOption
 }
 
 // normalizeMountOptions trims the flag values the unpack predicate and the
-// companion argv must agree on, then applies the layer rules.
+// companion argv must agree on, resolves the durability tier, applies the layer
+// rules, and refuses a tier the effective driver cannot honor.
 func normalizeMountOptions(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
 	opts.UnpackArchivePath = strings.TrimSpace(opts.UnpackArchivePath)
-	return normalizeLayerMountOptions(opts)
+	var err error
+	opts, err = normalizeMountDurability(opts)
+	if err != nil {
+		return MountFileSystemOptions{}, err
+	}
+	opts, err = normalizeLayerMountOptions(opts)
+	if err != nil {
+		return MountFileSystemOptions{}, err
+	}
+	return rejectUnsupportedMountDurability(opts)
 }
 
 func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, opts MountFileSystemOptions) (dryrun.Result, error) {
@@ -198,6 +230,7 @@ func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, 
 			Path:        "/v1/status",
 			Body: map[string]any{
 				"driver":        opts.Driver,
+				"durability":    opts.Durability,
 				"layer_ref":     opts.LayerRef,
 				"checkpoint_id": opts.CheckpointID,
 				"read_only":     opts.ReadOnly,
@@ -229,8 +262,14 @@ func normalizeLayerMountOptions(opts MountFileSystemOptions) (MountFileSystemOpt
 		if opts.WriteBackCacheSet && opts.WriteBackCache {
 			return MountFileSystemOptions{}, apperr.New("fs.checkpoint_mount_read_only", "usage", 2, "checkpoint mounts are read-only; remove --write-back-cache=true")
 		}
+		if opts.DurabilityExplicit && opts.Durability != MountDurabilityAuto {
+			return MountFileSystemOptions{}, apperr.New("fs.checkpoint_mount_read_only", "usage", 2, fmt.Sprintf("checkpoint mounts are read-only; remove --durability=%s", opts.Durability))
+		}
 		opts.ReadOnly = true
 		opts.WriteBackCache = false
+		// A checkpoint view never writes, so ti forwards no tier and reports
+		// the engine's own default instead of the interactive mount default.
+		opts.Durability = MountDurabilityAuto
 	}
 	driverName := strings.TrimSpace(opts.Driver)
 	if driverName == "" {
@@ -297,7 +336,7 @@ func (s Service) DrainFileSystem(ctx context.Context, opts DrainFileSystemOption
 }
 
 func (s Service) DryRunDrainFileSystem(ctx context.Context, commandPath string, opts DrainFileSystemOptions) (dryrun.Result, error) {
-	profile, err := s.drive9MountLocatorProfile(opts.Profile, opts.MountPath)
+	locator, profile, err := s.mountLocatorProfile(opts.Profile, opts.MountPath)
 	if err != nil {
 		return dryrun.Result{}, err
 	}
@@ -312,11 +351,12 @@ func (s Service) DryRunDrainFileSystem(ctx context.Context, commandPath string, 
 		dryrun.Check{Name: "mount_locator", Status: "passed", Message: opts.MountPath},
 		dryrun.Check{Name: "file_system_id", Status: "passed", Message: profile.FSTenantID},
 		dryrun.Check{Name: "region", Status: "passed", Message: profile.FSPlacementRegionCode},
+		drainSupportCheck(locator),
 	), nil
 }
 
 func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string, opts UnmountFileSystemOptions) (dryrun.Result, error) {
-	profile, err := s.drive9MountLocatorProfile(opts.Profile, opts.MountPath)
+	locator, profile, err := s.mountLocatorProfile(opts.Profile, opts.MountPath)
 	if err != nil {
 		if opts.IgnoreAbsent && apperr.CodeFor(err) == "fs.mount_locator_not_found" {
 			return dryrun.New(
@@ -339,7 +379,27 @@ func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string
 		dryrun.Check{Name: "mount_locator", Status: "passed", Message: opts.MountPath},
 		dryrun.Check{Name: "file_system_id", Status: "passed", Message: profile.FSTenantID},
 		dryrun.Check{Name: "region", Status: "passed", Message: profile.FSPlacementRegionCode},
+		dryrun.Check{Name: "pre_unmount_drain", Status: "passed", Message: describeDryRunDrainGate(locator, opts)},
 	), nil
+}
+
+// drainSupportCheck predicts whether `ti fs drain-file-system` will run for
+// this mount. It uses the drain command's own rule, so a dry run cannot claim a
+// drain that normal execution deterministically refuses.
+func drainSupportCheck(locator mountlocator.Locator) dryrun.Check {
+	if drainable, reason := drainApplicability(locator); !drainable {
+		return dryrun.Check{Name: "drain_support", Status: "failed", Message: reason}
+	}
+	return dryrun.Check{Name: "drain_support", Status: "passed", Message: "file-system mount; the drain command asks the companion"}
+}
+
+// describeDryRunDrainGate reports what the pre-unmount drain would do without
+// running it.
+func describeDryRunDrainGate(locator mountlocator.Locator, opts UnmountFileSystemOptions) string {
+	if drainable, reason := mountDrainGate(locator, opts.Force); !drainable {
+		return "skipped: " + reason
+	}
+	return "drain pending writes before detaching the mount"
 }
 
 func (s Service) readDrainMountState(mountPathInput string) (mountstate.State, string, string, []MountRuntimeCheck, error) {
@@ -389,6 +449,7 @@ type mountInputs struct {
 	readCacheFileBytes int64
 	readCacheTTL       time.Duration
 	writeBackCache     bool
+	durability         string
 	mountProfile       string
 	localRoot          string
 	packPaths          []string
@@ -493,7 +554,8 @@ func (s Service) mountInputs(opts MountFileSystemOptions) (mountInputs, error) {
 		readCacheBytes:     readCacheBytes,
 		readCacheFileBytes: readCacheFileBytes,
 		readCacheTTL:       readCacheTTL,
-		writeBackCache:     opts.WriteBackCache,
+		writeBackCache:     mountDurabilityUsesWriteBack(opts.Durability),
+		durability:         opts.Durability,
 		mountProfile:       mountProfile,
 		localRoot:          localRoot,
 		packPaths:          packPaths,
@@ -572,7 +634,7 @@ func mountResult(status string, inputs mountInputs, remote apifs.StatusResponse,
 		Checks:         checks,
 		Remote:         &snapshot,
 		CacheDir:       inputs.cacheDir,
-		WriteBackCache: inputs.writeBackCache,
+		Durability:     inputs.durability,
 		MountProfile:   inputs.mountProfile,
 		LocalRoot:      inputs.localRoot,
 		PackPaths:      append([]string(nil), inputs.packPaths...),
@@ -718,6 +780,9 @@ func (r MountResult) Human() string {
 		"Remote path: " + r.RemotePath,
 		"Driver: " + r.Driver,
 	}
+	if r.Durability != "" {
+		lines = append(lines, "Durability: "+r.Durability)
+	}
 	if r.LayerRef != "" {
 		lines = append(lines, "Layer: "+r.LayerRef)
 	}
@@ -745,36 +810,36 @@ func (r MountResult) Human() string {
 func (r UnmountResult) Human() string {
 	var out strings.Builder
 	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(writer, "STATUS\tMOUNT_PATH\tDRIVER\tPID")
-	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%d\n", r.Status, r.MountPath, r.Driver, r.PID)
+	_, _ = fmt.Fprintln(writer, "STATUS\tMOUNT_PATH\tDRIVER\tDRAIN")
+	drain := ""
+	if r.Drain != nil {
+		drain = r.Drain.Status
+	}
+	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%s\n", r.Status, r.MountPath, r.Driver, drain)
 	_ = writer.Flush()
+	if r.Drain != nil {
+		if r.Drain.Message != "" {
+			_, _ = fmt.Fprintf(&out, "drain: %s\n", r.Drain.Message)
+		}
+		if r.Drain.Response != nil {
+			_, _ = fmt.Fprintf(&out, "pending: %s\n", drainPendingSummary(r.Drain.Response.Pending))
+		}
+	}
 	return strings.TrimRight(out.String(), "\n")
 }
 
 func (r DrainResult) Human() string {
 	var out strings.Builder
 	writer := tabwriter.NewWriter(&out, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(writer, "STATUS\tMOUNT_PATH\tDRIVER\tPID\tDURATION_MS")
+	_, _ = fmt.Fprintln(writer, "STATUS\tMOUNT_PATH\tDRIVER\tDURATION_MS")
 	duration := int64(0)
 	if r.Response != nil {
 		duration = r.Response.DurationMS
 	}
-	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%d\t%d\n", r.Status, r.MountPath, r.Driver, r.PID, duration)
+	_, _ = fmt.Fprintf(writer, "%s\t%s\t%s\t%d\n", r.Status, r.MountPath, r.Driver, duration)
 	_ = writer.Flush()
 	if r.Response != nil {
-		p := r.Response.Pending
-		_, _ = fmt.Fprintf(&out, "pending: open_handles=%d dirty_handles=%d commit_queue=%d commit_bytes=%d commit_in_flight=%d commit_delayed=%d commit_conflicts=%d uploader_queued=%d uploader_in_flight=%d uploader_cached=%d\n",
-			p.OpenHandles,
-			p.DirtyHandles,
-			p.CommitQueuePending,
-			p.CommitQueueBytes,
-			p.CommitQueueInFlight,
-			p.CommitQueueDelayed,
-			p.CommitQueueConflicts,
-			p.UploaderQueued,
-			p.UploaderInFlight,
-			p.UploaderCached,
-		)
+		_, _ = fmt.Fprintf(&out, "pending: %s\n", drainPendingSummary(r.Response.Pending))
 	}
 	return strings.TrimRight(out.String(), "\n")
 }

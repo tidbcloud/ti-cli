@@ -21,10 +21,15 @@ type Locator struct {
 	// was created. It is a stable, non-secret placement property that lets drain
 	// and unmount rebuild the companion environment without fetching the region
 	// catalog. Older locators may omit it.
-	ServiceAddress   string `json:"service_address,omitempty"`
-	CompanionHome    string `json:"companion_home"`
-	MountPath        string `json:"mount_path"`
-	Kind             string `json:"kind,omitempty"`
+	ServiceAddress string `json:"service_address,omitempty"`
+	CompanionHome  string `json:"companion_home"`
+	MountPath      string `json:"mount_path"`
+	Kind           string `json:"kind,omitempty"`
+	// Driver is the mount driver the companion reported when the mount was
+	// created. Unmount uses it to decide whether the mount supports drain:
+	// WebDAV mounts have no control socket and no durability tiers. Older
+	// locators may omit it, and an omitted driver means "unknown, do not gate".
+	Driver           string `json:"driver,omitempty"`
 	FileSystemID     string `json:"file_system_id,omitempty"`
 	TokenID          string `json:"token_id,omitempty"`
 	TokenFingerprint string `json:"token_fingerprint,omitempty"`
@@ -65,6 +70,12 @@ func New(profile, fileSystemName, regionCode, companionHome, mountPath, kind str
 		MountPath:      canonical,
 		Kind:           strings.TrimSpace(kind),
 	}, nil
+}
+
+// WithDriver records the mount driver reported by the companion.
+func (l Locator) WithDriver(driver string) Locator {
+	l.Driver = strings.TrimSpace(driver)
+	return l
 }
 
 // WithServiceAddress records the resolved regional service address.

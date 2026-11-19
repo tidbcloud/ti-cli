@@ -179,6 +179,16 @@ Automatic mounting uses FUSE on Linux and WebDAV on macOS and Windows. macOS use
 
 Mount commands start the companion runtime in the background, wait until the mount is ready, and then return a structured result. Use `ti fs unmount-file-system` or `ti fs-vault unmount-vault` to end a mount. The public CLI does not expose a foreground mount mode.
 
+FUSE mounts choose their write durability with `--durability`: `auto` lets the companion measure round-trip time, `interactive` (the default) keeps writes durable in the local staging journal and uploads them after flush, `fsync` makes `fsync(2)` wait for the remote commit, `close-sync` makes `close(2)` remote-durable, and `write-sync` makes every write remote-durable before it returns. Use `close-sync` or `write-sync` when a caller must not lose an acknowledged write in the client; the interactive default leaves that window to the background uploader. The mount result reports the effective tier as `durability`. WebDAV mounts keep the engine's native write behavior: ti forwards no tier, reports `auto`, and rejects every other explicit tier. `--write-back-cache` remains as a legacy alias where `true` means `interactive` and `false` means `auto`. Checkpoint mounts are read-only, reject any tier other than `auto`, and report `auto`.
+
+```shell
+ti fs mount-file-system --file-system-id <file-system-id> --mount-path ~/my-workspace --driver fuse --durability close-sync
+ti fs drain-file-system --mount-path ~/my-workspace
+ti fs unmount-file-system --mount-path ~/my-workspace
+```
+
+`ti fs drain-file-system` reports the companion's drain result, including the pending counters (`open_handles`, `commit_queue_*`, `uploader_*`), so a caller can tell "fully uploaded" from "the background upload never finished"; it also refuses WebDAV and vault mounts, which have no drain, instead of failing with a raw companion error. `ti fs unmount-file-system` runs that drain itself before detaching a FUSE file-system mount and fails with `fs.drain_pending_work` while writes are still pending, keeping the mount locator so the command can be retried. `--force` is the only way to accept the undrained writes (the result then records `drain.status: "skipped"`); `--ignore-absent` stays a cleanup idempotency flag and continues only past a drain failure that reports no pending work - no report at all, or a zero-counter report with a non-pending classification (`drain.status: "failed"`) - never past pending work. WebDAV mounts keep their native write behavior and are not gated, and `ti fs-vault unmount-vault` is not gated either because the engine drains only file-system mounts.
+
 Run a command against a remote Filesystem (Runtime is available only in AWS `us-east-1` and `us-west-2`):
 
 ```shell

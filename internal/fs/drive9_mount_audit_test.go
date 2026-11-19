@@ -26,11 +26,14 @@ func TestDrive9MountLocatorRoutesDrainAndUnmountWithoutCredentials(t *testing.T)
 	mountPath := filepath.Join(t.TempDir(), "workspace")
 	profile := dataProfile()
 
+	// An explicit FUSE driver keeps this routing test independent of the host's
+	// automatic mode: on macOS/Windows `auto` is WebDAV, which has no drain.
 	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
 		Profile:        profile,
 		FileSystemName: "workspace",
 		MountPath:      mountPath,
 		RemotePath:     "/",
+		Driver:         "fuse",
 	}); err != nil {
 		t.Fatalf("MountFileSystem failed: %v", err)
 	}
@@ -707,7 +710,13 @@ func TestDrive9MountSuppressesCompanionSuccessChatter(t *testing.T) {
 	if stdout.Len() != 0 || stderr.Len() != 0 {
 		t.Fatalf("companion mount output leaked to ti output: stdout=%q stderr=%q", stdout.String(), stderr.String())
 	}
-	if result.Driver != "webdav" || result.Status != "mounted" {
+	// auto is webdav on macOS/Windows and fuse elsewhere; the point is that the
+	// driver comes from the companion's own report, not from opts.Driver.
+	wantDriver := "fuse"
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		wantDriver = "webdav"
+	}
+	if result.Driver != wantDriver || result.Status != "mounted" {
 		t.Fatalf("mount result did not retain captured companion state: %#v", result)
 	}
 }

@@ -2630,7 +2630,8 @@ func newFSMountFileSystemCommand(info version.Info) *cobra.Command {
 	cmd.Flags().Int64("read-cache-size-mb", 128, "FUSE read cache size in MiB. 0 uses the default.")
 	cmd.Flags().Int64("read-cache-max-file-mb", 4, "Maximum file size admitted to the FUSE read cache in MiB. 0 uses the default.")
 	cmd.Flags().Duration("read-cache-ttl", 30*time.Second, "FUSE read cache Time-to-Live.")
-	cmd.Flags().Bool("write-back-cache", true, "Persist FUSE writes locally before writing them to the file system on flush; unavailable for checkpoint mounts.")
+	cmd.Flags().String("durability", tifs.DefaultMountDurability, "Write durability: auto, interactive, fsync, close-sync, or write-sync. FUSE only; WebDAV mounts reject every tier except auto.")
+	cmd.Flags().Bool("write-back-cache", true, "Legacy alias: true selects --durability=interactive and false selects --durability=auto. Unavailable for checkpoint mounts.")
 	cmd.Flags().String("mount-profile", "", "Mount profile: coding-agent, portable, or none. Default: none.")
 	cmd.Flags().String("local-root", "", "Local overlay root. Default: ~/.ti/local/fs/<mount-hash>.")
 	cmd.Flags().StringArray("pack-path", nil, "Local overlay path included by automatic or manual pack. Repeatable.")
@@ -2674,7 +2675,7 @@ func newFSUnmountFileSystemCommand(info version.Info) *cobra.Command {
 	}, info)
 	cmd.Flags().String("mount-path", "", "The local mounted path.")
 	cmd.Flags().Duration("timeout", 30*time.Second, "Time to wait for the mount process to exit.")
-	cmd.Flags().Bool("force", false, "Kill the mount process if graceful unmount times out.")
+	cmd.Flags().Bool("force", false, "Skip the pre-unmount drain gate and unmount even when local writes are still pending.")
 	cmd.Flags().Bool("ignore-absent", false, "Return success when no file system mount state exists for the specified path.")
 	cmd.Flags().String("pack-archive-path", "", "Pack archive to write after unmount")
 	cmd.Flags().Bool("no-auto-pack", false, "Skip the portable mount profile's default auto-pack action.")
@@ -3128,6 +3129,10 @@ func fsMountOptions(ctx commandContext, profile *config.Profile) (tifs.MountFile
 	if err != nil {
 		return tifs.MountFileSystemOptions{}, err
 	}
+	durability, err := ctx.StringFlag("durability")
+	if err != nil {
+		return tifs.MountFileSystemOptions{}, err
+	}
 	writeBackCache, err := ctx.BoolFlag("write-back-cache")
 	if err != nil {
 		return tifs.MountFileSystemOptions{}, err
@@ -3173,6 +3178,8 @@ func fsMountOptions(ctx commandContext, profile *config.Profile) (tifs.MountFile
 		ReadCacheMB:       readCacheMB,
 		ReadCacheFileMB:   readCacheFileMB,
 		ReadCacheTTL:      readCacheTTL,
+		Durability:        durability,
+		DurabilitySet:     ctx.FlagChanged("durability"),
 		WriteBackCache:    writeBackCache,
 		WriteBackCacheSet: ctx.FlagChanged("write-back-cache"),
 		MountProfile:      mountProfile,

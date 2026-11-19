@@ -654,12 +654,14 @@ Implemented command behavior:
 - `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --mount-profile portable --pack-path /`
 - `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --read-cache-size-mb 256 --read-cache-max-file-mb 16`
 - `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --cache-dir ~/.ti/cache/workspace --write-back-cache=false`
+- `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --driver fuse --durability close-sync`
 - `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace --remote-path /workspace --driver fuse --layer-ref layer-1`
 - `ti fs mount-file-system --file-system-id <file-system-id> --mount-path ./workspace-v1 --remote-path /workspace --driver fuse --layer-ref layer-1 --checkpoint-id cp-1`
 - `ti fs drain-file-system --mount-path ./workspace`
 - `ti fs drain-file-system --mount-path ./workspace --timeout 30s`
 - `ti fs unmount-file-system --mount-path ./workspace`
 - `ti fs unmount-file-system --mount-path ./workspace --ignore-absent`
+- `ti fs unmount-file-system --mount-path ./workspace --force`
 - `ti fs-vault create-secret --secret-name db-prod --field DB_URL=mysql://example --field PASSWORD=@./password.txt`
 - `ti fs-vault replace-secret --secret-path /n/vault/db-prod --from-directory ./secret-fields`
 - `ti fs-vault read-secret --secret-name db-prod`
@@ -1148,6 +1150,49 @@ Background FS and vault mounts write only a non-secret locator under
 `~/.ti/mounts/`. Drain and unmount must route through that locator to the
 original resource-scoped companion HOME without requiring the FS token again.
 Successful unmount removes the locator; failed unmount preserves it for retry.
+
+`ti fs unmount-file-system` drains before it detaches a FUSE mount and must never
+report success while write-back work is still local. Parse the companion's
+`mount drain --json` report instead of discarding it: `ti fs drain-file-system`
+returns it as `response`, prints the pending counters in text output with one
+shared formatter, fails with `fs.drain_pending_work` when work remains, and
+refuses mounts the dry-run calls "not applicable" (WebDAV, and any non-`fs`
+locator kind such as `vault`) with `fs.drain_not_applicable` instead of a raw
+companion error. The unmount records the driver the companion actually mounted
+in the non-secret mount locator, gates only FUSE file-system mounts on the
+drain, blocks with the locator preserved while work is pending, and treats
+`--force` as the only "accept the loss" path (reported as `drain.status:
+"skipped"`). `--ignore-absent` is a cleanup idempotency flag: it may continue
+only past a drain failure that reports no pending work (no report at all, or a
+parsed report whose counters are all zero with a non-pending classification),
+but the block condition is the parsed pending counters, never the engine's
+`error_kind` alone and never the rendered summary (`DrainPending.HasPendingWork`
+is the single predicate, with one block authority: the error code that already
+folds the counters in), and the outcome must still report `drain.status:
+"failed"` on both the `unmounted` and `absent` paths. A non-pending classification with
+queued work still blocks. A locator written before the driver was recorded is never gated, so
+an upgrade cannot block an existing unmount. The reported `durability` must
+match the driver the companion reported, and `--durability` must reject an
+explicitly empty value instead of treating it as the default. Do not drop these
+outcomes from the result, and do not reimplement the drain in ti: the mount
+control socket belongs to the companion. The companion's `--mode auto` rule is
+mirrored in exactly one place (`companionMountMode`), because
+`mountdriver.Resolve` is prerequisite-aware and would disagree with the
+companion; see `docs/spec/done/0038-fs-mount-durability.md`.
+
+`ti fs mount-file-system` forwards the selected write-durability tier to the
+companion as `mount --durability`. The flag accepts `auto`, `interactive`,
+`fsync`, `close-sync`, and `write-sync`, and defaults to `interactive` so an
+ordinary mount keeps its documented behavior instead of following the engine's
+`auto` default. Never collapse the tier back into the legacy
+`--write-back-cache` boolean: keep that flag only as an alias (`true` means
+`interactive`, `false` means `auto`), and refuse an inconsistent explicit
+combination. FUSE mounts forward the tier, including `--driver auto` mounts on
+platforms whose automatic choice is FUSE; WebDAV mounts forward none and reject
+every explicit tier except `auto` with `fs.webdav_durability_unsupported`;
+checkpoint mounts are read-only, force `auto`, and reject any other explicit
+tier. Report the effective tier as `durability` in the mount result and do not
+reintroduce the removed `write_back_cache` boolean.
 
 Do not implement or expose ti commands for Drive9 internal APIs that are not
 part of Drive9's public CLI. In particular, do not reintroduce low-level layer

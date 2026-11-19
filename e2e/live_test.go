@@ -640,8 +640,9 @@ func TestLiveFSGitLifecycle(t *testing.T) {
 
 	createDir := runTI(t, bin, "--profile", profileName, "fs", "create-directory", "--path", remoteRoot, "--mode", "0755")
 	createDir.wantExitCode(0)
-	mount := runTI(t, bin, "--profile", profileName, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", remoteRoot, "--driver", "fuse", "--ready-timeout", "30s")
+	mount := runTI(t, bin, "--profile", profileName, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", remoteRoot, "--driver", "fuse", "--durability", "close-sync", "--ready-timeout", "30s")
 	mount.wantExitCode(0)
+	mount.wantStdoutContains(`"durability": "close-sync"`)
 
 	repoPath := filepath.Join(mountPath, "hello-world")
 	clone := runTI(t, bin, "--profile", profileName, "fs-git", "clone-git-workspace", "--repo-url", "https://github.com/octocat/Hello-World.git", "--target-path", repoPath, "--blobless", "--hydrate", "sync")
@@ -1586,6 +1587,11 @@ func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 	if strings.Contains(mount.stdout, `"driver": "fuse"`) {
 		drain := runTIWithInput(t, bin, "", locatorEnv, "fs", "drain-file-system", "--mount-path", mountPath, "--timeout", "30s")
 		drain.wantExitCode(0)
+		// The drain report must be surfaced: the pending counters are how an
+		// operator tells "fully uploaded" from "the upload never finished".
+		drain.wantStdoutContains(`"response"`)
+		drain.wantStdoutContains(`"pending"`)
+		drain.wantStdoutContains(`"open_handles"`)
 	}
 	unmount := runTIWithInput(t, bin, "", locatorEnv, "fs", "unmount-file-system", "--mount-path", mountPath)
 	unmount.wantExitCode(0)
@@ -1720,6 +1726,8 @@ func TestLiveFSWebDAVMountRuntime(t *testing.T) {
 
 	mount := runTI(t, bin, "--profile", profileName, "fs", "mount-file-system", "--mount-path", mountPath, "--remote-path", remoteRoot, "--driver", "webdav", "--ready-timeout", "30s")
 	mount.wantExitCode(0)
+	// WebDAV mounts have no durability tiers; ti forwards none and reports auto.
+	mount.wantStdoutContains(`"durability": "auto"`)
 	mount.wantStdoutContains(`"status": "mounted"`)
 	mount.wantStdoutContains(`"driver": "webdav"`)
 

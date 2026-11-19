@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -232,6 +233,41 @@ func main() {
 		fmt.Println(`{"status":"unpacked"}`)
 		return
 	}
+	if hasPrefix(args, "mount", "drain") {
+		if os.Getenv("FAKE_DRIVE9_DRAIN_FAIL") == "1" {
+			fmt.Fprintln(os.Stderr, "drive9 mount drain: read mount state: no such file or directory")
+			os.Exit(1)
+		}
+		ok := os.Getenv("FAKE_DRIVE9_DRAIN_PENDING") != "1"
+		report := map[string]any{
+			"ok": ok, "mount_point": args[len(args)-1], "duration_ms": 5,
+			"native_syncfs_supported": false, "pending": map[string]any{},
+		}
+		if !ok {
+			report["error"] = "writeback uploader: 2 entries remain"
+			report["error_kind"] = "pending_work_remaining"
+			report["pending"] = map[string]any{"commit_queue_pending": 2, "uploader_queued": 2}
+		}
+		if kind := os.Getenv("FAKE_DRIVE9_DRAIN_ZERO_KIND"); kind != "" {
+			ok = false
+			report["ok"] = false
+			report["error"] = "drain deadline exceeded with nothing queued"
+			report["error_kind"] = kind
+		}
+		if kind := os.Getenv("FAKE_DRIVE9_DRAIN_PENDING_KIND"); kind != "" {
+			ok = false
+			report["ok"] = false
+			report["error"] = "drain deadline exceeded with queued work"
+			report["error_kind"] = kind
+			report["pending"] = map[string]any{"commit_queue_pending": 3, "uploader_queued": 4}
+		}
+		encoded, _ := json.Marshal(report)
+		fmt.Println(string(encoded))
+		if !ok {
+			os.Exit(1)
+		}
+		return
+	}
 	if hasPrefix(args, "mount") {
 		fmt.Fprintln(os.Stderr, "drive9: mount mode: "+mountMode(args))
 		if mountPath := args[len(args)-1]; len(args) >= 2 && len(mountPath) > 0 && mountPath[0] != '-' {
@@ -243,10 +279,15 @@ func main() {
 }
 
 func mountMode(args []string) string {
-	if value := flagValue(args, "--mode"); value != "" {
+	if value := flagValue(args, "--mode"); value != "" && value != "auto" {
 		return value
 	}
-	return "webdav"
+	// Mirror drive9's ResolveMountMode: auto is webdav on macOS/Windows and
+	// fuse everywhere else.
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		return "webdav"
+	}
+	return "fuse"
 }
 
 func hasPrefix(args []string, want ...string) bool {

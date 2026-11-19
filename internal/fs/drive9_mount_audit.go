@@ -96,9 +96,9 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		if opts.ReadCacheTTL > 0 {
 			args = append(args, "--read-cache-ttl", opts.ReadCacheTTL.String())
 		}
-		if opts.WriteBackCache {
-			args = append(args, "--durability", "interactive")
-		}
+	}
+	if mountDurabilityForwarded(opts) {
+		appendFlagValue(&args, "--durability", opts.Durability)
 	}
 	appendFlagValue(&args, "--profile", opts.MountProfile)
 	appendFlagValue(&args, "--local-root", opts.LocalRoot)
@@ -126,7 +126,10 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		}
 		return MountResult{}, runErr
 	}
-	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", opts); err != nil {
+	// Record the driver the companion actually mounted with, so the matching
+	// unmount knows whether the mount supports the drain gate.
+	mountedDriver := drive9MountedDriver(result.Stderr, opts.Driver)
+	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", mountedDriver, opts); err != nil {
 		// A partially completed unpack can leave an escaping link behind, and a
 		// later mount would record it as pre-existing state, so audit before
 		// deciding whether the failed mount can be torn down.
@@ -161,11 +164,19 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 		return MountResult{}, readyErr
 	}
 	endpoint, _ := s.resolveFS(opts.Profile)
-	driver := drive9MountedDriver(result.Stderr, opts.Driver)
+	driver := mountedDriver
 	if driver == "" {
 		driver = "auto"
 	}
-	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: auditRoot, PackPaths: opts.PackPaths, WriteBackCache: opts.WriteBackCache, LayerRef: opts.LayerRef, CheckpointID: opts.CheckpointID, ReadOnly: opts.ReadOnly}, nil
+	// Report the tier that is actually in effect. ti forwards --durability only
+	// for mounts its companion-mode mirror calls FUSE; if the companion still
+	// mounted WebDAV, no tier applies and reporting "interactive" would claim a
+	// guarantee the mount does not have.
+	durability := opts.Durability
+	if driver == "webdav" {
+		durability = MountDurabilityAuto
+	}
+	return MountResult{Status: "mounted", Profile: profileName(opts.Profile), FileSystemName: opts.Profile.FSResourceName, MountPath: opts.MountPath, RemotePath: remotePath, Driver: driver, Endpoint: &endpoint, MountProfile: opts.MountProfile, LocalRoot: auditRoot, PackPaths: opts.PackPaths, Durability: durability, LayerRef: opts.LayerRef, CheckpointID: opts.CheckpointID, ReadOnly: opts.ReadOnly}, nil
 }
 
 // stopMountAfterUnsafeAudit tears down a mount whose overlay failed the audit. It
