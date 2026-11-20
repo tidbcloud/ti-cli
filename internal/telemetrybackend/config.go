@@ -138,9 +138,27 @@ func (c Config) Validate() error {
 	return ValidateTiDBDSN(c.Environment, c.TiDBDSN)
 }
 
+// nonProductionEnvironments are the only TELEMETRY_ENVIRONMENT values that may
+// skip the verified TLS rule. Every other value, including a typo such as
+// "prod" and remote ones such as "staging", is held to the production rule, so a
+// mistake fails closed.
+var nonProductionEnvironments = map[string]bool{
+	"development":   true,
+	"local":         true,
+	"telemetry-e2e": true,
+	"test":          true,
+}
+
+// IsProductionEnvironment reports whether the verified TLS rule applies to a
+// TELEMETRY_ENVIRONMENT value: an empty value and any value outside
+// nonProductionEnvironments count as production.
+func IsProductionEnvironment(environment string) bool {
+	return !nonProductionEnvironments[strings.ToLower(strings.TrimSpace(environment))]
+}
+
 // ValidateTiDBDSN checks TIDB_DSN the same way for the API server and the
-// migration runner: it must parse, and in production it must use verified TLS.
-// An empty environment means production, as in LoadConfig.
+// migration runner: it must parse, and in production (see
+// IsProductionEnvironment) it must use verified TLS.
 func ValidateTiDBDSN(environment, rawDSN string) error {
 	if rawDSN == "" {
 		return fmt.Errorf("TIDB_DSN is required")
@@ -149,7 +167,7 @@ func ValidateTiDBDSN(environment, rawDSN string) error {
 	if err != nil {
 		return fmt.Errorf("TIDB_DSN is invalid")
 	}
-	if strings.EqualFold(valueOrDefault(environment, "production"), "production") {
+	if IsProductionEnvironment(environment) {
 		switch strings.ToLower(dsn.TLSConfig) {
 		case "", "false", "skip-verify", "preferred":
 			return fmt.Errorf("TIDB_DSN must enable verified TLS in production")

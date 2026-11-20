@@ -1085,6 +1085,18 @@ described through `describeRejectedOrigin` so a password or token in the URL
 never reaches stderr. Never build a credential-bearing client with a nil
 `CheckRedirect`.
 
+Transfers to server-chosen URLs (presigned object-store URLs, the ti fs download
+redirect, Starter export files, and `ti update` release metadata and artifacts)
+carry no credential header, so they may cross origins, but they must never
+travel in cleartext. Build the request with `transport.NewSecureRequest` and
+send it with `transport.DoSecure`: the URL and every redirect must be `https`,
+or plain `http` only to a loopback host, never with user info, and a redirect
+from `https` to `http` is refused even to loopback. Never put the raw transfer
+URL in an error, because its query carries the presigned signature; a refused
+URL is named only by `transport.Origin`, and net/http's own error for a redirect
+whose `Location` does not parse is dropped (`transport.IsLocationParseError`)
+because it repeats the raw `Location` value.
+
 Do not store secrets in logs, telemetry, generated docs examples, or test
 fixtures.
 

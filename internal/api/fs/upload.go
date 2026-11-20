@@ -962,7 +962,7 @@ func IsPresignExpired(err error) bool {
 }
 
 func uploadPresignedPartV2(ctx context.Context, part PresignedPart, data []byte) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, part.URL, bytes.NewReader(data))
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodPut, part.URL, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
@@ -991,7 +991,7 @@ func uploadPresignedPartV2(ctx context.Context, part PresignedPart, data []byte)
 }
 
 func uploadPresignedPatchPart(ctx context.Context, rawURL string, headers map[string]string, data []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(data))
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodPut, rawURL, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -1024,7 +1024,7 @@ func uploadPresignedPatchPart(ctx context.Context, rawURL string, headers map[st
 }
 
 func uploadPresignedPartWithChecksum(ctx context.Context, rawURL string, headers map[string]string, data []byte, checksumCRC32C string, sendChecksum bool) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(data))
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodPut, rawURL, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -1055,7 +1055,7 @@ func uploadPresignedPartWithChecksum(ctx context.Context, rawURL string, headers
 }
 
 func readPresignedPart(ctx context.Context, rawURL string, headers map[string]string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}

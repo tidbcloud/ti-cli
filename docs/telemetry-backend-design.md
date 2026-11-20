@@ -43,7 +43,7 @@ TELEMETRY_TRUSTED_PROXY_CIDRS=172.16.0.0/12
 TIDB_DSN=tdc_telemetry:password@tcp(gateway01.us-east-1.prod.aws.tidbcloud.com:4000)/tdc_telemetry?tls=true&parseTime=true
 ```
 
-`TIDB_DSN` is an application credential. It must remain only in the server-side `.env`, must never be stored in GitHub repository or Environment secrets, must never be committed to git, and must never be logged. GitHub may store only deployment transport credentials such as the SSH host, username, and key. For TiDB Cloud, the DSN must enable TLS with certificate and identity verification. `TELEMETRY_ENVIRONMENT=production` enables this strict TLS validation.
+`TIDB_DSN` is an application credential. It must remain only in the server-side `.env`, must never be stored in GitHub repository or Environment secrets, must never be committed to git, and must never be logged. GitHub may store only deployment transport credentials such as the SSH host, username, and key. For TiDB Cloud, the DSN must enable TLS with certificate and identity verification. Both the API server and `ti-telemetry-migrate` enforce this strict TLS validation. Every `TELEMETRY_ENVIRONMENT` value counts as production, an unset one included, except the local and test names `development`, `local`, `test` and `telemetry-e2e`, so a misspelling such as `prod` still gets the strict rule.
 
 Deployments upgraded from the former dual-sink implementation may still have `POSTHOG_API_HOST` and `POSTHOG_PROJECT_TOKEN` in their server-local `.env`. The backend ignores those variables; operators should remove them after deployment. This change stops future forwarding but does not delete historical data already held by an external service.
 

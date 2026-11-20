@@ -562,6 +562,7 @@ func TestReleaseAPIBaseURLOverrideNeedsLocalBuildAndOptIn(t *testing.T) {
 		{"local rejects plain http to a remote host", "local", "1", "http://releases.example.com", DefaultReleaseAPIBaseURL},
 		{"local rejects other schemes", "local", "1", "ftp://releases.example.com", DefaultReleaseAPIBaseURL},
 		{"local rejects a value with no host", "local", "1", "https://", DefaultReleaseAPIBaseURL},
+		{"local rejects user info", "local", "1", "https://user:pass@releases.example.com", DefaultReleaseAPIBaseURL},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("TI_ALLOW_TEST_ENDPOINTS", tc.allow)

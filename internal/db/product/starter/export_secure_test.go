@@ -59,3 +59,40 @@ func TestDownloadExportedDataRefusesPlainHTTPURLs(t *testing.T) {
 		})
 	}
 }
+
+func TestDownloadExportedDataMalformedURLDoesNotLeak(t *testing.T) {
+	const malformedURL = "https://bucket.example.com/a%zz.csv?X-Amz-Signature=secret-signature"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1beta1/clusters/cluster-1":
+			_, _ = w.Write([]byte(`{"clusterId":"cluster-1","displayName":"demo","servicePlan":"Starter"}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/files"):
+			_, _ = w.Write([]byte(`{"files":[{"name":"a.csv","size":5}]}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/files:download"):
+			_, _ = w.Write([]byte(`{"files":[{"name":"a.csv","url":"` + malformedURL + `"}]}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	result, err := testService(server.URL).DownloadExportedData(context.Background(), DownloadExportedDataOptions{
+		Profile:    testProfile(),
+		ClusterID:  "cluster-1",
+		ExportID:   "export-1",
+		OutputPath: t.TempDir(),
+	})
+	if err == nil || result.Failed != 1 || len(result.Files) != 1 {
+		t.Fatalf("DownloadExportedData = %#v, %v; want one failed file", result, err)
+	}
+	fileErr := result.Files[0].Error
+	if !strings.Contains(fileErr, "malformed") {
+		t.Fatalf("file error = %q, want a malformed URL refusal", fileErr)
+	}
+	if strings.Contains(fileErr, "secret-signature") || strings.Contains(fileErr, "a%zz") {
+		t.Fatalf("file error leaks the URL: %q", fileErr)
+	}
+	if strings.Contains(err.Error(), "secret-signature") {
+		t.Fatalf("error leaks the URL: %v", err)
+	}
+}

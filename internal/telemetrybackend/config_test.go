@@ -75,6 +75,13 @@ func TestValidateTiDBDSN(t *testing.T) {
 		{"blank environment means production", "  ", plain, "verified TLS"},
 		{"production without TLS", "Production", plain, "verified TLS"},
 		{"non-production without TLS", "telemetry-e2e", plain, ""},
+		{"test without TLS", " Test ", unverified, ""},
+		{"local without TLS", "local", plain, ""},
+		{"development without TLS", "development", plain, ""},
+		{"typo prod is production", "prod", unverified, "verified TLS"},
+		{"typo prduction is production", "prduction", plain, "verified TLS"},
+		{"staging is production", "staging", unverified, "verified TLS"},
+		{"unknown name is production", "qa-east", plain, "verified TLS"},
 		{"missing DSN", "telemetry-e2e", "", "required"},
 		{"invalid DSN", "telemetry-e2e", "not a dsn", "invalid"},
 	} {

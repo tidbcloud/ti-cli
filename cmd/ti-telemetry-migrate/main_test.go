@@ -14,6 +14,7 @@ func TestRunRefusesProductionDSNWithoutVerifiedTLS(t *testing.T) {
 	}{
 		{"unset environment defaults to production", ""},
 		{"explicit production", "production"},
+		{"misspelled production", "prod"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := map[string]string{

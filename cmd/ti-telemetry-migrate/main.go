@@ -42,7 +42,8 @@ func run(args []string, getenv func(string) string, logger *slog.Logger) int {
 		return 1
 	}
 	// Same rule as the API server: in production (also when
-	// TELEMETRY_ENVIRONMENT is unset) the DSN must use verified TLS.
+	// TELEMETRY_ENVIRONMENT is unset or not a known local/test name) the DSN
+	// must use verified TLS.
 	if err := telemetrybackend.ValidateTiDBDSN(getenv("TELEMETRY_ENVIRONMENT"), dsn); err != nil {
 		logger.Error("refusing TIDB_DSN", "error", err.Error())
 		return 1

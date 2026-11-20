@@ -44,3 +44,32 @@ func TestDownloadDrive9CompanionRefusesPlainHTTPBaseURL(t *testing.T) {
 		t.Fatalf("downloadDrive9Companion error = %v, want ErrInsecureURL", err)
 	}
 }
+
+func TestDownloadMalformedURLDoesNotLeak(t *testing.T) {
+	c := newClient(version.Info{}, "https://releases.invalid", nil)
+	_, err := c.download(context.Background(), "https://releases.example.com/ti%zz.tar.gz?token=secret-token")
+	var appErr *apperr.Error
+	if !errors.As(err, &appErr) || appErr.Code != "update.invalid_url" {
+		t.Fatalf("download error = %v, want update.invalid_url", err)
+	}
+	if !errors.Is(err, apitransport.ErrMalformedURL) {
+		t.Fatalf("download error = %v, want ErrMalformedURL", err)
+	}
+	if strings.Contains(err.Error(), "secret-token") {
+		t.Fatalf("download error leaks the URL: %v", err)
+	}
+}
+
+func TestDownloadReportsRedirectLoop(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/again", http.StatusFound)
+	}))
+	defer server.Close()
+
+	c := newClient(version.Info{}, "https://releases.invalid", nil)
+	_, err := c.download(context.Background(), server.URL+"/ti.tar.gz")
+	var appErr *apperr.Error
+	if !errors.As(err, &appErr) || appErr.Code != "update.redirect_loop" {
+		t.Fatalf("download error = %v, want update.redirect_loop", err)
+	}
+}

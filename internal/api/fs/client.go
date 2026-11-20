@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -231,13 +232,18 @@ func (c *Client) readFile(ctx context.Context, remotePath string, offset, length
 
 func (c *Client) readRedirectedFile(ctx context.Context, res *http.Response, rangeHeader string, offset, length int64, ranged bool) ([]byte, error) {
 	defer res.Body.Close()
+	// res.Location's parse error repeats the raw Location value, which can carry
+	// a presigned signature, so it is not kept as the cause.
 	location, err := res.Location()
 	if err != nil {
-		return nil, apperr.Wrap("api.invalid_redirect", "api", 1, "ti fs returned an invalid download redirect", err)
+		return nil, apperr.New("api.invalid_redirect", "api", 1, "ti fs returned an invalid download redirect")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, location.String(), nil)
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodGet, location.String(), nil)
 	if err != nil {
-		return nil, apperr.Wrap("api.build_request", "runtime", 1, "build redirected ti fs download request", err)
+		if errors.Is(err, apitransport.ErrInsecureURL) {
+			return nil, apperr.Wrap("api.insecure_redirect", "api", 1, "ti fs redirected the download to a URL that is not https", err)
+		}
+		return nil, apperr.Wrap("api.invalid_redirect", "api", 1, "ti fs returned an invalid download redirect", err)
 	}
 	req.Header.Set("User-Agent", c.api.UserAgent)
 	if rangeHeader != "" {
@@ -247,6 +253,18 @@ func (c *Client) readRedirectedFile(ctx context.Context, res *http.Response, ran
 	if err != nil {
 		if errors.Is(err, apitransport.ErrInsecureURL) {
 			return nil, apperr.Wrap("api.insecure_redirect", "api", 1, "ti fs redirected the download to a URL that is not https", err)
+		}
+		if errors.Is(err, apitransport.ErrMalformedURL) {
+			return nil, apperr.Wrap("api.invalid_redirect", "api", 1, "ti fs returned an invalid download redirect", err)
+		}
+		if errors.Is(err, apitransport.ErrTooManyRedirects) {
+			return nil, &api.Error{
+				Code:     "api.redirect_loop",
+				Category: "api",
+				ExitCode: 1,
+				Message:  fmt.Sprintf("API request failed: %s redirected more than %d times", req.URL.Host, apitransport.MaxRedirects),
+				Cause:    err,
+			}
 		}
 		return nil, &api.Error{
 			Code:     "api.network_error",

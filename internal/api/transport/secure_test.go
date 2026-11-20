@@ -207,3 +207,103 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
 	return f(req)
 }
+
+func TestDoSecureHoldsAnyClientToTheRedirectRule(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://bucket.example.com/key?X-Amz-Signature=secret-signature", http.StatusFound)
+	}))
+	defer server.Close()
+
+	for name, client := range map[string]*http.Client{"plain client": {}, "nil client": nil, "default client": http.DefaultClient} {
+		req, err := http.NewRequest(http.MethodGet, server.URL+"/start", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = DoSecure(client, req)
+		if !errors.Is(err, ErrInsecureURL) {
+			t.Fatalf("%s: DoSecure error = %v, want ErrInsecureURL", name, err)
+		}
+	}
+	if http.DefaultClient.CheckRedirect != nil {
+		t.Fatal("DoSecure changed http.DefaultClient")
+	}
+}
+
+func TestDoSecureRefusesHTTPSRedirectToLoopbackHTTP(t *testing.T) {
+	var localHit atomic.Bool
+	local := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		localHit.Store(true)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer local.Close()
+	remote := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, local.URL+"/admin", http.StatusTemporaryRedirect)
+	}))
+	defer remote.Close()
+
+	req, err := http.NewRequest(http.MethodPut, remote.URL+"/part?X-Amz-Signature=secret-signature", strings.NewReader("file bytes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = DoSecure(remote.Client(), req)
+	if !errors.Is(err, ErrInsecureURL) {
+		t.Fatalf("DoSecure error = %v, want ErrInsecureURL", err)
+	}
+	if strings.Contains(err.Error(), "secret-signature") {
+		t.Fatalf("DoSecure error leaks the signature: %v", err)
+	}
+	if localHit.Load() {
+		t.Fatal("an https server redirected the transfer to a loopback http service")
+	}
+}
+
+func TestNewSecureRequest(t *testing.T) {
+	ctx := context.Background()
+	if _, err := NewSecureRequest(ctx, http.MethodGet, "https://bucket.example.com/key?X-Amz-Signature=abc", nil); err != nil {
+		t.Fatalf("https URL: %v", err)
+	}
+	if _, err := NewSecureRequest(ctx, http.MethodGet, "http://127.0.0.1:9000/key", nil); err != nil {
+		t.Fatalf("loopback http URL: %v", err)
+	}
+	for raw, want := range map[string]error{
+		"https://bucket.example.com/a%zz?X-Amz-Signature=secret-signature":  ErrMalformedURL,
+		"https://bucket.example.com/a\x7f?X-Amz-Signature=secret-signature": ErrMalformedURL,
+		"http://bucket.example.com/key?X-Amz-Signature=secret-signature":    ErrInsecureURL,
+		"https://user:secret-signature@bucket.example.com/key":              ErrInsecureURL,
+	} {
+		req, err := NewSecureRequest(ctx, http.MethodGet, raw, nil)
+		if req != nil || !errors.Is(err, want) {
+			t.Errorf("NewSecureRequest(%q) = %v, %v; want %v", raw, req, err, want)
+			continue
+		}
+		if strings.Contains(err.Error(), "secret-signature") || strings.Contains(err.Error(), "/a") {
+			t.Errorf("NewSecureRequest(%q) error %q leaks the URL", raw, err)
+		}
+	}
+}
+
+func TestDoSecureDropsMalformedLocationFromLaterHop(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/start" {
+			http.Redirect(w, r, "/object", http.StatusFound)
+			return
+		}
+		w.Header().Set("Location", "https://bucket.example.com/x%zz?X-Amz-Signature=secret-signature")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer server.Close()
+
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/start", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = DoSecure(nil, req)
+	if !errors.Is(err, ErrMalformedURL) {
+		t.Fatalf("DoSecure error = %v, want ErrMalformedURL", err)
+	}
+	for _, leaked := range []string{"secret-signature", "x%zz"} {
+		if strings.Contains(err.Error(), leaked) {
+			t.Fatalf("DoSecure error %q leaks %q", err, leaked)
+		}
+	}
+}

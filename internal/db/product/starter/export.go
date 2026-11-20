@@ -300,7 +300,7 @@ func (s Service) downloadExportFile(ctx context.Context, outputPath string, job 
 }
 
 func (s Service) copyExportURL(ctx context.Context, outputPath, rel, rawURL string) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return 0, err
 	}
