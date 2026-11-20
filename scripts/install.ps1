@@ -205,6 +205,29 @@ if ((Test-Path $Target) -and -not $Yes) {
     }
 }
 
+# Every download must stay on https, redirects included: the archive, its
+# checksums and the companion all come through here, and the checksums travel
+# over the same channel, so one cleartext hop could replace both. PowerShell 7.4+
+# already refuses an https-to-http redirect; this also covers Windows PowerShell
+# 5.1 by checking the final URL, and deletes a file that arrived any other way.
+function Save-HttpsDownload([string]$Uri, [string]$OutFile) {
+    $Response = Invoke-WebRequest -Uri $Uri -OutFile $OutFile -PassThru -UseBasicParsing
+    $FinalUri = $null
+    $Base = $Response.BaseResponse
+    # Check the property exists first, so this also works under Set-StrictMode.
+    if ($Base.PSObject.Properties['ResponseUri']) {
+        # Windows PowerShell 5.1: HttpWebResponse
+        $FinalUri = $Base.ResponseUri
+    } elseif ($Base.PSObject.Properties['RequestMessage']) {
+        # PowerShell 7: HttpResponseMessage
+        $FinalUri = $Base.RequestMessage.RequestUri
+    }
+    if (-not $FinalUri -or $FinalUri.Scheme -ne "https") {
+        Remove-Item -Force -ErrorAction SilentlyContinue -LiteralPath $OutFile
+        Fail "refused a download that did not stay on https: $Uri"
+    }
+}
+
 $TempDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ("ti-install-" + [System.Guid]::NewGuid().ToString()))
 
 try {
@@ -212,10 +235,10 @@ try {
     $ChecksumsPath = Join-Path $TempDir.FullName "ti_checksums.txt"
     $CompanionPath = Join-Path $TempDir.FullName $CompanionArtifact
     $CompanionChecksumsPath = Join-Path $TempDir.FullName "drive9_checksums.txt"
-    Invoke-WebRequest -Uri $ArchiveUrl -OutFile $ArchivePath
-    Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $ChecksumsPath
-    Invoke-WebRequest -Uri $CompanionUrl -OutFile $CompanionPath
-    Invoke-WebRequest -Uri $CompanionChecksumsUrl -OutFile $CompanionChecksumsPath
+    Save-HttpsDownload $ArchiveUrl $ArchivePath
+    Save-HttpsDownload $ChecksumsUrl $ChecksumsPath
+    Save-HttpsDownload $CompanionUrl $CompanionPath
+    Save-HttpsDownload $CompanionChecksumsUrl $CompanionChecksumsPath
 
     $checksumLine = Get-Content $ChecksumsPath | Where-Object { $_ -match "\s+$([regex]::Escape($Artifact))$" } | Select-Object -First 1
     if (-not $checksumLine) {

@@ -329,6 +329,8 @@ func newClient(info version.Info, baseURL string, httpClient *http.Client) clien
 	// Release metadata, checksums, the ti archive, and the ti-drive9 companion all
 	// come through this client, and the archive and companion get executed, so
 	// every URL and redirect must be https (http only to loopback for local tests).
+	// DoSecure applies the same policy again; wrapping here is a second line of
+	// defense for any code that sends with this client directly.
 	return client{
 		baseURL:    strings.TrimRight(baseURL, "/"),
 		httpClient: apitransport.SecureTransferClient(httpClient),

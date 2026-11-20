@@ -83,21 +83,20 @@ need() {
 
 need tar
 
+# Every download must stay on https, redirects included: the archive, its
+# checksums and the companion all come through here, and the checksums travel
+# over the same channel, so one cleartext hop could replace both. curl enforces
+# that with --proto/--proto-redir. wget has no equivalent (--https-only applies
+# only to recursive downloads), so it is not used.
 download() {
   if command -v curl >/dev/null 2>&1; then
     if [ -t 2 ]; then
-      curl -fSL --progress-bar -o "$2" "$1"
+      curl -fSL --proto '=https' --proto-redir '=https' --progress-bar -o "$2" "$1"
     else
-      curl -fsSL -o "$2" "$1"
-    fi
-  elif command -v wget >/dev/null 2>&1; then
-    if [ -t 2 ]; then
-      wget --show-progress -q -O "$2" "$1" 2>&1
-    else
-      wget -q -O "$2" "$1"
+      curl -fsSL --proto '=https' --proto-redir '=https' -o "$2" "$1"
     fi
   else
-    error "neither curl nor wget found"
+    error "curl is required to download ti over https only; install curl and retry"
   fi
 }
 

@@ -276,8 +276,11 @@ func TestNewSecureRequest(t *testing.T) {
 			t.Errorf("NewSecureRequest(%q) = %v, %v; want %v", raw, req, err, want)
 			continue
 		}
-		if strings.Contains(err.Error(), "secret-signature") || strings.Contains(err.Error(), "/a") {
+		if strings.Contains(err.Error(), "secret-signature") || strings.Contains(err.Error(), "/a") || strings.Contains(err.Error(), "bucket.example.com/") {
 			t.Errorf("NewSecureRequest(%q) error %q leaks the URL", raw, err)
+		}
+		if want == ErrMalformedURL && !strings.Contains(err.Error(), "invalid") {
+			t.Errorf("NewSecureRequest(%q) error %q lost the parser's reason", raw, err)
 		}
 	}
 }

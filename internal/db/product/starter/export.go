@@ -341,6 +341,8 @@ func (s Service) copyExportURL(ctx context.Context, outputPath, rel, rawURL stri
 
 // fileHTTPClient downloads export files from the URLs the API returns. The
 // dump holds database contents, so the URL and every redirect must be https.
+// DoSecure applies the same policy again; wrapping here is a second line of
+// defense for any code that sends with this client directly.
 func (s Service) fileHTTPClient() *http.Client {
 	return apitransport.SecureTransferClient(s.HTTPClient)
 }

@@ -954,7 +954,9 @@ var errPresignExpired = errors.New("presigned URL expired")
 
 // transferClient carries file bytes to and from the presigned and redirected
 // object-store URLs the ti fs server returns. Those URLs, and every redirect they
-// lead to, must be https (http only to loopback for local tests).
+// lead to, must be https (http only to loopback for local tests). DoSecure
+// applies the same policy again on every call; wrapping here is a second line of
+// defense for any code that sends with this client directly.
 var transferClient = apitransport.SecureTransferClient(nil)
 
 func IsPresignExpired(err error) bool {

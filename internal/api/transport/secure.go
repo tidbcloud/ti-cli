@@ -83,10 +83,16 @@ func SecureTransferClient(base *http.Client) *http.Client {
 
 // NewSecureRequest builds a request for a server-chosen transfer URL. The URL
 // must parse and pass CheckSecureURL before a request exists. A URL that does
-// not parse is reported as ErrMalformedURL alone, never with the raw URL.
+// not parse is reported as ErrMalformedURL with the parser's reason only: the
+// *url.Error's URL field repeats the raw URL, but its Err (for example
+// `invalid URL escape "%zz"`) does not.
 func NewSecureRequest(ctx context.Context, method, rawURL string, body io.Reader) (*http.Request, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
+		var urlErr *url.Error
+		if errors.As(err, &urlErr) && urlErr.Err != nil {
+			return nil, fmt.Errorf("%w: %v", ErrMalformedURL, urlErr.Err)
+		}
 		return nil, ErrMalformedURL
 	}
 	if err := CheckSecureURL(u); err != nil {
