@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -23,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	apitransport "github.com/tidbcloud/ti-cli/internal/api/transport"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/credentialenv"
 	"github.com/tidbcloud/ti-cli/internal/version"
@@ -326,12 +326,14 @@ func newClient(info version.Info, baseURL string, httpClient *http.Client) clien
 	if strings.TrimSpace(baseURL) == "" {
 		baseURL = DefaultReleaseAPIBaseURL
 	}
-	if httpClient == nil {
-		httpClient = http.DefaultClient
-	}
+	// Release metadata, checksums, the ti archive, and the ti-drive9 companion all
+	// come through this client, and the archive and companion get executed, so
+	// every URL and redirect must be https (http only to loopback for local tests).
+	// DoSecure applies the same policy again; wrapping here is a second line of
+	// defense for any code that sends with this client directly.
 	return client{
 		baseURL:    strings.TrimRight(baseURL, "/"),
-		httpClient: httpClient,
+		httpClient: apitransport.SecureTransferClient(httpClient),
 	}
 }
 
@@ -349,21 +351,10 @@ func testReleaseAPIBaseURL(info version.Info) string {
 		return ""
 	}
 	parsed, err := url.Parse(value)
-	if err != nil || parsed.Host == "" {
+	if err != nil || apitransport.CheckSecureURL(parsed) != nil {
 		return ""
 	}
-	if parsed.Scheme == "https" || (parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())) {
-		return value
-	}
-	return ""
-}
-
-func isLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return value
 }
 
 func (c client) fetchRelease(ctx context.Context, target string) (release, error) {
@@ -393,14 +384,26 @@ func (c client) getJSON(ctx context.Context, url string, dst any) error {
 }
 
 func (c client) download(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodGet, url, nil)
 	if err != nil {
+		if errors.Is(err, apitransport.ErrInsecureURL) {
+			return nil, apperr.Wrap("update.insecure_url", "runtime", 1, "download release metadata or artifact", err)
+		}
 		return nil, apperr.Wrap("update.invalid_url", "runtime", 1, "build release request", err)
 	}
 	req.Header.Set("User-Agent", "ti")
 	req.Header.Set("Accept", "application/json, application/octet-stream")
-	resp, err := c.httpClient.Do(req)
+	resp, err := apitransport.DoSecure(c.httpClient, req)
 	if err != nil {
+		if errors.Is(err, apitransport.ErrInsecureURL) {
+			return nil, apperr.Wrap("update.insecure_url", "runtime", 1, "download release metadata or artifact", err)
+		}
+		if errors.Is(err, apitransport.ErrMalformedURL) {
+			return nil, apperr.Wrap("update.invalid_url", "runtime", 1, "release download sent an invalid redirect", err)
+		}
+		if errors.Is(err, apitransport.ErrTooManyRedirects) {
+			return nil, apperr.Wrap("update.redirect_loop", "runtime", 1, "release download redirected too many times", err)
+		}
 		return nil, apperr.Wrap("update.network_error", "runtime", 1, "download release metadata or artifact", err)
 	}
 	defer resp.Body.Close()

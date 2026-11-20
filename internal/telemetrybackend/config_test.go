@@ -57,3 +57,45 @@ func TestLoadConfigRejectsInvalidAndInconsistentLimits(t *testing.T) {
 		t.Fatalf("LoadConfig error = %v, want inconsistent limit error", err)
 	}
 }
+
+func TestValidateTiDBDSN(t *testing.T) {
+	const (
+		verified   = "user:password@tcp(localhost:4000)/telemetry?tls=true"
+		unverified = "user:password@tcp(localhost:4000)/telemetry?tls=skip-verify"
+		plain      = "user:password@tcp(localhost:4000)/telemetry"
+	)
+	for _, tc := range []struct {
+		name        string
+		environment string
+		dsn         string
+		wantErr     string
+	}{
+		{"production with verified TLS", "production", verified, ""},
+		{"empty environment means production", "", unverified, "verified TLS"},
+		{"blank environment means production", "  ", plain, "verified TLS"},
+		{"production without TLS", "Production", plain, "verified TLS"},
+		{"non-production without TLS", "telemetry-e2e", plain, ""},
+		{"test without TLS", " Test ", unverified, ""},
+		{"local without TLS", "local", plain, ""},
+		{"development without TLS", "development", plain, ""},
+		{"typo prod is production", "prod", unverified, "verified TLS"},
+		{"typo prduction is production", "prduction", plain, "verified TLS"},
+		{"staging is production", "staging", unverified, "verified TLS"},
+		{"unknown name is production", "qa-east", plain, "verified TLS"},
+		{"missing DSN", "telemetry-e2e", "", "required"},
+		{"invalid DSN", "telemetry-e2e", "not a dsn", "invalid"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateTiDBDSN(tc.environment, tc.dsn)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateTiDBDSN = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("ValidateTiDBDSN = %v, want error containing %q", err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"unicode/utf8"
 
 	tiapi "github.com/tidbcloud/ti-cli/internal/api"
+	apitransport "github.com/tidbcloud/ti-cli/internal/api/transport"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
@@ -951,12 +952,19 @@ func uploadPresignedPart(ctx context.Context, rawURL string, headers map[string]
 
 var errPresignExpired = errors.New("presigned URL expired")
 
+// transferClient carries file bytes to and from the presigned and redirected
+// object-store URLs the ti fs server returns. Those URLs, and every redirect they
+// lead to, must be https (http only to loopback for local tests). DoSecure
+// applies the same policy again on every call; wrapping here is a second line of
+// defense for any code that sends with this client directly.
+var transferClient = apitransport.SecureTransferClient(nil)
+
 func IsPresignExpired(err error) bool {
 	return errors.Is(err, errPresignExpired)
 }
 
 func uploadPresignedPartV2(ctx context.Context, part PresignedPart, data []byte) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, part.URL, bytes.NewReader(data))
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodPut, part.URL, bytes.NewReader(data))
 	if err != nil {
 		return "", err
 	}
@@ -967,7 +975,7 @@ func uploadPresignedPartV2(ctx context.Context, part PresignedPart, data []byte)
 		req.Header.Set(k, v)
 	}
 	req.ContentLength = int64(len(data))
-	res, err := http.DefaultClient.Do(req)
+	res, err := apitransport.DoSecure(transferClient, req)
 	if err != nil {
 		return "", err
 	}
@@ -985,7 +993,7 @@ func uploadPresignedPartV2(ctx context.Context, part PresignedPart, data []byte)
 }
 
 func uploadPresignedPatchPart(ctx context.Context, rawURL string, headers map[string]string, data []byte) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(data))
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodPut, rawURL, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -1004,7 +1012,7 @@ func uploadPresignedPatchPart(ctx context.Context, rawURL string, headers map[st
 		sum := sha256.Sum256(data)
 		req.Header.Set("x-amz-checksum-sha256", base64.StdEncoding.EncodeToString(sum[:]))
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := apitransport.DoSecure(transferClient, req)
 	if err != nil {
 		return err
 	}
@@ -1018,7 +1026,7 @@ func uploadPresignedPatchPart(ctx context.Context, rawURL string, headers map[st
 }
 
 func uploadPresignedPartWithChecksum(ctx context.Context, rawURL string, headers map[string]string, data []byte, checksumCRC32C string, sendChecksum bool) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, rawURL, bytes.NewReader(data))
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodPut, rawURL, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -1035,7 +1043,7 @@ func uploadPresignedPartWithChecksum(ctx context.Context, rawURL string, headers
 		}
 		req.Header.Set("x-amz-checksum-crc32c", checksumCRC32C)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := apitransport.DoSecure(transferClient, req)
 	if err != nil {
 		return err
 	}
@@ -1049,7 +1057,7 @@ func uploadPresignedPartWithChecksum(ctx context.Context, rawURL string, headers
 }
 
 func readPresignedPart(ctx context.Context, rawURL string, headers map[string]string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1059,7 +1067,7 @@ func readPresignedPart(ctx context.Context, rawURL string, headers map[string]st
 		}
 		req.Header.Set(k, v)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := apitransport.DoSecure(transferClient, req)
 	if err != nil {
 		return nil, err
 	}

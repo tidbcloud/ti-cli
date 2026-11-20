@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	apistarter "github.com/tidbcloud/ti-cli/internal/api/starter"
+	apitransport "github.com/tidbcloud/ti-cli/internal/api/transport"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/authz"
 	rootdb "github.com/tidbcloud/ti-cli/internal/db"
@@ -299,11 +300,11 @@ func (s Service) downloadExportFile(ctx context.Context, outputPath string, job 
 }
 
 func (s Service) copyExportURL(ctx context.Context, outputPath, rel, rawURL string) (int64, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := apitransport.NewSecureRequest(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return 0, err
 	}
-	resp, err := s.fileHTTPClient().Do(req)
+	resp, err := apitransport.DoSecure(s.fileHTTPClient(), req)
 	if err != nil {
 		return 0, err
 	}
@@ -338,11 +339,12 @@ func (s Service) copyExportURL(ctx context.Context, outputPath, rel, rawURL stri
 	return written, nil
 }
 
+// fileHTTPClient downloads export files from the URLs the API returns. The
+// dump holds database contents, so the URL and every redirect must be https.
+// DoSecure applies the same policy again; wrapping here is a second line of
+// defense for any code that sends with this client directly.
 func (s Service) fileHTTPClient() *http.Client {
-	if s.HTTPClient != nil {
-		return s.HTTPClient
-	}
-	return &http.Client{}
+	return apitransport.SecureTransferClient(s.HTTPClient)
 }
 
 func mkdirAllInRoot(root *os.Root, rel string) error {

@@ -165,6 +165,7 @@ url=''
 while [ "$#" -gt 0 ]; do
   case "$1" in
     -o) out="$2"; shift 2 ;;
+    --proto|--proto-redir) shift 2 ;;
     -*) shift ;;
     *) url="$1"; shift ;;
   esac

@@ -279,6 +279,17 @@ func (c *Client) do(req *http.Request) (*http.Response, error) {
 // requestError maps a failed round trip to an API error. A same-origin
 // redirect loop is reported as such rather than as a network problem.
 func requestError(req *http.Request, err error) error {
+	// net/http reports a redirect whose Location does not parse with the raw
+	// Location value in the message. A ti fs download redirect carries a presigned
+	// signature there, so that cause is dropped rather than shown.
+	if apitransport.IsLocationParseError(err) {
+		return &Error{
+			Code:     "api.invalid_redirect",
+			Category: "api",
+			ExitCode: 1,
+			Message:  fmt.Sprintf("API request failed: %s sent a redirect with an invalid Location header", req.URL.Host),
+		}
+	}
 	if errors.Is(err, apitransport.ErrTooManyRedirects) {
 		return &Error{
 			Code:     "api.redirect_loop",
