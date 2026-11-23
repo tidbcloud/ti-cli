@@ -429,7 +429,7 @@ func (s Service) drive9CopyFile(ctx context.Context, opts CopyFileOptions) (File
 	if err != nil {
 		return FileOperationResult{}, err
 	}
-	if err := s.ensureDrive9UploadTargetAbsent(ctx, opts); err != nil {
+	if err := s.ensureDrive9CopyTargetAbsent(ctx, opts); err != nil {
 		return FileOperationResult{}, err
 	}
 	if opts.CreateParents && strings.TrimSpace(opts.ToLocal) != "" {
@@ -456,60 +456,154 @@ func (s Service) drive9CopyFile(ctx context.Context, opts CopyFileOptions) (File
 	return FileOperationResult{Operation: "copy_file", SourcePath: source, TargetPath: target, Status: status}, nil
 }
 
-// ensureDrive9UploadTargetAbsent enforces the documented --overwrite=false
+// drive9CopyTargetKind is the resolved destination class of a copy. The probe
+// and the executed command must agree on it, so both derive it from one
+// classifier instead of two switches that can drift.
+type drive9CopyTargetKind int
+
+const (
+	drive9CopyTargetNone drive9CopyTargetKind = iota
+	drive9CopyTargetRemote
+	drive9CopyTargetLocal
+	drive9CopyTargetStdout
+)
+
+// classifyDrive9CopyTarget resolves the destination with the same precedence
+// drive9CopyArgs uses, so `--from-remote /a --to-remote /b --to-local ./c` can
+// never be probed on one path and written on the other.
+func classifyDrive9CopyTarget(opts CopyFileOptions) (drive9CopyTargetKind, string) {
+	switch {
+	case opts.FromStdin && opts.ToRemote != "":
+		return drive9CopyTargetRemote, opts.ToRemote
+	case opts.FromLocal != "" && opts.ToRemote != "":
+		return drive9CopyTargetRemote, opts.ToRemote
+	case opts.FromRemote != "" && opts.ToStdout:
+		return drive9CopyTargetStdout, "-"
+	case opts.FromRemote != "" && opts.ToLocal != "":
+		return drive9CopyTargetLocal, opts.ToLocal
+	case opts.FromRemote != "" && opts.ToRemote != "":
+		return drive9CopyTargetRemote, opts.ToRemote
+	}
+	return drive9CopyTargetNone, ""
+}
+
+// resolveDrive9CopySourceName is the base name the companion appends when the
+// destination is an existing directory (`dir/<base(source)>`). An empty result
+// means the name cannot be known locally, so a directory destination cannot be
+// probed precisely.
+func resolveDrive9CopySourceName(opts CopyFileOptions) string {
+	switch {
+	case opts.FromLocal != "":
+		return filepath.Base(filepath.Clean(opts.FromLocal))
+	case opts.FromRemote != "":
+		normalized, err := normalizeRemotePath(opts.FromRemote)
+		if err != nil {
+			return ""
+		}
+		trimmed := strings.TrimSuffix(normalized, "/")
+		if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
+			return trimmed[idx+1:]
+		}
+		return trimmed
+	}
+	return ""
+}
+
+// ensureDrive9CopyTargetAbsent enforces the documented --overwrite=false
 // contract for companion copies. drive9CopyArgs has no overwrite flag to
 // forward because the delegated `drive9 fs cp` treats every drive9 destination
-// as overwrite-enabled, so ti must probe the target itself.
+// as overwrite-enabled, so ti must probe the resolved target itself.
 //
-// Every source/destination shape the command accepts is covered: uploads
-// (stdin/local -> remote), remote -> remote, and remote -> local. A recursive
-// copy is exempt because an existing destination directory is the documented
-// merge target, not a collision.
-func (s Service) ensureDrive9UploadTargetAbsent(ctx context.Context, opts CopyFileOptions) error {
+// The probe covers every accepted source/destination shape: uploads
+// (stdin/local -> remote), remote -> remote, and remote -> local. Two cases are
+// deliberately exempt:
+//
+//   - a recursive copy, where an existing destination directory is the
+//     documented merge target and any pre-existing descendant aborts the
+//     transfer inside the companion;
+//   - a layer destination, where `fs stat` cannot see inside the layer and the
+//     layer write is an upsert, so --overwrite does not govern it.
+func (s Service) ensureDrive9CopyTargetAbsent(ctx context.Context, opts CopyFileOptions) error {
 	if opts.Overwrite || opts.Append || opts.Resume || opts.Recursive {
 		return nil
 	}
-	switch {
-	case opts.FromStdin && opts.ToRemote != "":
-		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, opts.ToRemote)
-	case opts.FromLocal != "" && opts.ToRemote != "":
-		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, opts.ToRemote)
-	case opts.FromRemote != "" && opts.ToRemote != "":
-		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, opts.ToRemote)
-	case opts.FromRemote != "" && opts.ToLocal != "":
-		return ensureDrive9LocalTargetAbsent(opts.ToLocal)
+	kind, target := classifyDrive9CopyTarget(opts)
+	sourceName := resolveDrive9CopySourceName(opts)
+	switch kind {
+	case drive9CopyTargetRemote:
+		if strings.TrimSpace(opts.LayerID) != "" {
+			return nil
+		}
+		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, target, sourceName)
+	case drive9CopyTargetLocal:
+		return ensureDrive9LocalCopyTargetAbsent(target, sourceName)
 	}
 	return nil
 }
 
-func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, target string) error {
+func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, target, sourceName string) error {
 	targetPath, err := normalizeRemotePath(target)
 	if err != nil {
 		return err
 	}
-	_, statErr := s.drive9RunTransientRetry(ctx, opts.Profile, []string{"fs", "stat", "--output", "json", drive9Remote(targetPath)}, true)
-	if statErr == nil {
-		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", targetPath))
+	metadata, exists, err := s.drive9StatTarget(ctx, opts.Profile, targetPath)
+	if err != nil {
+		return err
 	}
-	if isDrive9NotFound(statErr) {
+	if !exists {
 		return nil
 	}
-	return statErr
+	// An existing directory destination receives dir/<base(source)>; only that
+	// inner path is replaced, so probing the directory itself would refuse a
+	// copy that changes nothing that exists (and, with --overwrite, would hide
+	// the path that is actually replaced).
+	probed := targetPath
+	if metadata.IsDir && sourceName != "" {
+		probed = targetPath + "/" + sourceName
+		if _, innerExists, innerErr := s.drive9StatTarget(ctx, opts.Profile, probed); innerErr != nil {
+			return innerErr
+		} else if !innerExists {
+			return nil
+		}
+	} else if metadata.IsDir {
+		// The source name is unknown locally (stdin), so the companion chooses
+		// the written path; refuse to guess.
+		return nil
+	}
+	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", probed))
 }
 
-// ensureDrive9LocalTargetAbsent is the local-destination half of the contract.
-// It stats the path myself instead of asking the companion because the download
-// target never exists on the remote.
-func ensureDrive9LocalTargetAbsent(target string) error {
+// drive9StatTarget reports whether a remote path exists and, when it does, its
+// metadata. A not-found answer is not an error.
+func (s Service) drive9StatTarget(ctx context.Context, profile *config.Profile, remotePath string) (drive9StatMetadata, bool, error) {
+	result, statErr := s.drive9RunTransientRetry(ctx, profile, []string{"fs", "stat", "--output", "json", drive9Remote(remotePath)}, true)
+	if statErr != nil {
+		if isDrive9NotFound(statErr) {
+			return drive9StatMetadata{}, false, nil
+		}
+		return drive9StatMetadata{}, false, statErr
+	}
+	var metadata drive9StatMetadata
+	if err := json.Unmarshal(result.Stdout, &metadata); err != nil {
+		return drive9StatMetadata{}, false, apperr.Wrap("fs.companion_decode", "runtime", 1, "decode ti fs stat response", err)
+	}
+	return metadata, true, nil
+}
+
+// ensureDrive9LocalCopyTargetAbsent is the local-destination half of the
+// contract. It resolves the same directory-destination rule as the remote half
+// and then reuses the shared local-target guard, which uses Lstat so a dangling
+// symlink at the target is treated as existing (os.Create would write through
+// it).
+func ensureDrive9LocalCopyTargetAbsent(target, sourceName string) error {
 	if strings.TrimSpace(target) == "" {
 		return nil
 	}
-	if _, err := os.Stat(target); err == nil {
-		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("local target %q already exists; pass --overwrite to replace it", target))
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return apperr.Wrap("fs.target_stat", "runtime", 1, fmt.Sprintf("stat local target %q", target), err)
+	probed := target
+	if info, err := os.Lstat(target); err == nil && info.IsDir() && sourceName != "" {
+		probed = filepath.Join(target, sourceName)
 	}
-	return nil
+	return ensureLocalTargetCanWrite(probed, false, false)
 }
 
 func (s Service) drive9ReadFile(ctx context.Context, opts ReadFileOptions) ([]byte, error) {
@@ -1551,6 +1645,17 @@ func (s Service) mountLocatorProfile(base *config.Profile, mountPath string) (mo
 }
 
 func drive9CopyArgs(opts CopyFileOptions) ([]string, string, string, error) {
+	// Exactly one destination may be named. Accepting two would let the
+	// overwrite probe and `fs cp` operate on different paths.
+	destinations := 0
+	for _, set := range []bool{opts.ToRemote != "", opts.ToLocal != "", opts.ToStdout} {
+		if set {
+			destinations++
+		}
+	}
+	if destinations > 1 {
+		return nil, "", "", apperr.New("fs.ambiguous_copy_target", "usage", 2, "name exactly one destination: --to-remote, --to-local, or --to-stdout")
+	}
 	if opts.Recursive && strings.TrimSpace(opts.LayerID) != "" {
 		return nil, "", "", apperr.New("fs.recursive_layer_copy_unsupported", "usage", 2, "--recursive cannot be combined with --layer-id; mount the layer with --driver fuse and copy the directory through the mounted path")
 	}
