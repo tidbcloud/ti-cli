@@ -468,45 +468,65 @@ const (
 	drive9CopyTargetStdout
 )
 
-// classifyDrive9CopyTarget resolves the destination with the same precedence
-// drive9CopyArgs uses, so `--from-remote /a --to-remote /b --to-local ./c` can
-// never be probed on one path and written on the other.
-func classifyDrive9CopyTarget(opts CopyFileOptions) (drive9CopyTargetKind, string) {
+// resolveDrive9CopyRoute resolves the single source/target pair a copy names.
+// drive9CopyArgs and the --overwrite probe both use it, so the executed command
+// and the probe can never resolve different paths.
+func resolveDrive9CopyRoute(opts CopyFileOptions) (drive9CopyTargetKind, string, string, error) {
 	switch {
 	case opts.FromStdin && opts.ToRemote != "":
-		return drive9CopyTargetRemote, opts.ToRemote
+		target, err := normalizeRemotePath(opts.ToRemote)
+		if err != nil {
+			return drive9CopyTargetNone, "", "", err
+		}
+		return drive9CopyTargetRemote, "-", target, nil
 	case opts.FromLocal != "" && opts.ToRemote != "":
-		return drive9CopyTargetRemote, opts.ToRemote
+		target, err := normalizeRemotePath(opts.ToRemote)
+		if err != nil {
+			return drive9CopyTargetNone, "", "", err
+		}
+		return drive9CopyTargetRemote, opts.FromLocal, target, nil
 	case opts.FromRemote != "" && opts.ToStdout:
-		return drive9CopyTargetStdout, "-"
+		source, err := normalizeRemotePath(opts.FromRemote)
+		if err != nil {
+			return drive9CopyTargetNone, "", "", err
+		}
+		return drive9CopyTargetStdout, source, "-", nil
 	case opts.FromRemote != "" && opts.ToLocal != "":
-		return drive9CopyTargetLocal, opts.ToLocal
+		source, err := normalizeRemotePath(opts.FromRemote)
+		if err != nil {
+			return drive9CopyTargetNone, "", "", err
+		}
+		return drive9CopyTargetLocal, source, opts.ToLocal, nil
 	case opts.FromRemote != "" && opts.ToRemote != "":
-		return drive9CopyTargetRemote, opts.ToRemote
+		source, err := normalizeRemotePath(opts.FromRemote)
+		if err != nil {
+			return drive9CopyTargetNone, "", "", err
+		}
+		target, err := normalizeRemotePath(opts.ToRemote)
+		if err != nil {
+			return drive9CopyTargetNone, "", "", err
+		}
+		return drive9CopyTargetRemote, source, target, nil
 	}
-	return drive9CopyTargetNone, ""
+	return drive9CopyTargetNone, "", "", apperr.New("fs.invalid_copy_flags", "usage", 2, "copy-file requires exactly one source/target pair")
 }
 
-// resolveDrive9CopySourceName is the base name the companion appends when the
+// drive9CopySourceName is the base name the companion appends when the
 // destination is an existing directory (`dir/<base(source)>`). An empty result
-// means the name cannot be known locally, so a directory destination cannot be
-// probed precisely.
-func resolveDrive9CopySourceName(opts CopyFileOptions) string {
-	switch {
-	case opts.FromLocal != "":
-		return filepath.Base(filepath.Clean(opts.FromLocal))
-	case opts.FromRemote != "":
-		normalized, err := normalizeRemotePath(opts.FromRemote)
-		if err != nil {
-			return ""
-		}
-		trimmed := strings.TrimSuffix(normalized, "/")
+// means the name cannot be known locally (stdin), so a directory destination
+// cannot be probed precisely.
+func drive9CopySourceName(opts CopyFileOptions, source string) string {
+	if opts.FromStdin {
+		return ""
+	}
+	if opts.FromRemote != "" {
+		trimmed := strings.TrimSuffix(source, "/")
 		if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
 			return trimmed[idx+1:]
 		}
 		return trimmed
 	}
-	return ""
+	return filepath.Base(filepath.Clean(source))
 }
 
 // ensureDrive9CopyTargetAbsent enforces the documented --overwrite=false
@@ -527,8 +547,11 @@ func (s Service) ensureDrive9CopyTargetAbsent(ctx context.Context, opts CopyFile
 	if opts.Overwrite || opts.Append || opts.Resume || opts.Recursive {
 		return nil
 	}
-	kind, target := classifyDrive9CopyTarget(opts)
-	sourceName := resolveDrive9CopySourceName(opts)
+	kind, source, target, err := resolveDrive9CopyRoute(opts)
+	if err != nil {
+		return err
+	}
+	sourceName := drive9CopySourceName(opts, source)
 	switch kind {
 	case drive9CopyTargetRemote:
 		if strings.TrimSpace(opts.LayerID) != "" {
@@ -1674,49 +1697,23 @@ func drive9CopyArgs(opts CopyFileOptions) ([]string, string, string, error) {
 		args = append(args, "--tag", key+"="+opts.Tags[key])
 	}
 	appendFlagValue(&args, "--description", opts.Description)
-	source, target := "", ""
-	switch {
-	case opts.FromStdin && opts.ToRemote != "":
-		targetPath, err := normalizeRemotePath(opts.ToRemote)
-		if err != nil {
-			return nil, "", "", err
+	kind, source, target, err := resolveDrive9CopyRoute(opts)
+	if err != nil {
+		return nil, "", "", err
+	}
+	switch kind {
+	case drive9CopyTargetRemote:
+		if opts.FromStdin {
+			args = append(args, "-", drive9Remote(target))
+		} else if opts.FromRemote != "" {
+			args = append(args, drive9Remote(source), drive9Remote(target))
+		} else {
+			args = append(args, source, drive9Remote(target))
 		}
-		source, target = "-", targetPath
-		args = append(args, "-", drive9Remote(targetPath))
-	case opts.FromLocal != "" && opts.ToRemote != "":
-		targetPath, err := normalizeRemotePath(opts.ToRemote)
-		if err != nil {
-			return nil, "", "", err
-		}
-		source, target = opts.FromLocal, targetPath
-		args = append(args, opts.FromLocal, drive9Remote(targetPath))
-	case opts.FromRemote != "" && opts.ToStdout:
-		sourcePath, err := normalizeRemotePath(opts.FromRemote)
-		if err != nil {
-			return nil, "", "", err
-		}
-		source, target = sourcePath, "-"
-		args = append(args, drive9Remote(sourcePath), "-")
-	case opts.FromRemote != "" && opts.ToLocal != "":
-		sourcePath, err := normalizeRemotePath(opts.FromRemote)
-		if err != nil {
-			return nil, "", "", err
-		}
-		source, target = sourcePath, opts.ToLocal
-		args = append(args, drive9Remote(sourcePath), opts.ToLocal)
-	case opts.FromRemote != "" && opts.ToRemote != "":
-		sourcePath, err := normalizeRemotePath(opts.FromRemote)
-		if err != nil {
-			return nil, "", "", err
-		}
-		targetPath, err := normalizeRemotePath(opts.ToRemote)
-		if err != nil {
-			return nil, "", "", err
-		}
-		source, target = sourcePath, targetPath
-		args = append(args, drive9Remote(sourcePath), drive9Remote(targetPath))
-	default:
-		return nil, "", "", apperr.New("fs.invalid_copy_flags", "usage", 2, "copy-file requires exactly one source/target pair")
+	case drive9CopyTargetLocal:
+		args = append(args, drive9Remote(source), target)
+	case drive9CopyTargetStdout:
+		args = append(args, drive9Remote(source), "-")
 	}
 	return args, source, target, nil
 }

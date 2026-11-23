@@ -183,6 +183,28 @@ func TestDrive9CopyRemoteToLocalRejectsDanglingSymlinkTarget(t *testing.T) {
 	assertNoCompanionCopy(t, recordPath)
 }
 
+// A stat failure other than "not found" must surface as the shared local-stat
+// error code instead of being treated as an absent target: a parent that is a
+// regular file gives ENOTDIR.
+func TestDrive9CopyRemoteToLocalStatErrorSurfacesAsStatLocalFile(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	parent := filepath.Join(t.TempDir(), "not-a-dir")
+	if err := os.WriteFile(parent, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/workspace/source.txt",
+		ToLocal:    filepath.Join(parent, "child.txt"),
+	})
+	if apperr.CodeFor(err) != "fs.stat_local_file" {
+		t.Fatalf("copy error = %v, want fs.stat_local_file", err)
+	}
+	assertNoCompanionCopy(t, recordPath)
+}
+
 // `fs stat` cannot see inside a layer and the layer write is an upsert, so
 // --overwrite does not govern it: the probe must not pretend to guard it.
 func TestDrive9CopyLayerDestinationSkipsOverwriteProbe(t *testing.T) {
