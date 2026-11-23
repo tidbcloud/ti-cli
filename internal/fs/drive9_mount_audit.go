@@ -102,6 +102,13 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	}
 	appendFlagValue(&args, "--profile", opts.MountProfile)
 	appendFlagValue(&args, "--local-root", opts.LocalRoot)
+	// --pack-path is what makes the portable profile's automatic pack include a
+	// local overlay path. Without forwarding it the mount succeeds but auto-pack
+	// silently omits the path, so the archive unpacked in the next sandbox is
+	// missing local work. Effective pack paths are the profile's plus these.
+	for _, packPath := range opts.PackPaths {
+		appendFlagValue(&args, "--pack-path", packPath)
+	}
 	if opts.UnpackArchivePath != "" {
 		args = append(args, "--unpack", drive9RemoteMust(opts.UnpackArchivePath))
 	}

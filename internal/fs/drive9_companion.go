@@ -457,23 +457,32 @@ func (s Service) drive9CopyFile(ctx context.Context, opts CopyFileOptions) (File
 }
 
 // ensureDrive9UploadTargetAbsent enforces the documented --overwrite=false
-// contract for companion uploads. drive9CopyArgs has no overwrite flag to
-// forward because the delegated `drive9 fs cp` treats every drive9
-// destination as overwrite-enabled, so ti must probe the target itself.
+// contract for companion copies. drive9CopyArgs has no overwrite flag to
+// forward because the delegated `drive9 fs cp` treats every drive9 destination
+// as overwrite-enabled, so ti must probe the target itself.
+//
+// Every source/destination shape the command accepts is covered: uploads
+// (stdin/local -> remote), remote -> remote, and remote -> local. A recursive
+// copy is exempt because an existing destination directory is the documented
+// merge target, not a collision.
 func (s Service) ensureDrive9UploadTargetAbsent(ctx context.Context, opts CopyFileOptions) error {
-	if opts.Overwrite || opts.Append || opts.Resume {
+	if opts.Overwrite || opts.Append || opts.Resume || opts.Recursive {
 		return nil
 	}
-	target := ""
 	switch {
 	case opts.FromStdin && opts.ToRemote != "":
-		target = opts.ToRemote
+		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, opts.ToRemote)
 	case opts.FromLocal != "" && opts.ToRemote != "":
-		target = opts.ToRemote
+		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, opts.ToRemote)
+	case opts.FromRemote != "" && opts.ToRemote != "":
+		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, opts.ToRemote)
+	case opts.FromRemote != "" && opts.ToLocal != "":
+		return ensureDrive9LocalTargetAbsent(opts.ToLocal)
 	}
-	if target == "" {
-		return nil
-	}
+	return nil
+}
+
+func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, target string) error {
 	targetPath, err := normalizeRemotePath(target)
 	if err != nil {
 		return err
@@ -486,6 +495,21 @@ func (s Service) ensureDrive9UploadTargetAbsent(ctx context.Context, opts CopyFi
 		return nil
 	}
 	return statErr
+}
+
+// ensureDrive9LocalTargetAbsent is the local-destination half of the contract.
+// It stats the path myself instead of asking the companion because the download
+// target never exists on the remote.
+func ensureDrive9LocalTargetAbsent(target string) error {
+	if strings.TrimSpace(target) == "" {
+		return nil
+	}
+	if _, err := os.Stat(target); err == nil {
+		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("local target %q already exists; pass --overwrite to replace it", target))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return apperr.Wrap("fs.target_stat", "runtime", 1, fmt.Sprintf("stat local target %q", target), err)
+	}
+	return nil
 }
 
 func (s Service) drive9ReadFile(ctx context.Context, opts ReadFileOptions) ([]byte, error) {
