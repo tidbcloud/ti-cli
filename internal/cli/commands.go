@@ -1785,6 +1785,12 @@ func newFSCopyFileCommand(info version.Info) *cobra.Command {
 				if opts.FromRemote == "" {
 					return nil, apperr.New("fs.invalid_copy_flags", "usage", 2, "--to-stdout requires --from-remote")
 				}
+				// The stdout path returns before CopyFile, so the one-destination
+				// rule has to be enforced here too; otherwise a second destination
+				// is silently ignored.
+				if opts.ToRemote != "" || opts.ToLocal != "" {
+					return nil, apperr.New("fs.ambiguous_copy_target", "usage", 2, "name exactly one destination: --to-remote, --to-local, or --to-stdout")
+				}
 				data, err := service.ReadFile(ctx.cmd.Context(), tifs.ReadFileOptions{Profile: profile, Path: opts.FromRemote})
 				if err != nil {
 					return nil, err

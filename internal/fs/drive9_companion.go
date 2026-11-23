@@ -468,65 +468,92 @@ const (
 	drive9CopyTargetStdout
 )
 
+// drive9CopySourceKind is the resolved source class. The resolver returns it so
+// neither consumer re-reads the raw flags and disagrees with the chosen route.
+type drive9CopySourceKind int
+
+const (
+	drive9CopySourceNone drive9CopySourceKind = iota
+	drive9CopySourceStdin
+	drive9CopySourceLocal
+	drive9CopySourceRemote
+)
+
 // resolveDrive9CopyRoute resolves the single source/target pair a copy names.
-// drive9CopyArgs and the --overwrite probe both use it, so the executed command
-// and the probe can never resolve different paths.
-func resolveDrive9CopyRoute(opts CopyFileOptions) (drive9CopyTargetKind, string, string, error) {
+// drive9CopyArgs and the --overwrite probe both consume this result, so the
+// executed command and the probe cannot resolve different paths.
+func resolveDrive9CopyRoute(opts CopyFileOptions) (drive9CopyTargetKind, drive9CopySourceKind, string, string, error) {
+	sources := 0
+	for _, set := range []bool{opts.FromStdin, opts.FromLocal != "", opts.FromRemote != ""} {
+		if set {
+			sources++
+		}
+	}
+	destinations := 0
+	for _, set := range []bool{opts.ToRemote != "", opts.ToLocal != "", opts.ToStdout} {
+		if set {
+			destinations++
+		}
+	}
+	if sources != 1 || destinations != 1 {
+		return drive9CopyTargetNone, drive9CopySourceNone, "", "", apperr.New("fs.invalid_copy_flags", "usage", 2, "copy-file requires exactly one source/target pair")
+	}
 	switch {
 	case opts.FromStdin && opts.ToRemote != "":
 		target, err := normalizeRemotePath(opts.ToRemote)
 		if err != nil {
-			return drive9CopyTargetNone, "", "", err
+			return drive9CopyTargetNone, drive9CopySourceNone, "", "", err
 		}
-		return drive9CopyTargetRemote, "-", target, nil
+		return drive9CopyTargetRemote, drive9CopySourceStdin, "-", target, nil
 	case opts.FromLocal != "" && opts.ToRemote != "":
 		target, err := normalizeRemotePath(opts.ToRemote)
 		if err != nil {
-			return drive9CopyTargetNone, "", "", err
+			return drive9CopyTargetNone, drive9CopySourceNone, "", "", err
 		}
-		return drive9CopyTargetRemote, opts.FromLocal, target, nil
+		return drive9CopyTargetRemote, drive9CopySourceLocal, opts.FromLocal, target, nil
 	case opts.FromRemote != "" && opts.ToStdout:
 		source, err := normalizeRemotePath(opts.FromRemote)
 		if err != nil {
-			return drive9CopyTargetNone, "", "", err
+			return drive9CopyTargetNone, drive9CopySourceNone, "", "", err
 		}
-		return drive9CopyTargetStdout, source, "-", nil
+		return drive9CopyTargetStdout, drive9CopySourceRemote, source, "-", nil
 	case opts.FromRemote != "" && opts.ToLocal != "":
 		source, err := normalizeRemotePath(opts.FromRemote)
 		if err != nil {
-			return drive9CopyTargetNone, "", "", err
+			return drive9CopyTargetNone, drive9CopySourceNone, "", "", err
 		}
-		return drive9CopyTargetLocal, source, opts.ToLocal, nil
+		return drive9CopyTargetLocal, drive9CopySourceRemote, source, opts.ToLocal, nil
 	case opts.FromRemote != "" && opts.ToRemote != "":
 		source, err := normalizeRemotePath(opts.FromRemote)
 		if err != nil {
-			return drive9CopyTargetNone, "", "", err
+			return drive9CopyTargetNone, drive9CopySourceNone, "", "", err
 		}
 		target, err := normalizeRemotePath(opts.ToRemote)
 		if err != nil {
-			return drive9CopyTargetNone, "", "", err
+			return drive9CopyTargetNone, drive9CopySourceNone, "", "", err
 		}
-		return drive9CopyTargetRemote, source, target, nil
+		return drive9CopyTargetRemote, drive9CopySourceRemote, source, target, nil
 	}
-	return drive9CopyTargetNone, "", "", apperr.New("fs.invalid_copy_flags", "usage", 2, "copy-file requires exactly one source/target pair")
+	return drive9CopyTargetNone, drive9CopySourceNone, "", "", apperr.New("fs.invalid_copy_flags", "usage", 2, "copy-file requires exactly one source/target pair")
 }
 
 // drive9CopySourceName is the base name the companion appends when the
-// destination is an existing directory (`dir/<base(source)>`). An empty result
-// means the name cannot be known locally (stdin), so a directory destination
-// cannot be probed precisely.
-func drive9CopySourceName(opts CopyFileOptions, source string) string {
-	if opts.FromStdin {
+// destination names a directory (`dir/<base(source)>`). An empty result means
+// the name cannot be known locally (stdin).
+func drive9CopySourceName(kind drive9CopySourceKind, source string) string {
+	switch kind {
+	case drive9CopySourceStdin:
 		return ""
-	}
-	if opts.FromRemote != "" {
+	case drive9CopySourceRemote:
 		trimmed := strings.TrimSuffix(source, "/")
 		if idx := strings.LastIndex(trimmed, "/"); idx >= 0 {
 			return trimmed[idx+1:]
 		}
 		return trimmed
+	case drive9CopySourceLocal:
+		return filepath.Base(filepath.Clean(source))
 	}
-	return filepath.Base(filepath.Clean(source))
+	return ""
 }
 
 // ensureDrive9CopyTargetAbsent enforces the documented --overwrite=false
@@ -534,24 +561,22 @@ func drive9CopySourceName(opts CopyFileOptions, source string) string {
 // forward because the delegated `drive9 fs cp` treats every drive9 destination
 // as overwrite-enabled, so ti must probe the resolved target itself.
 //
-// The probe covers every accepted source/destination shape: uploads
-// (stdin/local -> remote), remote -> remote, and remote -> local. Two cases are
-// deliberately exempt:
+// Two cases are deliberately exempt:
 //
-//   - a recursive copy, where an existing destination directory is the
-//     documented merge target and any pre-existing descendant aborts the
-//     transfer inside the companion;
+//   - a recursive copy, where the companion accepts an existing destination root
+//     and aborts before transferring anything if a descendant path exists, so
+//     --overwrite does not govern it;
 //   - a layer destination, where `fs stat` cannot see inside the layer and the
-//     layer write is an upsert, so --overwrite does not govern it.
+//     layer write is an upsert, so --overwrite does not govern it either.
 func (s Service) ensureDrive9CopyTargetAbsent(ctx context.Context, opts CopyFileOptions) error {
 	if opts.Overwrite || opts.Append || opts.Resume || opts.Recursive {
 		return nil
 	}
-	kind, source, target, err := resolveDrive9CopyRoute(opts)
+	kind, sourceKind, source, target, err := resolveDrive9CopyRoute(opts)
 	if err != nil {
 		return err
 	}
-	sourceName := drive9CopySourceName(opts, source)
+	sourceName := drive9CopySourceName(sourceKind, source)
 	switch kind {
 	case drive9CopyTargetRemote:
 		if strings.TrimSpace(opts.LayerID) != "" {
@@ -565,10 +590,15 @@ func (s Service) ensureDrive9CopyTargetAbsent(ctx context.Context, opts CopyFile
 }
 
 func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, target, sourceName string) error {
-	// A trailing separator is the companion's spelling for "the destination is a
-	// directory": resolveRemoteCopyTarget joins <target>/<base(source)> without a
-	// stat. A stat is still useful below, but only the join decisions differ.
-	trailingSeparator := strings.HasSuffix(target, "/")
+	// Mirror resolveRemoteCopyTarget: a trailing separator names a directory and
+	// the companion joins <target>/<base(source)> without stating the target.
+	if strings.HasSuffix(target, "/") {
+		targetPath, err := normalizeRemotePath(target)
+		if err != nil {
+			return err
+		}
+		return s.ensureDrive9RemoteChildAbsent(ctx, opts, targetPath, sourceName)
+	}
 	targetPath, err := normalizeRemotePath(target)
 	if err != nil {
 		return err
@@ -577,27 +607,24 @@ func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFi
 	if err != nil {
 		return err
 	}
-	if !exists && !trailingSeparator {
+	if !exists {
 		return nil
 	}
-	// An existing (or slash-terminated) directory destination receives
-	// dir/<base(source)>; only that inner path is replaced, so probing the
-	// directory itself would refuse a copy that changes nothing that exists and
-	// would hide the path --overwrite really replaces.
-	probed := targetPath
-	if trailingSeparator || metadata.IsDir {
-		if sourceName == "" {
-			// The companion refuses this exact shape ("destination %q requires a
-			// file name"); say so with ti's own code instead of passing through a
-			// companion usage dump.
-			return apperr.New("fs.copy_target_requires_name", "usage", 2, fmt.Sprintf("destination %q is a directory and the source has no file name; copy to an explicit file path instead", targetPath))
-		}
-		probed = strings.TrimSuffix(targetPath, "/") + "/" + sourceName
-		if _, innerExists, innerErr := s.drive9StatTarget(ctx, opts.Profile, probed); innerErr != nil {
-			return innerErr
-		} else if !innerExists {
-			return nil
-		}
+	if metadata.IsDir {
+		return s.ensureDrive9RemoteChildAbsent(ctx, opts, targetPath, sourceName)
+	}
+	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", targetPath))
+}
+
+func (s Service) ensureDrive9RemoteChildAbsent(ctx context.Context, opts CopyFileOptions, dir, sourceName string) error {
+	if sourceName == "" {
+		return copyTargetRequiresName(dir)
+	}
+	probed := strings.TrimSuffix(dir, "/") + "/" + sourceName
+	if _, exists, err := s.drive9StatTarget(ctx, opts.Profile, probed); err != nil {
+		return err
+	} else if !exists {
+		return nil
 	}
 	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", probed))
 }
@@ -620,41 +647,44 @@ func (s Service) drive9StatTarget(ctx context.Context, profile *config.Profile, 
 }
 
 // ensureDrive9LocalCopyTargetAbsent is the local-destination half of the
-// contract. It resolves the same directory-destination rule as the remote half
-// and then reuses the shared local-target guard, which uses Lstat so a dangling
-// symlink at the target is treated as existing (os.Create would write through
-// it).
+// contract. It mirrors resolveLocalCopyTarget: a trailing separator names a
+// directory, an existing directory (or a symlink resolving to one) receives
+// <target>/<base(source)>, and Lstat runs first so a dangling symlink counts as
+// an existing target instead of being silently followed.
 func ensureDrive9LocalCopyTargetAbsent(target, sourceName string) error {
 	if strings.TrimSpace(target) == "" {
 		return nil
 	}
-	// Mirror resolveLocalCopyTarget: a trailing separator means "directory", and
-	// an existing directory (or a symlink that resolves to one) receives
-	// <target>/<base(source)>. Lstat first so a dangling symlink is not silently
-	// followed, then Stat only to classify the link target the way the companion
-	// does.
-	trailingSeparator := strings.HasSuffix(target, string(os.PathSeparator)) || strings.HasSuffix(target, "/")
+	trailingSeparator := strings.HasSuffix(target, "/") || strings.HasSuffix(target, string(os.PathSeparator))
 	info, err := os.Lstat(target)
 	switch {
-	case err == nil:
-		if trailingSeparator || info.IsDir() || symlinkResolvesToDir(target, info) {
-			if sourceName == "" {
-				return apperr.New("fs.copy_target_requires_name", "usage", 2, fmt.Sprintf("destination %q is a directory and the source has no file name; copy to an explicit file path instead", target))
-			}
-			return ensureLocalTargetCanWrite(filepath.Join(strings.TrimSuffix(strings.TrimSuffix(target, "/"), string(os.PathSeparator)), sourceName), false, false)
-		}
-		return ensureLocalTargetCanWrite(target, false, false)
 	case errors.Is(err, os.ErrNotExist):
-		if trailingSeparator {
-			if sourceName == "" {
-				return apperr.New("fs.copy_target_requires_name", "usage", 2, fmt.Sprintf("destination %q is a directory and the source has no file name; copy to an explicit file path instead", target))
-			}
-			return ensureLocalTargetCanWrite(filepath.Join(strings.TrimSuffix(strings.TrimSuffix(target, "/"), string(os.PathSeparator)), sourceName), false, false)
+		if !trailingSeparator {
+			return nil
 		}
-		return nil
-	default:
+		return ensureDrive9LocalChildAbsent(target, sourceName)
+	case err != nil:
 		return apperr.Wrap("fs.stat_local_file", "runtime", 1, fmt.Sprintf("stat local file %q", target), err)
 	}
+	if trailingSeparator || info.IsDir() || symlinkResolvesToDir(target, info) {
+		return ensureDrive9LocalChildAbsent(target, sourceName)
+	}
+	return ensureLocalTargetCanWrite(target, false, false)
+}
+
+func ensureDrive9LocalChildAbsent(dir, sourceName string) error {
+	if sourceName == "" {
+		return copyTargetRequiresName(dir)
+	}
+	trimmed := strings.TrimSuffix(strings.TrimSuffix(dir, "/"), string(os.PathSeparator))
+	return ensureLocalTargetCanWrite(filepath.Join(trimmed, sourceName), false, false)
+}
+
+// copyTargetRequiresName is the ti-owned spelling of the companion's
+// "destination %q requires a file name": a directory destination cannot be
+// written when the source carries no name.
+func copyTargetRequiresName(dir string) error {
+	return apperr.New("fs.copy_target_requires_name", "usage", 2, fmt.Sprintf("destination %q names a directory and the source has no file name; copy to an explicit file path instead", dir))
 }
 
 // symlinkResolvesToDir reports whether a symlink at path points at a directory.
@@ -1736,17 +1766,18 @@ func drive9CopyArgs(opts CopyFileOptions) ([]string, string, string, error) {
 		args = append(args, "--tag", key+"="+opts.Tags[key])
 	}
 	appendFlagValue(&args, "--description", opts.Description)
-	kind, source, target, err := resolveDrive9CopyRoute(opts)
+	kind, sourceKind, source, target, err := resolveDrive9CopyRoute(opts)
 	if err != nil {
 		return nil, "", "", err
 	}
 	switch kind {
 	case drive9CopyTargetRemote:
-		if opts.FromStdin {
+		switch sourceKind {
+		case drive9CopySourceStdin:
 			args = append(args, "-", drive9Remote(target))
-		} else if opts.FromRemote != "" {
+		case drive9CopySourceRemote:
 			args = append(args, drive9Remote(source), drive9Remote(target))
-		} else {
+		default:
 			args = append(args, source, drive9Remote(target))
 		}
 	case drive9CopyTargetLocal:

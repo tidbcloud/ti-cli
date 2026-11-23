@@ -18,11 +18,7 @@ import (
 
 func writeFakeStatSpec(t *testing.T, entries map[string]bool) {
 	t.Helper()
-	spec := map[string]bool{}
-	for path, isDir := range entries {
-		spec[path] = isDir
-	}
-	payloadBytes, err := json.Marshal(spec)
+	payloadBytes, err := json.Marshal(entries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +84,7 @@ func TestDrive9CopyIntoExistingRemoteDirectoryProbesTheInnerPath(t *testing.T) {
 		if apperr.CodeFor(err) != "fs.target_exists" {
 			t.Fatalf("copy error = %v, want fs.target_exists", err)
 		}
-		if !containsText(apperr.MessageFor(err), "/workspace/README.md") {
+		if !strings.Contains(apperr.MessageFor(err), "/workspace/README.md") {
 			t.Fatalf("error %q does not name the replaced path", apperr.MessageFor(err))
 		}
 	})
@@ -155,7 +151,7 @@ func TestDrive9CopyIntoExistingLocalDirectoryProbesTheInnerPath(t *testing.T) {
 		if apperr.CodeFor(err) != "fs.target_exists" {
 			t.Fatalf("copy error = %v, want fs.target_exists", err)
 		}
-		if !containsText(apperr.MessageFor(err), filepath.Join(dir, "README.md")) {
+		if !strings.Contains(apperr.MessageFor(err), filepath.Join(dir, "README.md")) {
 			t.Fatalf("error %q does not name the replaced path", apperr.MessageFor(err))
 		}
 	})
@@ -259,9 +255,102 @@ func TestDrive9CopyLocalSymlinkToDirectoryJoinsSourceName(t *testing.T) {
 	if apperr.CodeFor(err) != "fs.target_exists" {
 		t.Fatalf("copy error = %v, want fs.target_exists", err)
 	}
-	if !containsText(apperr.MessageFor(err), filepath.Join(link, "README.md")) {
+	if !strings.Contains(apperr.MessageFor(err), filepath.Join(link, "README.md")) {
 		t.Fatalf("error %q does not name the joined path", apperr.MessageFor(err))
 	}
+}
+
+// Two sources must be rejected like two destinations: with both set, the route
+// and the argv spelling used to disagree about which source ran.
+func TestDrive9CopyRejectsTwoSources(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts CopyFileOptions
+	}{
+		{name: "local and remote", opts: CopyFileOptions{Profile: dataProfile(), FromLocal: "report.md", FromRemote: "/a.txt", ToRemote: "/c.txt"}},
+		{name: "stdin and remote", opts: CopyFileOptions{Profile: dataProfile(), FromStdin: true, FromRemote: "/a.txt", ToLocal: "/tmp/dir"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			companion, recordPath := buildFakeDrive9(t)
+			t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+			_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), tc.opts)
+			if apperr.CodeFor(err) != "fs.invalid_copy_flags" {
+				t.Fatalf("copy error = %v, want fs.invalid_copy_flags", err)
+			}
+			assertNoCompanionCopy(t, recordPath)
+		})
+	}
+}
+
+// The root destination is a directory destination: it must join the source name
+// instead of being treated as a file that exists.
+func TestDrive9CopyRootDestinationJoinsSourceName(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+
+	t.Run("inner path absent is allowed", func(t *testing.T) {
+		writeFakeStatSpec(t, map[string]bool{":/": true})
+		if _, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+			Profile:    dataProfile(),
+			FromRemote: "/src/README.md",
+			ToRemote:   "/",
+		}); err != nil {
+			t.Fatalf("copy into root failed: %v", err)
+		}
+	})
+
+	t.Run("inner path present is rejected", func(t *testing.T) {
+		writeFakeStatSpec(t, map[string]bool{":/": true, ":/README.md": false})
+		_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+			Profile:    dataProfile(),
+			FromRemote: "/src/README.md",
+			ToRemote:   "/",
+		})
+		if apperr.CodeFor(err) != "fs.target_exists" {
+			t.Fatalf("copy error = %v, want fs.target_exists", err)
+		}
+	})
+}
+
+// A trailing-separator destination names a directory even when the path it names
+// is occupied by a file, because the companion joins without stating the target.
+func TestDrive9CopyTrailingSeparatorOnAFilePathJoins(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	writeFakeStatSpec(t, map[string]bool{":/workspace": false})
+
+	if _, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/src/README.md",
+		ToRemote:   "/workspace/",
+	}); err != nil {
+		t.Fatalf("trailing-separator destination failed: %v", err)
+	}
+}
+
+// A symlink to a file is an existing target: the companion would write through it.
+func TestDrive9CopyRemoteToLocalRejectsSymlinkToFile(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	root := t.TempDir()
+	file := filepath.Join(root, "real.txt")
+	if err := os.WriteFile(file, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link.txt")
+	if err := os.Symlink(file, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/workspace/source.txt",
+		ToLocal:    link,
+	})
+	if apperr.CodeFor(err) != "fs.target_exists" {
+		t.Fatalf("copy error = %v, want fs.target_exists", err)
+	}
+	assertNoCompanionCopy(t, recordPath)
 }
 
 // A stat failure other than "not found" must surface as the shared local-stat
@@ -328,10 +417,10 @@ func TestDrive9CopyRecursiveWithoutOverwriteSkipsTargetProbe(t *testing.T) {
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
 	// `fs stat` would report the target as existing if the probe ran.
 	if _, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
-		Profile:    dataProfile(),
-		FromRemote: "/workspace/src-dir",
-		ToRemote:   "/workspace/src-dir.copy",
-		Recursive:  true,
+		Profile:   dataProfile(),
+		FromLocal: filepath.Join(t.TempDir(), "src-dir"),
+		ToRemote:  "/workspace/src-dir",
+		Recursive: true,
 	}); err != nil {
 		t.Fatalf("recursive copy failed: %v", err)
 	}
@@ -350,8 +439,4 @@ func assertNoCompanionCopy(t *testing.T, recordPath string) {
 			t.Fatalf("blocked copy still invoked companion: %#v", call.Args)
 		}
 	}
-}
-
-func containsText(haystack, needle string) bool {
-	return needle == "" || strings.Contains(haystack, needle)
 }

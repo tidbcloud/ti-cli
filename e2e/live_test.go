@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -1295,6 +1296,57 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 	}
 	if string(downloaded) != fullContent {
 		t.Fatalf("downloaded file mismatch: got %q want %q", downloaded, fullContent)
+	}
+
+	// The --overwrite=false contract resolves a directory destination to
+	// dir/<base(source)>: the first copy lands there, the second is refused and
+	// names the path it would replace, and the first copy's bytes stay intact.
+	remoteBase := pathpkg.Base(movedPath)
+	localDir := t.TempDir()
+	intoLocalDir := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", localDir)
+	intoLocalDir.wantExitCode(0)
+	intoLocalDir.wantStdoutContains(`"status": "copied"`)
+	landed := filepath.Join(localDir, remoteBase)
+	landedBytes, err := os.ReadFile(landed)
+	if err != nil {
+		t.Fatalf("read copy landed in directory: %v", err)
+	}
+	if string(landedBytes) != fullContent {
+		t.Fatalf("copy landed in directory mismatch: got %q want %q", landedBytes, fullContent)
+	}
+	intoLocalDirAgain := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", localDir)
+	intoLocalDirAgain.wantExitCode(2)
+	intoLocalDirAgain.wantStderrContains("target_exists")
+	intoLocalDirAgain.wantStderrContains(landed)
+	landedAfter, err := os.ReadFile(landed)
+	if err != nil {
+		t.Fatalf("re-read copy landed in directory: %v", err)
+	}
+	if string(landedAfter) != string(landedBytes) {
+		t.Fatalf("refused copy changed the existing file: got %q want %q", landedAfter, landedBytes)
+	}
+
+	// The same rule on the remote side: an existing remote directory receives
+	// root/<base> once, and the repeat is refused.
+	intoRemoteDir := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", rootPath)
+	intoRemoteDir.wantExitCode(0)
+	intoRemoteDir.wantStdoutContains(`"status": "copied"`)
+	intoRemoteDirAgain := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", rootPath)
+	intoRemoteDirAgain.wantExitCode(2)
+	intoRemoteDirAgain.wantStderrContains("target_exists")
+
+	// A symlinked directory is a directory destination too (the companion stats
+	// through the link); skip on hosts without symlink support.
+	realDir := t.TempDir()
+	linkRoot := t.TempDir()
+	linkDir := filepath.Join(linkRoot, "link-dir")
+	if err := os.Symlink(realDir, linkDir); err == nil {
+		intoLinkDir := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", linkDir)
+		intoLinkDir.wantExitCode(0)
+		intoLinkDir.wantStdoutContains(`"status": "copied"`)
+		if _, err := os.Stat(filepath.Join(realDir, remoteBase)); err != nil {
+			t.Fatalf("symlinked directory copy did not land through the link: %v", err)
+		}
 	}
 
 	resumePath := filepath.Join(t.TempDir(), "resume.md")
