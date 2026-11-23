@@ -183,6 +183,87 @@ func TestDrive9CopyRemoteToLocalRejectsDanglingSymlinkTarget(t *testing.T) {
 	assertNoCompanionCopy(t, recordPath)
 }
 
+// The pinned companion refuses a directory destination when the source has no
+// file name (stdin), so ti must say so itself instead of passing through a
+// companion usage dump.
+func TestDrive9CopyStdinToDirectoryRequiresName(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	writeFakeStatSpec(t, map[string]bool{":/workspace": true})
+
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:   dataProfile(),
+		FromStdin: true,
+		ToRemote:  "/workspace",
+	})
+	if apperr.CodeFor(err) != "fs.copy_target_requires_name" {
+		t.Fatalf("copy error = %v, want fs.copy_target_requires_name", err)
+	}
+	assertNoCompanionCopy(t, recordPath)
+}
+
+// A trailing separator is the companion's "destination is a directory" spelling
+// and it joins <target>/<base(source)> without a stat, so the probe must join the
+// same way.
+func TestDrive9CopyTrailingSeparatorDirectoryDestination(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+
+	t.Run("remote inner path absent is allowed", func(t *testing.T) {
+		writeFakeStatSpec(t, map[string]bool{})
+		if _, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+			Profile:    dataProfile(),
+			FromRemote: "/src/README.md",
+			ToRemote:   "/workspace/",
+		}); err != nil {
+			t.Fatalf("copy into slash-terminated directory failed: %v", err)
+		}
+	})
+
+	t.Run("remote inner path present is rejected", func(t *testing.T) {
+		writeFakeStatSpec(t, map[string]bool{":/workspace/README.md": false})
+		_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+			Profile:    dataProfile(),
+			FromRemote: "/src/README.md",
+			ToRemote:   "/workspace/",
+		})
+		if apperr.CodeFor(err) != "fs.target_exists" {
+			t.Fatalf("copy error = %v, want fs.target_exists", err)
+		}
+	})
+}
+
+// A symlink that resolves to a directory is a directory destination for the
+// companion (it stats through the link), so the probe joins as well.
+func TestDrive9CopyLocalSymlinkToDirectoryJoinsSourceName(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	root := t.TempDir()
+	dir := filepath.Join(root, "real-dir")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link-dir")
+	if err := os.Symlink(dir, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/workspace/README.md",
+		ToLocal:    link,
+	})
+	if apperr.CodeFor(err) != "fs.target_exists" {
+		t.Fatalf("copy error = %v, want fs.target_exists", err)
+	}
+	if !containsText(apperr.MessageFor(err), filepath.Join(link, "README.md")) {
+		t.Fatalf("error %q does not name the joined path", apperr.MessageFor(err))
+	}
+}
+
 // A stat failure other than "not found" must surface as the shared local-stat
 // error code instead of being treated as an absent target: a parent that is a
 // regular file gives ENOTDIR.

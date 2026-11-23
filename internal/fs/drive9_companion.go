@@ -565,6 +565,10 @@ func (s Service) ensureDrive9CopyTargetAbsent(ctx context.Context, opts CopyFile
 }
 
 func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, target, sourceName string) error {
+	// A trailing separator is the companion's spelling for "the destination is a
+	// directory": resolveRemoteCopyTarget joins <target>/<base(source)> without a
+	// stat. A stat is still useful below, but only the join decisions differ.
+	trailingSeparator := strings.HasSuffix(target, "/")
 	targetPath, err := normalizeRemotePath(target)
 	if err != nil {
 		return err
@@ -573,25 +577,27 @@ func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFi
 	if err != nil {
 		return err
 	}
-	if !exists {
+	if !exists && !trailingSeparator {
 		return nil
 	}
-	// An existing directory destination receives dir/<base(source)>; only that
-	// inner path is replaced, so probing the directory itself would refuse a
-	// copy that changes nothing that exists (and, with --overwrite, would hide
-	// the path that is actually replaced).
+	// An existing (or slash-terminated) directory destination receives
+	// dir/<base(source)>; only that inner path is replaced, so probing the
+	// directory itself would refuse a copy that changes nothing that exists and
+	// would hide the path --overwrite really replaces.
 	probed := targetPath
-	if metadata.IsDir && sourceName != "" {
-		probed = targetPath + "/" + sourceName
+	if trailingSeparator || metadata.IsDir {
+		if sourceName == "" {
+			// The companion refuses this exact shape ("destination %q requires a
+			// file name"); say so with ti's own code instead of passing through a
+			// companion usage dump.
+			return apperr.New("fs.copy_target_requires_name", "usage", 2, fmt.Sprintf("destination %q is a directory and the source has no file name; copy to an explicit file path instead", targetPath))
+		}
+		probed = strings.TrimSuffix(targetPath, "/") + "/" + sourceName
 		if _, innerExists, innerErr := s.drive9StatTarget(ctx, opts.Profile, probed); innerErr != nil {
 			return innerErr
 		} else if !innerExists {
 			return nil
 		}
-	} else if metadata.IsDir {
-		// The source name is unknown locally (stdin), so the companion chooses
-		// the written path; refuse to guess.
-		return nil
 	}
 	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", probed))
 }
@@ -622,11 +628,44 @@ func ensureDrive9LocalCopyTargetAbsent(target, sourceName string) error {
 	if strings.TrimSpace(target) == "" {
 		return nil
 	}
-	probed := target
-	if info, err := os.Lstat(target); err == nil && info.IsDir() && sourceName != "" {
-		probed = filepath.Join(target, sourceName)
+	// Mirror resolveLocalCopyTarget: a trailing separator means "directory", and
+	// an existing directory (or a symlink that resolves to one) receives
+	// <target>/<base(source)>. Lstat first so a dangling symlink is not silently
+	// followed, then Stat only to classify the link target the way the companion
+	// does.
+	trailingSeparator := strings.HasSuffix(target, string(os.PathSeparator)) || strings.HasSuffix(target, "/")
+	info, err := os.Lstat(target)
+	switch {
+	case err == nil:
+		if trailingSeparator || info.IsDir() || symlinkResolvesToDir(target, info) {
+			if sourceName == "" {
+				return apperr.New("fs.copy_target_requires_name", "usage", 2, fmt.Sprintf("destination %q is a directory and the source has no file name; copy to an explicit file path instead", target))
+			}
+			return ensureLocalTargetCanWrite(filepath.Join(strings.TrimSuffix(strings.TrimSuffix(target, "/"), string(os.PathSeparator)), sourceName), false, false)
+		}
+		return ensureLocalTargetCanWrite(target, false, false)
+	case errors.Is(err, os.ErrNotExist):
+		if trailingSeparator {
+			if sourceName == "" {
+				return apperr.New("fs.copy_target_requires_name", "usage", 2, fmt.Sprintf("destination %q is a directory and the source has no file name; copy to an explicit file path instead", target))
+			}
+			return ensureLocalTargetCanWrite(filepath.Join(strings.TrimSuffix(strings.TrimSuffix(target, "/"), string(os.PathSeparator)), sourceName), false, false)
+		}
+		return nil
+	default:
+		return apperr.Wrap("fs.stat_local_file", "runtime", 1, fmt.Sprintf("stat local file %q", target), err)
 	}
-	return ensureLocalTargetCanWrite(probed, false, false)
+}
+
+// symlinkResolvesToDir reports whether a symlink at path points at a directory.
+// A dangling link reports false, which keeps it classified as an existing target
+// (writing through it would create the link target).
+func symlinkResolvesToDir(path string, info os.FileInfo) bool {
+	if info.Mode()&os.ModeSymlink == 0 {
+		return false
+	}
+	resolved, err := os.Stat(path)
+	return err == nil && resolved.IsDir()
 }
 
 func (s Service) drive9ReadFile(ctx context.Context, opts ReadFileOptions) ([]byte, error) {
