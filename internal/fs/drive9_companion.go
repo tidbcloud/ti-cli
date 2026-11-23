@@ -479,24 +479,40 @@ const (
 	drive9CopySourceRemote
 )
 
-// resolveDrive9CopyRoute resolves the single source/target pair a copy names.
-// drive9CopyArgs and the --overwrite probe both consume this result, so the
-// executed command and the probe cannot resolve different paths.
-func resolveDrive9CopyRoute(opts CopyFileOptions) (drive9CopyTargetKind, drive9CopySourceKind, string, string, error) {
-	sources := 0
-	for _, set := range []bool{opts.FromStdin, opts.FromLocal != "", opts.FromRemote != ""} {
-		if set {
-			sources++
-		}
-	}
+// ValidateDrive9CopyRoute enforces the shape every copy names: exactly one
+// source and exactly one destination. It is the single place that counts them,
+// so the command builder (which dispatches --to-stdout before the service runs),
+// drive9CopyArgs and the overwrite probe cannot disagree.
+func ValidateDrive9CopyRoute(opts CopyFileOptions) error {
 	destinations := 0
 	for _, set := range []bool{opts.ToRemote != "", opts.ToLocal != "", opts.ToStdout} {
 		if set {
 			destinations++
 		}
 	}
+	// Two destinations are always the ambiguity error; the partial shapes below
+	// are the "not a pair" error.
+	if destinations > 1 {
+		return apperr.New("fs.ambiguous_copy_target", "usage", 2, "name exactly one destination: --to-remote, --to-local, or --to-stdout")
+	}
+	sources := 0
+	for _, set := range []bool{opts.FromStdin, opts.FromLocal != "", opts.FromRemote != ""} {
+		if set {
+			sources++
+		}
+	}
 	if sources != 1 || destinations != 1 {
-		return drive9CopyTargetNone, drive9CopySourceNone, "", "", apperr.New("fs.invalid_copy_flags", "usage", 2, "copy-file requires exactly one source/target pair")
+		return apperr.New("fs.invalid_copy_flags", "usage", 2, "copy-file requires exactly one source/target pair")
+	}
+	return nil
+}
+
+// resolveDrive9CopyRoute resolves the single source/target pair a copy names.
+// drive9CopyArgs and the --overwrite probe both consume this result, so the
+// executed command and the probe cannot resolve different paths.
+func resolveDrive9CopyRoute(opts CopyFileOptions) (drive9CopyTargetKind, drive9CopySourceKind, string, string, error) {
+	if err := ValidateDrive9CopyRoute(opts); err != nil {
+		return drive9CopyTargetNone, drive9CopySourceNone, "", "", err
 	}
 	switch {
 	case opts.FromStdin && opts.ToRemote != "":
@@ -591,19 +607,12 @@ func (s Service) ensureDrive9CopyTargetAbsent(ctx context.Context, opts CopyFile
 
 func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, target, sourceName string) error {
 	// Mirror resolveRemoteCopyTarget: a trailing separator names a directory and
-	// the companion joins <target>/<base(source)> without stating the target.
+	// the companion joins <target>/<base(source)> without stat'ing the target.
+	// The route already normalized the path, so it is used as-is here.
 	if strings.HasSuffix(target, "/") {
-		targetPath, err := normalizeRemotePath(target)
-		if err != nil {
-			return err
-		}
-		return s.ensureDrive9RemoteChildAbsent(ctx, opts, targetPath, sourceName)
+		return s.ensureDrive9RemoteChildAbsent(ctx, opts, target, sourceName)
 	}
-	targetPath, err := normalizeRemotePath(target)
-	if err != nil {
-		return err
-	}
-	metadata, exists, err := s.drive9StatTarget(ctx, opts.Profile, targetPath)
+	metadata, exists, err := s.drive9StatTarget(ctx, opts.Profile, target)
 	if err != nil {
 		return err
 	}
@@ -611,9 +620,9 @@ func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFi
 		return nil
 	}
 	if metadata.IsDir {
-		return s.ensureDrive9RemoteChildAbsent(ctx, opts, targetPath, sourceName)
+		return s.ensureDrive9RemoteChildAbsent(ctx, opts, target, sourceName)
 	}
-	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", targetPath))
+	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", target))
 }
 
 func (s Service) ensureDrive9RemoteChildAbsent(ctx context.Context, opts CopyFileOptions, dir, sourceName string) error {
@@ -1737,17 +1746,6 @@ func (s Service) mountLocatorProfile(base *config.Profile, mountPath string) (mo
 }
 
 func drive9CopyArgs(opts CopyFileOptions) ([]string, string, string, error) {
-	// Exactly one destination may be named. Accepting two would let the
-	// overwrite probe and `fs cp` operate on different paths.
-	destinations := 0
-	for _, set := range []bool{opts.ToRemote != "", opts.ToLocal != "", opts.ToStdout} {
-		if set {
-			destinations++
-		}
-	}
-	if destinations > 1 {
-		return nil, "", "", apperr.New("fs.ambiguous_copy_target", "usage", 2, "name exactly one destination: --to-remote, --to-local, or --to-stdout")
-	}
 	if opts.Recursive && strings.TrimSpace(opts.LayerID) != "" {
 		return nil, "", "", apperr.New("fs.recursive_layer_copy_unsupported", "usage", 2, "--recursive cannot be combined with --layer-id; mount the layer with --driver fuse and copy the directory through the mounted path")
 	}

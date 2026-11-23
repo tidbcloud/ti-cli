@@ -313,7 +313,8 @@ func TestDrive9CopyRootDestinationJoinsSourceName(t *testing.T) {
 }
 
 // A trailing-separator destination names a directory even when the path it names
-// is occupied by a file, because the companion joins without stating the target.
+// is occupied by a file, because the companion joins without stat'ing the target:
+// the only stat the probe may issue is for the joined child path.
 func TestDrive9CopyTrailingSeparatorOnAFilePathJoins(t *testing.T) {
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
@@ -325,6 +326,52 @@ func TestDrive9CopyTrailingSeparatorOnAFilePathJoins(t *testing.T) {
 		ToRemote:   "/workspace/",
 	}); err != nil {
 		t.Fatalf("trailing-separator destination failed: %v", err)
+	}
+	var stats []string
+	for _, call := range readFakeDrive9Calls(t, recordPath) {
+		if hasArgPrefix(call.Args, []string{"fs", "stat"}) {
+			for _, arg := range call.Args {
+				if strings.HasPrefix(arg, ":/") {
+					stats = append(stats, arg)
+				}
+			}
+		}
+	}
+	want := ":/workspace/README.md"
+	if len(stats) != 1 || stats[0] != want {
+		t.Fatalf("probe stats = %#v, want exactly %q (the joined child, not the directory)", stats, want)
+	}
+}
+
+// The route shape is validated in one place, so the command builder and the
+// service agree. Table-test the shapes that used to slip through one of them.
+func TestValidateDrive9CopyRoute(t *testing.T) {
+	base := CopyFileOptions{Profile: dataProfile()}
+	for _, tc := range []struct {
+		name string
+		opts CopyFileOptions
+		want string
+	}{
+		{name: "two destinations", opts: CopyFileOptions{Profile: base.Profile, FromRemote: "/a", ToRemote: "/b", ToLocal: "/tmp/c"}, want: "fs.ambiguous_copy_target"},
+		{name: "stdout plus a destination", opts: CopyFileOptions{Profile: base.Profile, FromRemote: "/a", ToRemote: "/b", ToStdout: true}, want: "fs.ambiguous_copy_target"},
+		{name: "two sources with stdout", opts: CopyFileOptions{Profile: base.Profile, FromStdin: true, FromRemote: "/a", ToStdout: true}, want: "fs.invalid_copy_flags"},
+		{name: "two sources", opts: CopyFileOptions{Profile: base.Profile, FromLocal: "a.md", FromRemote: "/a", ToRemote: "/c"}, want: "fs.invalid_copy_flags"},
+		{name: "no destination", opts: CopyFileOptions{Profile: base.Profile, FromRemote: "/a"}, want: "fs.invalid_copy_flags"},
+		{name: "remote to remote", opts: CopyFileOptions{Profile: base.Profile, FromRemote: "/a", ToRemote: "/b"}, want: ""},
+		{name: "stdin to remote", opts: CopyFileOptions{Profile: base.Profile, FromStdin: true, ToRemote: "/b"}, want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateDrive9CopyRoute(tc.opts)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("validation error = %v, want nil", err)
+				}
+				return
+			}
+			if apperr.CodeFor(err) != tc.want {
+				t.Fatalf("validation error = %v, want %s", err, tc.want)
+			}
+		})
 	}
 }
 

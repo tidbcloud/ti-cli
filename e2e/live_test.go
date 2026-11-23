@@ -1316,7 +1316,7 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 	}
 	intoLocalDirAgain := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", localDir)
 	intoLocalDirAgain.wantExitCode(2)
-	intoLocalDirAgain.wantStderrContains("target_exists")
+	intoLocalDirAgain.wantStderrContains("already exists; pass --overwrite to replace it")
 	intoLocalDirAgain.wantStderrContains(landed)
 	landedAfter, err := os.ReadFile(landed)
 	if err != nil {
@@ -1326,14 +1326,19 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 		t.Fatalf("refused copy changed the existing file: got %q want %q", landedAfter, landedBytes)
 	}
 
-	// The same rule on the remote side: an existing remote directory receives
-	// root/<base> once, and the repeat is refused.
-	intoRemoteDir := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", rootPath)
+	// The same rule on the remote side. The destination has to be a different
+	// run-owned directory: moving into rootPath would resolve to the source's own
+	// path (movedPath is rootPath/<name>), which the rule refuses.
+	intoRemoteDirPath := rootPath + "/into-dir"
+	createIntoDir := runTI(t, bin, "--profile", profileName, "fs", "create-directory", "--path", intoRemoteDirPath)
+	createIntoDir.wantExitCode(0)
+	intoRemoteDir := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", intoRemoteDirPath)
 	intoRemoteDir.wantExitCode(0)
 	intoRemoteDir.wantStdoutContains(`"status": "copied"`)
-	intoRemoteDirAgain := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", rootPath)
+	intoRemoteDirAgain := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", intoRemoteDirPath)
 	intoRemoteDirAgain.wantExitCode(2)
-	intoRemoteDirAgain.wantStderrContains("target_exists")
+	intoRemoteDirAgain.wantStderrContains("already exists; pass --overwrite to replace it")
+	intoRemoteDirAgain.wantStderrContains(intoRemoteDirPath + "/" + remoteBase)
 
 	// A symlinked directory is a directory destination too (the companion stats
 	// through the link); skip on hosts without symlink support.
