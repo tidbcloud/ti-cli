@@ -1337,16 +1337,16 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 	intoRemoteDir.wantStdoutContains(`"status": "copied"`)
 	intoRemoteDirAgain := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", intoRemoteDirPath)
 	intoRemoteDirAgain.wantExitCode(2)
-	intoRemoteDirAgain.wantStderrContains("already exists; pass --overwrite to replace it")
+	intoRemoteDirAgain.wantStderrContains("already exists; a server-side copy does not replace an existing path")
 	intoRemoteDirAgain.wantStderrContains(intoRemoteDirPath + "/" + remoteBase)
 
 	// A server-side copy onto an existing path. ti refuses without --overwrite and
-	// says so; with it, the outcome is the service's, and the pinned server
-	// rejects the duplicate (the copy handler inserts a new node). Accept either
-	// answer, but never a lost destination: a service that replaces the path must
-	// show the source bytes, a service that refuses must leave the original
-	// bytes intact. This is the one --overwrite shape the live suite did not
-	// cover, and it is what decides the refusal wording.
+	// says a copy does not replace an existing path; with --overwrite it stops
+	// probing and the service answers, and the pinned server rejects the
+	// duplicate (the copy handler inserts a new node). The live suite asserts
+	// that answer, because the refusal wording and the README state it as fact:
+	// if the deployed service replaces the destination instead, this step fails
+	// and that failure is the signal to change the sentence.
 	overwriteTarget := rootPath + "/copy-overwrite.md"
 	overwriteOriginal := "original bytes for the overwrite probe\n"
 	overwriteSeed := filepath.Join(t.TempDir(), "copy-overwrite.md")
@@ -1356,14 +1356,12 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 	seedOverwriteTarget := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", overwriteSeed, "--to-remote", overwriteTarget)
 	seedOverwriteTarget.wantExitCode(0)
 	overwriteCopy := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", overwriteTarget, "--overwrite")
+	if overwriteCopy.exitCode == 0 {
+		overwriteCopy.fail("a server-side copy replaced an existing path; the refusal wording and the README say it cannot, so the sentence has to change with the service")
+	}
 	overwriteRead := runTI(t, bin, "--profile", profileName, "fs", "cat", "--path", overwriteTarget)
 	overwriteRead.wantExitCode(0)
-	switch {
-	case overwriteCopy.exitCode == 0:
-		if overwriteRead.stdout != fullContent {
-			overwriteCopy.fail("a server-side copy reported success but the destination does not hold the source bytes")
-		}
-	case overwriteRead.stdout != overwriteOriginal:
+	if overwriteRead.stdout != overwriteOriginal {
 		overwriteCopy.fail("a refused --overwrite copy changed the existing destination")
 	}
 

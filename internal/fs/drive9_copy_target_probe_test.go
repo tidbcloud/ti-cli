@@ -13,10 +13,13 @@ import (
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 )
 
-// The companion's `fs cp` overwrites every drive9 destination unconditionally,
-// so ti owns the --overwrite=false contract. These cases pin the shapes that
-// the original upload-only probe missed, and the directory-destination rule the
-// companion applies (dir/<base(source)>).
+// ti owns the --overwrite=false contract, because the delegated `fs cp` has no
+// such flag and what replaces a destination differs by direction: an upload
+// writes the remote path, a download creates the local file, and a server-side
+// copy inserts a new node that the server's unique path index rejects. These
+// cases pin the shapes the original upload-only probe missed, the
+// directory-destination rule (dir/<base(source)>), and the refusal wording each
+// direction gets.
 
 func writeFakeStatSpec(t *testing.T, entries map[string]bool) {
 	t.Helper()
@@ -119,10 +122,52 @@ func TestDrive9CopyIntoExistingRemoteDirectoryProbesTheInnerPath(t *testing.T) {
 		if apperr.CodeFor(err) != "fs.target_exists" {
 			t.Fatalf("copy error = %v, want fs.target_exists", err)
 		}
-		if !strings.Contains(apperr.MessageFor(err), "/workspace/README.md") {
-			t.Fatalf("error %q does not name the replaced path", apperr.MessageFor(err))
+		message := apperr.MessageFor(err)
+		if !strings.Contains(message, "/workspace/README.md") {
+			t.Fatalf("error %q does not name the resolved path", message)
+		}
+		// The source is remote, so the refusal is about a copy: CI pins the
+		// sentence the live suite asserts.
+		if !strings.Contains(message, "a server-side copy does not replace an existing path") {
+			t.Fatalf("error %q does not carry the server-side-copy sentence", message)
 		}
 	})
+}
+
+// A directory destination resolves to <dir>/<base(source)>, which can be the
+// source path itself. Advising a delete there would tell the caller to delete
+// the file being copied, so that shape gets its own sentence.
+func TestDrive9CopyOntoItsOwnPathNamesTheCollision(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts CopyFileOptions
+	}{
+		{
+			name: "same remote file path",
+			opts: CopyFileOptions{Profile: dataProfile(), FromRemote: "/workspace/a.txt", ToRemote: "/workspace/a.txt"},
+		},
+		{
+			name: "directory destination resolving to the source",
+			opts: CopyFileOptions{Profile: dataProfile(), FromRemote: "/workspace/a.txt", ToRemote: "/workspace"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			companion, recordPath := buildFakeDrive9(t)
+			t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+			writeFakeStatSpec(t, map[string]bool{":/workspace": true, ":/workspace/a.txt": false})
+			_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), tc.opts)
+			if apperr.CodeFor(err) != "fs.target_exists" {
+				t.Fatalf("copy error = %v, want fs.target_exists", err)
+			}
+			message := apperr.MessageFor(err)
+			if !strings.Contains(message, "is the source path; copy to a different path instead") {
+				t.Fatalf("error %q does not name the collision", message)
+			}
+			if strings.Contains(message, "delete it first") {
+				t.Fatalf("error %q advises deleting the source", message)
+			}
+		})
+	}
 }
 
 func TestDrive9CopyRemoteToLocalWithoutOverwriteRejectsExistingTarget(t *testing.T) {

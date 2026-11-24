@@ -587,8 +587,9 @@ func drive9CopySourceName(kind drive9CopySourceKind, source string) string {
 //     --overwrite does not govern it;
 //   - a layer destination, where `fs stat` cannot see inside the layer and the
 //     layer write is an upsert, so --overwrite does not govern it either;
-//   - --append and --resume, which extend or continue a transfer instead of
-//     replacing a file and are decided by the companion's own branches.
+//   - --append and --resume, where the companion's own branch decides what
+//     happens to an existing destination: an append extends it, while a download
+//     with --resume ignores the flag and creates the file, so it replaces it.
 func (s Service) ensureDrive9CopyTargetAbsent(ctx context.Context, opts CopyFileOptions) error {
 	if opts.Overwrite || opts.Append || opts.Resume || opts.Recursive {
 		return nil
@@ -603,19 +604,19 @@ func (s Service) ensureDrive9CopyTargetAbsent(ctx context.Context, opts CopyFile
 		if strings.TrimSpace(opts.LayerID) != "" {
 			return nil
 		}
-		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, target, sourceKind, sourceName)
+		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, source, target, sourceKind, sourceName)
 	case drive9CopyTargetLocal:
 		return ensureDrive9LocalCopyTargetAbsent(target, sourceName)
 	}
 	return nil
 }
 
-func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, target string, sourceKind drive9CopySourceKind, sourceName string) error {
+func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, source, target string, sourceKind drive9CopySourceKind, sourceName string) error {
 	// Mirror resolveRemoteCopyTarget: a trailing separator names a directory and
 	// the companion joins <target>/<base(source)> without stat'ing the target.
 	// The route already normalized the path, so it is used as-is here.
 	if strings.HasSuffix(target, "/") {
-		return s.ensureDrive9RemoteChildAbsent(ctx, opts, target, sourceKind, sourceName)
+		return s.ensureDrive9RemoteChildAbsent(ctx, opts, source, target, sourceKind, sourceName)
 	}
 	metadata, exists, err := s.drive9StatTarget(ctx, opts.Profile, target)
 	if err != nil {
@@ -625,12 +626,12 @@ func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFi
 		return nil
 	}
 	if metadata.IsDir {
-		return s.ensureDrive9RemoteChildAbsent(ctx, opts, target, sourceKind, sourceName)
+		return s.ensureDrive9RemoteChildAbsent(ctx, opts, source, target, sourceKind, sourceName)
 	}
-	return remoteTargetExistsError(target, sourceKind)
+	return remoteTargetExistsError(source, target, sourceKind)
 }
 
-func (s Service) ensureDrive9RemoteChildAbsent(ctx context.Context, opts CopyFileOptions, dir string, sourceKind drive9CopySourceKind, sourceName string) error {
+func (s Service) ensureDrive9RemoteChildAbsent(ctx context.Context, opts CopyFileOptions, source, dir string, sourceKind drive9CopySourceKind, sourceName string) error {
 	if sourceName == "" {
 		return copyTargetRequiresName(dir)
 	}
@@ -640,7 +641,7 @@ func (s Service) ensureDrive9RemoteChildAbsent(ctx context.Context, opts CopyFil
 	} else if !exists {
 		return nil
 	}
-	return remoteTargetExistsError(probed, sourceKind)
+	return remoteTargetExistsError(source, probed, sourceKind)
 }
 
 // remoteTargetExistsError words the --overwrite=false refusal for the direction.
@@ -649,11 +650,26 @@ func (s Service) ensureDrive9RemoteChildAbsent(ctx context.Context, opts CopyFil
 // cannot: the server inserts a new node at the destination and its unique path
 // index rejects the duplicate, so --overwrite would only turn a clear refusal
 // into a server error, and the advice has to be to use a new path.
-func remoteTargetExistsError(target string, sourceKind drive9CopySourceKind) error {
-	if sourceKind == drive9CopySourceRemote {
-		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; a server-side copy does not replace an existing path, so copy to a new path or delete it first", target))
+//
+// A directory destination resolves to <dir>/<base(source)>, which can be the
+// source itself (`--from-remote /dir/a --to-remote /dir` is an easy thing to
+// type). That case must not advise deleting the destination: the destination is
+// the file being copied.
+func remoteTargetExistsError(source, target string, sourceKind drive9CopySourceKind) error {
+	if sourceKind != drive9CopySourceRemote {
+		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", target))
 	}
-	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", target))
+	if sameDrive9RemotePath(source, target) {
+		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q is the source path; copy to a different path instead", target))
+	}
+	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; a server-side copy does not replace an existing path, so copy to a new path or delete it first", target))
+}
+
+// sameDrive9RemotePath reports whether two resolved drive9 paths name the same
+// node. Both come from resolveDrive9CopyRoute, so the only spelling difference
+// left is the trailing separator of a directory.
+func sameDrive9RemotePath(left, right string) bool {
+	return strings.TrimSuffix(left, "/") == strings.TrimSuffix(right, "/")
 }
 
 // drive9StatTarget reports whether a remote path exists and, when it does, its
