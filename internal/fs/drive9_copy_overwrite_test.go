@@ -12,9 +12,10 @@ import (
 
 // The server's copy inserts a new node at the destination, so --overwrite has to
 // be ti's: copy to a sibling temporary path and move it onto the destination,
-// which replaces the target in one rename. These cases pin the argv sequence so
-// a later change cannot quietly go back to asking the server for something it
-// refuses.
+// which replaces the target in one rename. These cases pin the argv sequence and
+// the error the user sees after each failure, so a later change cannot quietly
+// go back to asking the server for something it refuses, or to inferring whether
+// the staging file exists from one removal error.
 
 func copyCalls(t *testing.T, recordPath string) [][]string {
 	t.Helper()
@@ -41,70 +42,83 @@ func tempNameFor(t *testing.T, calls [][]string) (string, string) {
 	return stage, move
 }
 
-func TestDrive9CopyServerSideOverwriteStagesAndMoves(t *testing.T) {
-	for _, tc := range []struct {
-		name   string
-		opts   CopyFileOptions
-		spec   map[string]bool
-		target string
-	}{
-		{
-			name:   "existing file destination",
-			opts:   CopyFileOptions{Profile: dataProfile(), FromRemote: "/src/a.txt", ToRemote: "/dst.txt", Overwrite: true},
-			spec:   map[string]bool{":/dst.txt": false},
-			target: ":/dst.txt",
-		},
-		{
-			name:   "existing file inside a directory destination",
-			opts:   CopyFileOptions{Profile: dataProfile(), FromRemote: "/src/a.txt", ToRemote: "/dir", Overwrite: true},
-			spec:   map[string]bool{":/dir": true, ":/dir/a.txt": false},
-			target: ":/dir/a.txt",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			companion, recordPath := buildFakeDrive9(t)
-			t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
-			writeFakeStatSpec(t, tc.spec)
+// newStatefulCopyService wires a service to the fake companion in stateful mode:
+// the fake keeps the set of remote paths it created, so a test can say "the
+// staging file was never created", "it was created and the cleanup was refused",
+// or "the rename applied but its answer was lost".
+func newStatefulCopyService(t *testing.T, existing ...string) (Service, string, string) {
+	t.Helper()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	state := t.TempDir()
+	t.Setenv("TI_FAKE_DRIVE9_STATE_DIR", state)
+	if len(existing) > 0 {
+		if err := os.WriteFile(filepath.Join(state, "paths"), []byte(strings.Join(existing, "\n")), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return testCompanionService(t.TempDir(), companion), recordPath, state
+}
 
-			result, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), tc.opts)
-			if err != nil {
-				t.Fatalf("overwrite copy failed: %v", err)
-			}
-			// The result reports the destination the caller named; the resolved
-			// path is what the staging calls use.
-			if result.Status != "copied" || result.TargetPath != strings.TrimPrefix(tc.opts.ToRemote, ":") {
-				t.Fatalf("result = %+v, want status copied and target %q", result, tc.opts.ToRemote)
-			}
-			calls := copyCalls(t, recordPath)
-			stage, move := tempNameFor(t, calls)
-			if stage == "" || !strings.HasPrefix(stage, tc.target+".ti-tmp-") {
-				t.Fatalf("staged copy target = %q, want a sibling of %q", stage, tc.target)
-			}
-			if move != tc.target {
-				t.Fatalf("move target = %q, want %q", move, tc.target)
-			}
-			sawMove := false
-			for _, args := range calls {
-				if args[1] == "mv" {
-					sawMove = true
-					if args[2] != stage {
-						t.Fatalf("move source = %q, want the staged path %q", args[2], stage)
-					}
+func TestDrive9CopyServerSideOverwriteStagesAndMoves(t *testing.T) {
+	t.Run("existing file destination", func(t *testing.T) {
+		service, recordPath, _ := newStatefulCopyService(t, "/dst.txt")
+		result, err := service.CopyFile(context.Background(), CopyFileOptions{
+			Profile:    dataProfile(),
+			FromRemote: "/src/a.txt",
+			ToRemote:   "/dst.txt",
+			Overwrite:  true,
+		})
+		if err != nil {
+			t.Fatalf("overwrite copy failed: %v", err)
+		}
+		if result.Status != "copied" || result.TargetPath != "/dst.txt" {
+			t.Fatalf("result = %+v, want status copied and target /dst.txt", result)
+		}
+		calls := copyCalls(t, recordPath)
+		stage, move := tempNameFor(t, calls)
+		if stage == "" || !strings.HasPrefix(stage, ":/dst.txt.ti-tmp-") {
+			t.Fatalf("staged copy target = %q, want a sibling of :/dst.txt", stage)
+		}
+		if move != ":/dst.txt" {
+			t.Fatalf("move target = %q, want :/dst.txt", move)
+		}
+		sawMove := false
+		for _, args := range calls {
+			if args[1] == "mv" {
+				sawMove = true
+				if args[2] != stage {
+					t.Fatalf("move source = %q, want the staged path %q", args[2], stage)
 				}
 			}
-			if !sawMove {
-				t.Fatalf("calls = %v, want a move onto the destination", calls)
-			}
-		})
-	}
+		}
+		if !sawMove {
+			t.Fatalf("calls = %v, want a move onto the destination", calls)
+		}
+	})
+
+	t.Run("existing file inside a directory destination", func(t *testing.T) {
+		service, recordPath, _ := newStatefulCopyService(t, "/dir/a.txt")
+		t.Setenv("TI_FAKE_DRIVE9_STAT_SPEC", `{":/dir": true}`)
+		if _, err := service.CopyFile(context.Background(), CopyFileOptions{
+			Profile:    dataProfile(),
+			FromRemote: "/src/a.txt",
+			ToRemote:   "/dir",
+			Overwrite:  true,
+		}); err != nil {
+			t.Fatalf("overwrite copy into a directory failed: %v", err)
+		}
+		stage, move := tempNameFor(t, copyCalls(t, recordPath))
+		if !strings.HasPrefix(stage, ":/dir/a.txt.ti-tmp-") || move != ":/dir/a.txt" {
+			t.Fatalf("stage = %q move = %q, want the resolved inner path", stage, move)
+		}
+	})
 }
 
 func TestDrive9CopyServerSideOverwriteWithoutExistingTargetCopiesOnce(t *testing.T) {
-	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
-	writeFakeStatSpec(t, map[string]bool{":/dir": true})
-
-	if _, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+	service, recordPath, _ := newStatefulCopyService(t)
+	t.Setenv("TI_FAKE_DRIVE9_STAT_SPEC", `{":/dir": true}`)
+	if _, err := service.CopyFile(context.Background(), CopyFileOptions{
 		Profile:    dataProfile(),
 		FromRemote: "/src/a.txt",
 		ToRemote:   "/dir",
@@ -137,77 +151,6 @@ func TestDrive9CopyServerSideOverwriteRejectsDirectoryTarget(t *testing.T) {
 		if args[1] == "cp" || args[1] == "mv" {
 			t.Fatalf("calls = %v, want no write when the destination is a directory", copyCalls(t, recordPath))
 		}
-	}
-}
-
-func TestDrive9CopyServerSideOverwriteNamesTheStagingPathWhenCleanupFails(t *testing.T) {
-	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
-	t.Setenv("TI_FAKE_DRIVE9_MV_FAIL", "1")
-	t.Setenv("TI_FAKE_DRIVE9_RM_FAIL", "1")
-	writeFakeStatSpec(t, map[string]bool{":/dst.txt": false})
-
-	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
-		Profile:    dataProfile(),
-		FromRemote: "/src/a.txt",
-		ToRemote:   "/dst.txt",
-		Overwrite:  true,
-	})
-	if apperr.CodeFor(err) != "fs.copy_staging_left_behind" {
-		t.Fatalf("copy error = %v, want fs.copy_staging_left_behind", err)
-	}
-	stage, _ := tempNameFor(t, copyCalls(t, recordPath))
-	stage = strings.TrimPrefix(stage, ":")
-	message := apperr.MessageFor(err)
-	if stage == "" || !strings.Contains(message, stage) {
-		t.Fatalf("error %q does not name the staging path %q", message, stage)
-	}
-	if !strings.Contains(message, "ti fs delete-file --path "+stage) {
-		t.Fatalf("error %q does not name the command that removes the staging file", message)
-	}
-	if !strings.Contains(message, ".ti-tmp-") {
-		t.Fatalf("error %q does not show the staging suffix", message)
-	}
-	if !strings.Contains(message, "needs delete on that path") {
-		t.Fatalf("error %q does not say the delete command needs delete", message)
-	}
-}
-
-// A staged copy that fails may still have created the node, so the cleanup runs
-// and the copy error stays the one the caller sees.
-func TestDrive9CopyServerSideOverwriteCleansUpAfterFailedStagedCopy(t *testing.T) {
-	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
-	t.Setenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL", "1")
-	writeFakeStatSpec(t, map[string]bool{":/dst.txt": false})
-
-	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
-		Profile:    dataProfile(),
-		FromRemote: "/src/a.txt",
-		ToRemote:   "/dst.txt",
-		Overwrite:  true,
-	})
-	if err == nil {
-		t.Fatal("copy succeeded although the staged copy failed")
-	}
-	if apperr.CodeFor(err) == "fs.copy_staging_left_behind" {
-		t.Fatalf("copy error = %v, want the copy failure rather than a cleanup note", err)
-	}
-	calls := copyCalls(t, recordPath)
-	for _, args := range calls {
-		if args[1] == "mv" {
-			t.Fatalf("calls = %v, want no move after a failed staged copy", calls)
-		}
-	}
-	staged, _ := tempNameFor(t, calls)
-	removed := false
-	for _, args := range calls {
-		if args[1] == "rm" && args[len(args)-1] == staged {
-			removed = true
-		}
-	}
-	if staged == "" || !removed {
-		t.Fatalf("calls = %v, want the staging path %q removed", calls, staged)
 	}
 }
 
@@ -250,13 +193,13 @@ func TestDrive9CopyServerSideOverwriteRefusesSelfCopy(t *testing.T) {
 	}
 }
 
+// The move failed and the staging file is still there, so the rename did not
+// apply; removing it leaves the move error as the one the caller sees.
 func TestDrive9CopyServerSideOverwriteCleansUpAfterFailedMove(t *testing.T) {
-	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service, recordPath, _ := newStatefulCopyService(t, "/dst.txt")
 	t.Setenv("TI_FAKE_DRIVE9_MV_FAIL", "1")
-	writeFakeStatSpec(t, map[string]bool{":/dst.txt": false})
 
-	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+	_, err := service.CopyFile(context.Background(), CopyFileOptions{
 		Profile:    dataProfile(),
 		FromRemote: "/src/a.txt",
 		ToRemote:   "/dst.txt",
@@ -265,62 +208,105 @@ func TestDrive9CopyServerSideOverwriteCleansUpAfterFailedMove(t *testing.T) {
 	if err == nil {
 		t.Fatal("copy succeeded although the move failed")
 	}
-	stage, _ := tempNameFor(t, copyCalls(t, recordPath))
-	if stage == "" {
-		t.Fatalf("calls = %v, want a staged copy before the move", copyCalls(t, recordPath))
+	if !strings.Contains(apperr.MessageFor(err), "fs mv: backend unavailable") {
+		t.Fatalf("copy error = %v, want the move error itself", err)
 	}
+	if apperr.CodeFor(err) == "fs.copy_staging_left_behind" || apperr.CodeFor(err) == "fs.copy_outcome_unknown" {
+		t.Fatalf("copy error = %v, want the move error when the staging file was removed", err)
+	}
+	stage, _ := tempNameFor(t, copyCalls(t, recordPath))
 	removed := false
 	for _, args := range copyCalls(t, recordPath) {
 		if args[1] == "rm" && args[len(args)-1] == stage {
 			removed = true
 		}
 	}
-	if !removed {
-		t.Fatalf("calls = %v, want the staged path removed after the failed move", copyCalls(t, recordPath))
-	}
-	if apperr.CodeFor(err) == "fs.copy_staging_left_behind" {
-		t.Fatalf("copy error = %v, want the move error when the cleanup succeeded", err)
+	if stage == "" || !removed {
+		t.Fatalf("calls = %v, want the staged path %q removed", copyCalls(t, recordPath), stage)
 	}
 }
 
-// The rename may be applied before its answer is lost: then the staging file is
-// already gone and the error has to say the outcome is unknown instead of
-// pointing at a delete command for a path that no longer exists.
-func TestDrive9CopyServerSideOverwriteReportsUnknownOutcome(t *testing.T) {
-	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
-	t.Setenv("TI_FAKE_DRIVE9_MV_FAIL", "1")
-	t.Setenv("TI_FAKE_DRIVE9_RM_NOT_FOUND", "1")
-	writeFakeStatSpec(t, map[string]bool{":/dst.txt": false})
+// A token without delete makes the service refuse `rm` before it looks the path
+// up, so a copy that created nothing must not be reported as a leftover: the
+// cleanup asks the service whether the staging file exists first.
+func TestDrive9CopyServerSideOverwriteNoLeftoverWhenNothingWasCreated(t *testing.T) {
+	service, _, _ := newStatefulCopyService(t, "/dst.txt")
+	t.Setenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL", "1")
+	t.Setenv("TI_FAKE_DRIVE9_DELETE_DENIED", "1")
 
-	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+	_, err := service.CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/src/missing.txt",
+		ToRemote:   "/dst.txt",
+		Overwrite:  true,
+	})
+	if err == nil {
+		t.Fatal("copy succeeded although it could not be staged")
+	}
+	if apperr.CodeFor(err) != "fs.companion_failed" {
+		t.Fatalf("copy error = %v, want the staged copy failure alone", err)
+	}
+}
+
+// The staging file was created and the cleanup was refused, so the leftover has
+// to be named with the command that removes it.
+func TestDrive9CopyServerSideOverwriteNamesTheStagingPathWhenCleanupFails(t *testing.T) {
+	service, recordPath, _ := newStatefulCopyService(t, "/dst.txt")
+	t.Setenv("TI_FAKE_DRIVE9_MV_FAIL", "1")
+	t.Setenv("TI_FAKE_DRIVE9_DELETE_DENIED", "1")
+
+	_, err := service.CopyFile(context.Background(), CopyFileOptions{
 		Profile:    dataProfile(),
 		FromRemote: "/src/a.txt",
 		ToRemote:   "/dst.txt",
 		Overwrite:  true,
 	})
-	if apperr.CodeFor(err) != "fs.copy_outcome_unknown" {
-		t.Fatalf("copy error = %v, want fs.copy_outcome_unknown", err)
+	if apperr.CodeFor(err) != "fs.copy_staging_left_behind" {
+		t.Fatalf("copy error = %v, want fs.copy_staging_left_behind", err)
 	}
+	stage, _ := tempNameFor(t, copyCalls(t, recordPath))
+	stage = strings.TrimPrefix(stage, ":")
 	message := apperr.MessageFor(err)
-	if !strings.Contains(message, "describe-file --path /dst.txt") {
-		t.Fatalf("error %q does not name the command that checks the destination", message)
+	if stage == "" || !strings.Contains(message, stage) {
+		t.Fatalf("error %q does not name the staging path %q", message, stage)
 	}
-	if strings.Contains(message, "delete-file") {
-		t.Fatalf("error %q points at a delete for a staging path that is already gone", message)
+	if !strings.Contains(message, "ti fs delete-file --path "+stage) {
+		t.Fatalf("error %q does not name the command that removes the staging file", message)
+	}
+	if !strings.Contains(message, ".ti-tmp-") {
+		t.Fatalf("error %q does not show the staging suffix", message)
+	}
+	if !strings.Contains(message, "needs delete on that path") {
+		t.Fatalf("error %q does not say the delete command needs delete", message)
 	}
 }
 
-// A staged copy that failed and whose cleanup was refused leaves a file behind;
-// that file has to be named like the failed-move case.
-func TestDrive9CopyServerSideOverwriteNamesStagingAfterFailedStagedCopy(t *testing.T) {
-	companion, recordPath := buildFakeDrive9(t)
-	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
-	t.Setenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL", "1")
-	t.Setenv("TI_FAKE_DRIVE9_RM_FAIL", "1")
-	writeFakeStatSpec(t, map[string]bool{":/dst.txt": false})
+// The staged copy may have created the node before it failed; the error stays the
+// copy's unless the cleanup leaves the file behind.
+func TestDrive9CopyServerSideOverwriteCleansUpAfterFailedStagedCopy(t *testing.T) {
+	service, _, _ := newStatefulCopyService(t, "/dst.txt")
+	t.Setenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL", "after-create")
 
-	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+	_, err := service.CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/src/a.txt",
+		ToRemote:   "/dst.txt",
+		Overwrite:  true,
+	})
+	if err == nil {
+		t.Fatal("copy succeeded although the staged copy failed")
+	}
+	if apperr.CodeFor(err) != "fs.companion_failed" {
+		t.Fatalf("copy error = %v, want the staged copy failure alone", err)
+	}
+}
+
+func TestDrive9CopyServerSideOverwriteNamesStagingAfterFailedStagedCopy(t *testing.T) {
+	service, recordPath, _ := newStatefulCopyService(t, "/dst.txt")
+	t.Setenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL", "after-create")
+	t.Setenv("TI_FAKE_DRIVE9_DELETE_DENIED", "1")
+
+	_, err := service.CopyFile(context.Background(), CopyFileOptions{
 		Profile:    dataProfile(),
 		FromRemote: "/src/a.txt",
 		ToRemote:   "/dst.txt",
@@ -333,6 +319,34 @@ func TestDrive9CopyServerSideOverwriteNamesStagingAfterFailedStagedCopy(t *testi
 	stage = strings.TrimPrefix(stage, ":")
 	if stage == "" || !strings.Contains(apperr.MessageFor(err), stage) {
 		t.Fatalf("error %q does not name the staging path %q", apperr.MessageFor(err), stage)
+	}
+}
+
+// The rename may be applied before its answer is lost: then the staging file is
+// already gone, the destination already holds the new bytes, and the error has to
+// say the outcome is unknown instead of pointing at a delete.
+func TestDrive9CopyServerSideOverwriteAppliedMoveLostAnswer(t *testing.T) {
+	service, _, _ := newStatefulCopyService(t, "/dst.txt")
+	t.Setenv("TI_FAKE_DRIVE9_MV_APPLIED_FAIL", "1")
+
+	_, err := service.CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/src/a.txt",
+		ToRemote:   "/dst.txt",
+		Overwrite:  true,
+	})
+	if apperr.CodeFor(err) != "fs.copy_outcome_unknown" {
+		t.Fatalf("copy error = %v, want fs.copy_outcome_unknown", err)
+	}
+	message := apperr.MessageFor(err)
+	if !strings.Contains(message, "/dst.txt") || !strings.Contains(message, "/src/a.txt") {
+		t.Fatalf("error %q does not name both paths", message)
+	}
+	if !strings.Contains(message, "re-run with --overwrite") {
+		t.Fatalf("error %q does not give the caller something to do", message)
+	}
+	if strings.Contains(message, "delete-file") {
+		t.Fatalf("error %q points at a delete for a staging path that is already gone", message)
 	}
 }
 
@@ -391,9 +405,9 @@ func assertSingleCopyCall(t *testing.T, recordPath string) {
 	}
 }
 
-// A local path spelled with a location scheme is resolved by the companion, not
-// by ti, so the literal-path probe would decide about a path the copy never
-// touches. Reject the spelling instead.
+// A local path spelled with a location scheme, or with the prefix the companion
+// reads as a drive9 path, is resolved by the companion, not by ti, so the
+// literal-path probe would decide about a path the copy never touches.
 func TestDrive9CopyRejectsSchemeSpelledLocalPaths(t *testing.T) {
 	for _, tc := range []struct {
 		name string
