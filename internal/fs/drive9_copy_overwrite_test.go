@@ -168,6 +168,9 @@ func TestDrive9CopyServerSideOverwriteNamesTheStagingPathWhenCleanupFails(t *tes
 	if !strings.Contains(message, ".ti-tmp-") {
 		t.Fatalf("error %q does not show the staging suffix", message)
 	}
+	if !strings.Contains(message, "needs delete on that path") {
+		t.Fatalf("error %q does not say the delete command needs delete", message)
+	}
 }
 
 // A staged copy that fails may still have created the node, so the cleanup runs
@@ -274,6 +277,62 @@ func TestDrive9CopyServerSideOverwriteCleansUpAfterFailedMove(t *testing.T) {
 	}
 	if !removed {
 		t.Fatalf("calls = %v, want the staged path removed after the failed move", copyCalls(t, recordPath))
+	}
+	if apperr.CodeFor(err) == "fs.copy_staging_left_behind" {
+		t.Fatalf("copy error = %v, want the move error when the cleanup succeeded", err)
+	}
+}
+
+// The rename may be applied before its answer is lost: then the staging file is
+// already gone and the error has to say the outcome is unknown instead of
+// pointing at a delete command for a path that no longer exists.
+func TestDrive9CopyServerSideOverwriteReportsUnknownOutcome(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_MV_FAIL", "1")
+	t.Setenv("TI_FAKE_DRIVE9_RM_NOT_FOUND", "1")
+	writeFakeStatSpec(t, map[string]bool{":/dst.txt": false})
+
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/src/a.txt",
+		ToRemote:   "/dst.txt",
+		Overwrite:  true,
+	})
+	if apperr.CodeFor(err) != "fs.copy_outcome_unknown" {
+		t.Fatalf("copy error = %v, want fs.copy_outcome_unknown", err)
+	}
+	message := apperr.MessageFor(err)
+	if !strings.Contains(message, "describe-file --path /dst.txt") {
+		t.Fatalf("error %q does not name the command that checks the destination", message)
+	}
+	if strings.Contains(message, "delete-file") {
+		t.Fatalf("error %q points at a delete for a staging path that is already gone", message)
+	}
+}
+
+// A staged copy that failed and whose cleanup was refused leaves a file behind;
+// that file has to be named like the failed-move case.
+func TestDrive9CopyServerSideOverwriteNamesStagingAfterFailedStagedCopy(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	t.Setenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL", "1")
+	t.Setenv("TI_FAKE_DRIVE9_RM_FAIL", "1")
+	writeFakeStatSpec(t, map[string]bool{":/dst.txt": false})
+
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/src/a.txt",
+		ToRemote:   "/dst.txt",
+		Overwrite:  true,
+	})
+	if apperr.CodeFor(err) != "fs.copy_staging_left_behind" {
+		t.Fatalf("copy error = %v, want fs.copy_staging_left_behind", err)
+	}
+	stage, _ := tempNameFor(t, copyCalls(t, recordPath))
+	stage = strings.TrimPrefix(stage, ":")
+	if stage == "" || !strings.Contains(apperr.MessageFor(err), stage) {
+		t.Fatalf("error %q does not name the staging path %q", apperr.MessageFor(err), stage)
 	}
 }
 

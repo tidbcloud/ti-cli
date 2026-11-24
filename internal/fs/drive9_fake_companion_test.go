@@ -245,6 +245,9 @@ func main() {
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "mv" && os.Getenv("TI_FAKE_DRIVE9_MV_FAIL") == "1":
 		fmt.Fprintln(os.Stderr, "fs mv: backend unavailable")
 		os.Exit(1)
+	case len(args) >= 2 && args[0] == "fs" && args[1] == "rm" && os.Getenv("TI_FAKE_DRIVE9_RM_NOT_FOUND") == "1":
+		fmt.Fprintln(os.Stderr, "fs rm: remote file not found")
+		os.Exit(1)
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "rm" && os.Getenv("TI_FAKE_DRIVE9_RM_FAIL") == "1":
 		fmt.Fprintln(os.Stderr, "fs rm: permission denied")
 		os.Exit(1)

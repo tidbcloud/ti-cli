@@ -483,8 +483,9 @@ func isDrive9ServerSideReplace(opts CopyFileOptions) bool {
 // the source to a sibling temporary path and then move it onto the destination:
 // the rename replaces the target in one datastore transaction, so a reader sees
 // either the old file or the complete new one, and a failed copy never touches
-// the destination. A failed move leaves only the temporary path, which is
-// removed on a best-effort basis.
+// the destination. A failure after the staged copy removes the staging file when
+// the token allows it; when it does not, the error names the file and the
+// command that deletes it.
 func (s Service) drive9CopyReplacingRemoteTarget(ctx context.Context, opts CopyFileOptions, args []string, source, target string) (FileOperationResult, error) {
 	destination, err := s.resolveDrive9RemoteCopyDestination(ctx, opts, drive9CopySourceRemote, source, target)
 	if err != nil {
@@ -500,7 +501,7 @@ func (s Service) drive9CopyReplacingRemoteTarget(ctx context.Context, opts CopyF
 		return FileOperationResult{}, apperr.New("fs.remote_copy_target_is_directory", "usage", 2, fmt.Sprintf("remote target %q is a directory; a server-side copy replaces files only - copy into it or delete it first", destination.Path))
 	}
 	if sameDrive9RemotePath(source, destination.Path) {
-		return FileOperationResult{}, apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q is the source path; copy to a different path instead", destination.Path))
+		return FileOperationResult{}, remoteTargetExistsError(source, destination.Path, drive9CopySourceRemote)
 	}
 	temporary := drive9CopyTempPath(destination.Path)
 	staged, _, _, stageErr := drive9CopyArgsForTarget(opts, temporary)
@@ -509,28 +510,62 @@ func (s Service) drive9CopyReplacingRemoteTarget(ctx context.Context, opts CopyF
 	}
 	if _, err := s.drive9RunTransientRetry(ctx, opts.Profile, staged, false); err != nil {
 		// The failed copy may have created the staging node before the error, so
-		// try to remove it; the copy error stays the one the caller sees.
-		_ = s.discardDrive9CopyStaging(ctx, opts, temporary)
+		// try to remove it; the copy error stays the one the caller sees unless
+		// the cleanup itself leaves something behind.
+		if outcome, cleanupErr := s.discardDrive9CopyStaging(ctx, opts, temporary); outcome == drive9StagingCleanupFailed {
+			return FileOperationResult{}, drive9StagingLeftoverError(fmt.Sprintf("copying to the staging path for %q", destination.Path), temporary, err, cleanupErr)
+		}
 		return FileOperationResult{}, err
 	}
 	if _, err := s.drive9Run(ctx, opts.Profile, []string{"fs", "mv", drive9Remote(temporary), drive9Remote(destination.Path)}, false); err != nil {
-		if cleanupErr := s.discardDrive9CopyStaging(ctx, opts, temporary); cleanupErr != nil {
-			// The token can read and write the directory but not delete in it, so
-			// the staging file survives. Say so and name the command that removes
-			// it; otherwise the next attempt silently piles up another one.
-			return FileOperationResult{}, apperr.Wrap("fs.copy_staging_left_behind", "runtime", 1, fmt.Sprintf("replace %q failed (%v) and the staging copy %q could not be removed (%v); delete it with `ti fs delete-file --path %s`", destination.Path, err, temporary, cleanupErr, temporary), err)
+		switch outcome, cleanupErr := s.discardDrive9CopyStaging(ctx, opts, temporary); outcome {
+		case drive9StagingCleanupRemoved:
+			return FileOperationResult{}, err
+		case drive9StagingCleanupAbsent:
+			// The staging copy existed a moment ago and is gone now: the server
+			// applied the rename and the answer was lost, so the destination may
+			// already hold the new bytes.
+			return FileOperationResult{}, apperr.Wrap("fs.copy_outcome_unknown", "runtime", 1, fmt.Sprintf("replacing %q reported %v and its staging copy is gone, so the copy may have been applied; check the destination with `ti fs describe-file --path %s`", destination.Path, err, destination.Path), err)
+		default:
+			return FileOperationResult{}, drive9StagingLeftoverError(fmt.Sprintf("replacing %q", destination.Path), temporary, err, cleanupErr)
 		}
-		return FileOperationResult{}, err
 	}
 	return FileOperationResult{Operation: "copy_file", SourcePath: source, TargetPath: target, Status: "copied"}, nil
 }
 
-// discardDrive9CopyStaging removes the staging path after a failed replace and
-// reports whether it could. A copy that never created the node also reports an
-// error here, so the caller treats "removed" and "never existed" alike.
-func (s Service) discardDrive9CopyStaging(ctx context.Context, opts CopyFileOptions, staging string) error {
-	_, err := s.drive9Run(ctx, opts.Profile, []string{"fs", "rm", drive9Remote(staging)}, false)
-	return err
+// drive9StagingCleanup is the outcome of removing a staging path after a failed
+// replace. "Absent" is not a failure: a copy that failed before it created the
+// node, and a rename that was applied before its answer was lost, both leave
+// nothing to remove, and the caller reads them differently.
+type drive9StagingCleanup int
+
+const (
+	drive9StagingCleanupRemoved drive9StagingCleanup = iota
+	drive9StagingCleanupAbsent
+	drive9StagingCleanupFailed
+)
+
+// discardDrive9CopyStaging removes the staging path. The removal is captured so
+// its error reaches the user only when the caller decides it matters: on the
+// "never created" path the companion's not-found line would otherwise be the
+// last thing printed before ti's own error.
+func (s Service) discardDrive9CopyStaging(ctx context.Context, opts CopyFileOptions, staging string) (drive9StagingCleanup, error) {
+	_, err := s.drive9Run(ctx, opts.Profile, []string{"fs", "rm", drive9Remote(staging)}, true)
+	switch {
+	case err == nil:
+		return drive9StagingCleanupRemoved, nil
+	case isDrive9NotFound(err):
+		return drive9StagingCleanupAbsent, nil
+	default:
+		return drive9StagingCleanupFailed, err
+	}
+}
+
+// drive9StagingLeftoverError names a staging file the replace could not remove
+// and the command that removes it. That command needs delete on the path, which
+// is exactly what the failed cleanup was refused, so the message says so.
+func drive9StagingLeftoverError(what, staging string, cause, cleanupErr error) error {
+	return apperr.Wrap("fs.copy_staging_left_behind", "runtime", 1, fmt.Sprintf("%s failed (%v) and the staging copy %q could not be removed (%v); delete it with `ti fs delete-file --path %s`, which needs delete on that path", what, cause, staging, cleanupErr, staging), cause)
 }
 
 // drive9CopyTempPath names the staging path next to the destination, so the
@@ -799,7 +834,9 @@ func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFi
 // type). That case must not offer a replacement: the destination is the file
 // being copied.
 func remoteTargetExistsError(source, target string, sourceKind drive9CopySourceKind) error {
-	if sameDrive9RemotePath(source, target) {
+	// Only a remote source shares the destination's namespace: a local absolute
+	// path can spell the same string without naming the same file.
+	if sourceKind == drive9CopySourceRemote && sameDrive9RemotePath(source, target) {
 		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q is the source path; copy to a different path instead", target))
 	}
 	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", target))

@@ -73,6 +73,24 @@ func TestDrive9CopyUploadRejectionStillOffersOverwrite(t *testing.T) {
 		t.Fatalf("upload refusal = %q, want the --overwrite advice", apperr.MessageFor(err))
 	}
 	assertNoCompanionCopy(t, recordPath)
+
+	// A local absolute path can spell the same string as the remote destination
+	// without naming the same file, so the refusal must not claim it is the
+	// source and must keep the advice that works.
+	_, err = testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:   dataProfile(),
+		FromLocal: "/workspace/existing.txt",
+		ToRemote:  "/workspace/existing.txt",
+	})
+	if apperr.CodeFor(err) != "fs.target_exists" {
+		t.Fatalf("same-spelling upload error = %v, want fs.target_exists", err)
+	}
+	if strings.Contains(apperr.MessageFor(err), "is the source path") {
+		t.Fatalf("same-spelling upload refusal %q claims the local path is the remote source", apperr.MessageFor(err))
+	}
+	if !strings.Contains(apperr.MessageFor(err), "pass --overwrite to replace it") {
+		t.Fatalf("same-spelling upload refusal %q lost the --overwrite advice", apperr.MessageFor(err))
+	}
 }
 
 func TestDrive9CopyRemoteToRemoteWithoutOverwriteAllowsAbsentTarget(t *testing.T) {
