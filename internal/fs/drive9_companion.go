@@ -685,8 +685,12 @@ func ensureDrive9LocalChildAbsent(dir, sourceName string) error {
 	if sourceName == "" {
 		return copyTargetRequiresName(dir)
 	}
-	trimmed := strings.TrimSuffix(strings.TrimSuffix(dir, "/"), string(os.PathSeparator))
-	return ensureLocalTargetCanWrite(filepath.Join(trimmed, sourceName), false, false)
+	// Join the directory exactly the way the companion does
+	// (filepath.Join(localPath, sourceBase) in resolveLocalCopyTarget). Join
+	// cleans a trailing separator itself; trimming them first turned a filesystem
+	// root into an empty string, so `--to-local /` probed a path relative to the
+	// working directory while the companion wrote /<name>.
+	return ensureLocalTargetCanWrite(filepath.Join(dir, sourceName), false, false)
 }
 
 // copyTargetRequiresName is the ti-owned spelling of the companion's

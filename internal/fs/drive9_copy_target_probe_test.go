@@ -3,8 +3,10 @@ package fs
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -310,6 +312,46 @@ func TestDrive9CopyRootDestinationJoinsSourceName(t *testing.T) {
 			t.Fatalf("copy error = %v, want fs.target_exists", err)
 		}
 	})
+}
+
+// The local root is a directory like any other: the companion joins
+// filepath.Join("/", base) and writes /<name>, so the probe must look there.
+// Trimming the separators first made the joined path relative, which probed the
+// working directory instead.
+func TestDrive9CopyIntoLocalRootProbesTheRootedPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a drive root is not a writable directory target on windows")
+	}
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	// The file name carries the test binary's pid so a stale /<name> cannot make
+	// the assertion order-dependent.
+	name := fmt.Sprintf("ti-root-probe-%d.md", os.Getpid())
+	cwd := t.TempDir()
+	if err := os.WriteFile(filepath.Join(cwd, name), []byte("decoy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(cwd)
+
+	if _, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/src/" + name,
+		ToLocal:    "/",
+	}); err != nil {
+		t.Fatalf("copy into the local root failed: %v (the probe looked at %q, not %q)", err, name, "/"+name)
+	}
+	var copies [][]string
+	for _, call := range readFakeDrive9Calls(t, recordPath) {
+		if hasArgPrefix(call.Args, []string{"fs", "cp"}) {
+			copies = append(copies, call.Args)
+		}
+	}
+	if len(copies) != 1 {
+		t.Fatalf("companion copies = %#v, want the delegated copy into /", copies)
+	}
+	if !containsArg(copies[0], "/") {
+		t.Fatalf("companion argv = %#v, want the destination to stay /", copies[0])
+	}
 }
 
 // A trailing-separator destination names a directory even when the path it names
