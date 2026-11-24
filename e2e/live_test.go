@@ -1340,6 +1340,33 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 	intoRemoteDirAgain.wantStderrContains("already exists; pass --overwrite to replace it")
 	intoRemoteDirAgain.wantStderrContains(intoRemoteDirPath + "/" + remoteBase)
 
+	// A server-side copy onto an existing path. ti refuses without --overwrite and
+	// says so; with it, the outcome is the service's, and the pinned server
+	// rejects the duplicate (the copy handler inserts a new node). Accept either
+	// answer, but never a lost destination: a service that replaces the path must
+	// show the source bytes, a service that refuses must leave the original
+	// bytes intact. This is the one --overwrite shape the live suite did not
+	// cover, and it is what decides the refusal wording.
+	overwriteTarget := rootPath + "/copy-overwrite.md"
+	overwriteOriginal := "original bytes for the overwrite probe\n"
+	overwriteSeed := filepath.Join(t.TempDir(), "copy-overwrite.md")
+	if err := os.WriteFile(overwriteSeed, []byte(overwriteOriginal), 0o644); err != nil {
+		t.Fatalf("write overwrite-probe seed: %v", err)
+	}
+	seedOverwriteTarget := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", overwriteSeed, "--to-remote", overwriteTarget)
+	seedOverwriteTarget.wantExitCode(0)
+	overwriteCopy := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", overwriteTarget, "--overwrite")
+	overwriteRead := runTI(t, bin, "--profile", profileName, "fs", "cat", "--path", overwriteTarget)
+	overwriteRead.wantExitCode(0)
+	switch {
+	case overwriteCopy.exitCode == 0:
+		if overwriteRead.stdout != fullContent {
+			overwriteCopy.fail("a server-side copy reported success but the destination does not hold the source bytes")
+		}
+	case overwriteRead.stdout != overwriteOriginal:
+		overwriteCopy.fail("a refused --overwrite copy changed the existing destination")
+	}
+
 	// A symlinked directory is a directory destination too (the companion stats
 	// through the link); skip on hosts without symlink support.
 	realDir := t.TempDir()

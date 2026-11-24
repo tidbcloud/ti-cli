@@ -41,6 +41,39 @@ func TestDrive9CopyRemoteToRemoteWithoutOverwriteRejectsExistingTarget(t *testin
 	if apperr.CodeFor(err) != "fs.target_exists" {
 		t.Fatalf("copy error = %v, want fs.target_exists", err)
 	}
+	// The server inserts a new node at the destination and rejects the duplicate
+	// path, so --overwrite cannot make this copy replace anything: the refusal
+	// must not send the caller after a flag that turns it into a server error.
+	message := apperr.MessageFor(err)
+	if strings.Contains(message, "--overwrite") {
+		t.Fatalf("server-side copy refusal %q offers --overwrite, which cannot replace the path", message)
+	}
+	if !strings.Contains(message, "server-side copy does not replace") {
+		t.Fatalf("server-side copy refusal = %q, want it to say a copy does not replace the path", message)
+	}
+	assertNoCompanionCopy(t, recordPath)
+}
+
+// An upload can replace the remote path, so the same probe keeps the flag advice.
+func TestDrive9CopyUploadRejectionStillOffersOverwrite(t *testing.T) {
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	local := filepath.Join(t.TempDir(), "local.txt")
+	if err := os.WriteFile(local, []byte("local"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := testCompanionService(t.TempDir(), companion).CopyFile(context.Background(), CopyFileOptions{
+		Profile:   dataProfile(),
+		FromLocal: local,
+		ToRemote:  "/workspace/existing.txt",
+	})
+	if apperr.CodeFor(err) != "fs.target_exists" {
+		t.Fatalf("copy error = %v, want fs.target_exists", err)
+	}
+	if !strings.Contains(apperr.MessageFor(err), "pass --overwrite to replace it") {
+		t.Fatalf("upload refusal = %q, want the --overwrite advice", apperr.MessageFor(err))
+	}
 	assertNoCompanionCopy(t, recordPath)
 }
 
