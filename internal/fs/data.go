@@ -760,7 +760,9 @@ func ensureLocalTargetCanWrite(localPath string, overwrite, createParents bool) 
 	if overwrite {
 		return nil
 	}
-	if _, err := os.Stat(localPath); err == nil {
+	// Lstat, not Stat: a dangling symlink at the target still makes os.Create
+	// write through it, so it must count as an existing target.
+	if _, err := os.Lstat(localPath); err == nil {
 		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("local target %q already exists; pass --overwrite to replace it", localPath))
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return apperr.Wrap("fs.stat_local_file", "runtime", 1, fmt.Sprintf("stat local file %q", localPath), err)

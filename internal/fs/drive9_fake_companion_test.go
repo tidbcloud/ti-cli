@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -262,6 +263,29 @@ func main() {
 		if os.Getenv("TI_FAKE_DRIVE9_STAT_NOT_FOUND") == "1" {
 			fmt.Fprintln(os.Stderr, "fs stat: remote file not found")
 			os.Exit(1)
+		}
+		if spec := os.Getenv("TI_FAKE_DRIVE9_STAT_SPEC"); spec != "" {
+			// Path-accurate stat for directory-destination tests: the spec maps
+			// ":/remote/path" to a bool meaning isdir. Anything absent is 404.
+			path := ""
+			for _, arg := range args[3:] {
+				if strings.HasPrefix(arg, ":/") {
+					path = arg
+					break
+				}
+			}
+			var entries map[string]bool
+			if err := json.Unmarshal([]byte(spec), &entries); err != nil {
+				fmt.Fprintln(os.Stderr, "fs stat: bad spec")
+				os.Exit(1)
+			}
+			isDir, ok := entries[path]
+			if !ok {
+				fmt.Fprintln(os.Stderr, "fs stat: remote file not found")
+				os.Exit(1)
+			}
+			_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"path": path, "size": 12, "isdir": isDir, "revision": 3})
+			return
 		}
 		if sequencePath := os.Getenv("TI_FAKE_DRIVE9_STAT_FAILURE_SEQUENCE"); sequencePath != "" {
 			if _, err := os.Stat(sequencePath); os.IsNotExist(err) {

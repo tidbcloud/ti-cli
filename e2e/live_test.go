@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	pathpkg "path"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -1295,6 +1296,87 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 	}
 	if string(downloaded) != fullContent {
 		t.Fatalf("downloaded file mismatch: got %q want %q", downloaded, fullContent)
+	}
+
+	// The --overwrite=false contract resolves a directory destination to
+	// dir/<base(source)>: the first copy lands there, the second is refused and
+	// names the path it would replace, and the first copy's bytes stay intact.
+	remoteBase := pathpkg.Base(movedPath)
+	localDir := t.TempDir()
+	intoLocalDir := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", localDir)
+	intoLocalDir.wantExitCode(0)
+	intoLocalDir.wantStdoutContains(`"status": "copied"`)
+	landed := filepath.Join(localDir, remoteBase)
+	landedBytes, err := os.ReadFile(landed)
+	if err != nil {
+		t.Fatalf("read copy landed in directory: %v", err)
+	}
+	if string(landedBytes) != fullContent {
+		t.Fatalf("copy landed in directory mismatch: got %q want %q", landedBytes, fullContent)
+	}
+	intoLocalDirAgain := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", localDir)
+	intoLocalDirAgain.wantExitCode(2)
+	intoLocalDirAgain.wantStderrContains("already exists; pass --overwrite to replace it")
+	intoLocalDirAgain.wantStderrContains(landed)
+	landedAfter, err := os.ReadFile(landed)
+	if err != nil {
+		t.Fatalf("re-read copy landed in directory: %v", err)
+	}
+	if string(landedAfter) != string(landedBytes) {
+		t.Fatalf("refused copy changed the existing file: got %q want %q", landedAfter, landedBytes)
+	}
+
+	// The same rule on the remote side. The destination has to be a different
+	// run-owned directory: moving into rootPath would resolve to the source's own
+	// path (movedPath is rootPath/<name>), which the rule refuses.
+	intoRemoteDirPath := rootPath + "/into-dir"
+	createIntoDir := runTI(t, bin, "--profile", profileName, "fs", "create-directory", "--path", intoRemoteDirPath)
+	createIntoDir.wantExitCode(0)
+	intoRemoteDir := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", intoRemoteDirPath)
+	intoRemoteDir.wantExitCode(0)
+	intoRemoteDir.wantStdoutContains(`"status": "copied"`)
+	intoRemoteDirAgain := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", intoRemoteDirPath)
+	intoRemoteDirAgain.wantExitCode(2)
+	intoRemoteDirAgain.wantStderrContains("already exists; a server-side copy does not replace an existing path")
+	intoRemoteDirAgain.wantStderrContains(intoRemoteDirPath + "/" + remoteBase)
+
+	// A server-side copy onto an existing path. ti refuses without --overwrite and
+	// says a copy does not replace an existing path; with --overwrite it stops
+	// probing and the service answers, and the pinned server rejects the
+	// duplicate (the copy handler inserts a new node). The live suite asserts
+	// that answer, because the refusal wording and the README state it as fact:
+	// if the deployed service replaces the destination instead, this step fails
+	// and that failure is the signal to change the sentence.
+	overwriteTarget := rootPath + "/copy-overwrite.md"
+	overwriteOriginal := "original bytes for the overwrite probe\n"
+	overwriteSeed := filepath.Join(t.TempDir(), "copy-overwrite.md")
+	if err := os.WriteFile(overwriteSeed, []byte(overwriteOriginal), 0o644); err != nil {
+		t.Fatalf("write overwrite-probe seed: %v", err)
+	}
+	seedOverwriteTarget := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-local", overwriteSeed, "--to-remote", overwriteTarget)
+	seedOverwriteTarget.wantExitCode(0)
+	overwriteCopy := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", overwriteTarget, "--overwrite")
+	if overwriteCopy.exitCode == 0 {
+		overwriteCopy.fail("a server-side copy replaced an existing path; the refusal wording and the README say it cannot, so the sentence has to change with the service")
+	}
+	overwriteRead := runTI(t, bin, "--profile", profileName, "fs", "cat", "--path", overwriteTarget)
+	overwriteRead.wantExitCode(0)
+	if overwriteRead.stdout != overwriteOriginal {
+		overwriteCopy.fail("a refused --overwrite copy changed the existing destination")
+	}
+
+	// A symlinked directory is a directory destination too (the companion stats
+	// through the link); skip on hosts without symlink support.
+	realDir := t.TempDir()
+	linkRoot := t.TempDir()
+	linkDir := filepath.Join(linkRoot, "link-dir")
+	if err := os.Symlink(realDir, linkDir); err == nil {
+		intoLinkDir := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-local", linkDir)
+		intoLinkDir.wantExitCode(0)
+		intoLinkDir.wantStdoutContains(`"status": "copied"`)
+		if _, err := os.Stat(filepath.Join(realDir, remoteBase)); err != nil {
+			t.Fatalf("symlinked directory copy did not land through the link: %v", err)
+		}
 	}
 
 	resumePath := filepath.Join(t.TempDir(), "resume.md")
