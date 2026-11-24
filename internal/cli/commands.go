@@ -1806,7 +1806,7 @@ func newFSCopyFileCommand(info version.Info) *cobra.Command {
 	cmd.Flags().String("to-remote", "", "The destination path in the TiDB Cloud file system.")
 	cmd.Flags().Bool("from-stdin", false, "Read from stdin and write to --to-remote.")
 	cmd.Flags().Bool("to-stdout", false, "Write --from-remote to stdout.")
-	cmd.Flags().Bool("overwrite", false, "Replace an existing destination file.")
+	cmd.Flags().Bool("overwrite", false, "Replace an existing destination: an upload or a download overwrites it, and a server-side copy replaces it by moving a completed copy onto it.")
 	cmd.Flags().Bool("create-parents", false, "Create missing local parent directories when copying from a TiDB Cloud file system.")
 	cmd.Flags().Bool("append", false, "Append a local file content to a file in the TiDB Cloud file system.")
 	cmd.Flags().Bool("recursive", false, "Copy directory structure recursively; cannot be combined with --layer-id. Seed a layer through a writable FUSE mount instead.")

@@ -3,11 +3,13 @@ package fs
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sort"
@@ -15,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/tidbcloud/ti-cli/internal/api/endpoints"
 	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/config"
@@ -437,6 +440,9 @@ func (s Service) drive9CopyFile(ctx context.Context, opts CopyFileOptions) (File
 			return FileOperationResult{}, apperr.Wrap("fs.create_local_parent", "runtime", 1, fmt.Sprintf("create parent directories for %q", opts.ToLocal), err)
 		}
 	}
+	if isDrive9ServerSideReplace(opts) {
+		return s.drive9CopyReplacingRemoteTarget(ctx, opts, args, source, target)
+	}
 	var runErr error
 	if opts.FromStdin || opts.ToStdout || opts.Append {
 		_, runErr = s.drive9Run(ctx, opts.Profile, args, false)
@@ -454,6 +460,66 @@ func (s Service) drive9CopyFile(ctx context.Context, opts CopyFileOptions) (File
 		status = "resumed"
 	}
 	return FileOperationResult{Operation: "copy_file", SourcePath: source, TargetPath: target, Status: status}, nil
+}
+
+// isDrive9ServerSideReplace reports whether this copy is the one shape the
+// server cannot do in a single request: a remote to remote copy that must
+// replace an existing destination. The other shapes replace natively (an upload
+// writes the path, a download creates the file) and their exemptions are
+// handled before this point.
+func isDrive9ServerSideReplace(opts CopyFileOptions) bool {
+	if !opts.Overwrite || opts.Append || opts.Resume || opts.Recursive {
+		return false
+	}
+	if strings.TrimSpace(opts.LayerID) != "" {
+		return false
+	}
+	return opts.FromRemote != "" && opts.ToRemote != ""
+}
+
+// drive9CopyReplacingRemoteTarget replaces an existing remote path. The
+// server's copy inserts a new node at the destination and the unique path index
+// rejects the duplicate, so --overwrite cannot be handed to the companion. Copy
+// the source to a sibling temporary path and then move it onto the destination:
+// the rename replaces the target in one datastore transaction, so a reader sees
+// either the old file or the complete new one, and a failed copy never touches
+// the destination. A failed move leaves only the temporary path, which is
+// removed on a best-effort basis.
+func (s Service) drive9CopyReplacingRemoteTarget(ctx context.Context, opts CopyFileOptions, args []string, source, target string) (FileOperationResult, error) {
+	destination, err := s.resolveDrive9RemoteCopyDestination(ctx, opts, drive9CopySourceRemote, source, target)
+	if err != nil {
+		return FileOperationResult{}, err
+	}
+	if !destination.Exists {
+		if _, err := s.drive9RunTransientRetry(ctx, opts.Profile, args, false); err != nil {
+			return FileOperationResult{}, err
+		}
+		return FileOperationResult{Operation: "copy_file", SourcePath: source, TargetPath: target, Status: "copied"}, nil
+	}
+	if destination.IsDir {
+		return FileOperationResult{}, apperr.New("fs.remote_copy_target_is_directory", "usage", 2, fmt.Sprintf("remote target %q is a directory; a server-side copy replaces files only - copy into it or delete it first", destination.Path))
+	}
+	temporary := drive9CopyTempPath(destination.Path)
+	staged, _, _, stageErr := drive9CopyArgsForTarget(opts, temporary)
+	if stageErr != nil {
+		return FileOperationResult{}, stageErr
+	}
+	if _, err := s.drive9RunTransientRetry(ctx, opts.Profile, staged, false); err != nil {
+		return FileOperationResult{}, err
+	}
+	if _, err := s.drive9Run(ctx, opts.Profile, []string{"fs", "mv", drive9Remote(temporary), drive9Remote(destination.Path)}, false); err != nil {
+		_, _ = s.drive9Run(ctx, opts.Profile, []string{"fs", "rm", drive9Remote(temporary)}, false)
+		return FileOperationResult{}, err
+	}
+	return FileOperationResult{Operation: "copy_file", SourcePath: source, TargetPath: target, Status: "copied"}, nil
+}
+
+// drive9CopyTempPath names the staging path next to the destination, so the
+// final move stays within one directory and needs no extra parent creation.
+func drive9CopyTempPath(target string) string {
+	buf := make([]byte, 4)
+	_, _ = rand.Read(buf)
+	return strings.TrimSuffix(target, "/") + ".ti-tmp-" + hex.EncodeToString(buf)
 }
 
 // drive9CopyTargetKind is the resolved destination class of a copy. The probe
@@ -504,7 +570,40 @@ func ValidateDrive9CopyRoute(opts CopyFileOptions) error {
 	if sources != 1 || destinations != 1 {
 		return apperr.New("fs.invalid_copy_flags", "usage", 2, "copy-file requires exactly one source/target pair")
 	}
+	// The companion resolves a location scheme itself (file:///path, /abs/path
+	// and drive9://path are all accepted), but ti probes local destinations as
+	// literal filesystem paths. A scheme spelling would therefore pass the probe
+	// (nothing exists at the literal string) and still write the parsed path,
+	// which is the overwrite ti is supposed to refuse. Reject the spelling
+	// instead of probing a path the companion will not use.
+	for _, field := range []struct {
+		flag  string
+		value string
+	}{
+		{flag: "--from-local", value: opts.FromLocal},
+		{flag: "--to-local", value: opts.ToLocal},
+	} {
+		if scheme := invalidLocalPathScheme(field.value); scheme != "" {
+			return apperr.New("fs.local_path_scheme_unsupported", "usage", 2, fmt.Sprintf("%s %q carries the URL scheme %q; pass a plain filesystem path", field.flag, field.value, scheme))
+		}
+	}
 	return nil
+}
+
+// invalidLocalPathScheme returns the scheme of a local path spelling the
+// companion would resolve itself, or "" when the value is a plain path.
+// A single-letter scheme is a Windows drive letter, and an opaque URL
+// ("a:b") is a legal file name on the platforms that matter here.
+func invalidLocalPathScheme(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed.Scheme == "" || parsed.Opaque != "" || len(parsed.Scheme) == 1 {
+		return ""
+	}
+	return parsed.Scheme
 }
 
 // resolveDrive9CopyRoute resolves the single source/target pair a copy names.
@@ -598,50 +697,70 @@ func (s Service) ensureDrive9CopyTargetAbsent(ctx context.Context, opts CopyFile
 	if err != nil {
 		return err
 	}
-	sourceName := drive9CopySourceName(sourceKind, source)
 	switch kind {
 	case drive9CopyTargetRemote:
 		if strings.TrimSpace(opts.LayerID) != "" {
 			return nil
 		}
-		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, source, target, sourceKind, sourceName)
+		return s.ensureDrive9RemoteTargetAbsent(ctx, opts, source, target, sourceKind)
 	case drive9CopyTargetLocal:
-		return ensureDrive9LocalCopyTargetAbsent(target, sourceName)
+		return ensureDrive9LocalCopyTargetAbsent(target, drive9CopySourceName(sourceKind, source))
 	}
 	return nil
 }
 
-func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, source, target string, sourceKind drive9CopySourceKind, sourceName string) error {
-	// Mirror resolveRemoteCopyTarget: a trailing separator names a directory and
-	// the companion joins <target>/<base(source)> without stat'ing the target.
-	// The route already normalized the path, so it is used as-is here.
+// drive9RemoteCopyDestination is the remote path a copy will actually write,
+// after the directory rule is applied (dir/<base(source)>).
+type drive9RemoteCopyDestination struct {
+	Path   string
+	Exists bool
+	IsDir  bool
+}
+
+// resolveDrive9RemoteCopyDestination mirrors the companion's destination rule:
+// a path with a trailing separator names a directory, an existing directory
+// receives <dir>/<base(source)>, and anything else is written as named. The
+// probe and the --overwrite replace both consume this, so neither can disagree
+// with the other about what path the copy touches.
+func (s Service) resolveDrive9RemoteCopyDestination(ctx context.Context, opts CopyFileOptions, sourceKind drive9CopySourceKind, source, target string) (drive9RemoteCopyDestination, error) {
+	sourceName := drive9CopySourceName(sourceKind, source)
 	if strings.HasSuffix(target, "/") {
-		return s.ensureDrive9RemoteChildAbsent(ctx, opts, source, target, sourceKind, sourceName)
+		return s.resolveDrive9RemoteCopyChild(ctx, opts, target, sourceName)
 	}
 	metadata, exists, err := s.drive9StatTarget(ctx, opts.Profile, target)
 	if err != nil {
-		return err
+		return drive9RemoteCopyDestination{}, err
 	}
 	if !exists {
-		return nil
+		return drive9RemoteCopyDestination{Path: target}, nil
 	}
-	if metadata.IsDir {
-		return s.ensureDrive9RemoteChildAbsent(ctx, opts, source, target, sourceKind, sourceName)
+	if !metadata.IsDir {
+		return drive9RemoteCopyDestination{Path: target, Exists: true}, nil
 	}
-	return remoteTargetExistsError(source, target, sourceKind)
+	return s.resolveDrive9RemoteCopyChild(ctx, opts, target, sourceName)
 }
 
-func (s Service) ensureDrive9RemoteChildAbsent(ctx context.Context, opts CopyFileOptions, source, dir string, sourceKind drive9CopySourceKind, sourceName string) error {
+func (s Service) resolveDrive9RemoteCopyChild(ctx context.Context, opts CopyFileOptions, dir, sourceName string) (drive9RemoteCopyDestination, error) {
 	if sourceName == "" {
-		return copyTargetRequiresName(dir)
+		return drive9RemoteCopyDestination{}, copyTargetRequiresName(dir)
 	}
-	probed := strings.TrimSuffix(dir, "/") + "/" + sourceName
-	if _, exists, err := s.drive9StatTarget(ctx, opts.Profile, probed); err != nil {
+	child := strings.TrimSuffix(dir, "/") + "/" + sourceName
+	metadata, exists, err := s.drive9StatTarget(ctx, opts.Profile, child)
+	if err != nil {
+		return drive9RemoteCopyDestination{}, err
+	}
+	return drive9RemoteCopyDestination{Path: child, Exists: exists, IsDir: exists && metadata.IsDir}, nil
+}
+
+func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFileOptions, source, target string, sourceKind drive9CopySourceKind) error {
+	destination, err := s.resolveDrive9RemoteCopyDestination(ctx, opts, sourceKind, source, target)
+	if err != nil {
 		return err
-	} else if !exists {
+	}
+	if !destination.Exists {
 		return nil
 	}
-	return remoteTargetExistsError(source, probed, sourceKind)
+	return remoteTargetExistsError(source, destination.Path, sourceKind)
 }
 
 // remoteTargetExistsError words the --overwrite=false refusal for the direction.
@@ -1784,6 +1903,13 @@ func (s Service) mountLocatorProfile(base *config.Profile, mountPath string) (mo
 }
 
 func drive9CopyArgs(opts CopyFileOptions) ([]string, string, string, error) {
+	return drive9CopyArgsForTarget(opts, "")
+}
+
+// drive9CopyArgsForTarget builds the companion argv for a copy. targetOverride
+// is used by the server-side --overwrite replace, which copies to a sibling
+// temporary path first; every other caller passes "".
+func drive9CopyArgsForTarget(opts CopyFileOptions, targetOverride string) ([]string, string, string, error) {
 	if opts.Recursive && strings.TrimSpace(opts.LayerID) != "" {
 		return nil, "", "", apperr.New("fs.recursive_layer_copy_unsupported", "usage", 2, "--recursive cannot be combined with --layer-id; mount the layer with --driver fuse and copy the directory through the mounted path")
 	}
@@ -1805,6 +1931,12 @@ func drive9CopyArgs(opts CopyFileOptions) ([]string, string, string, error) {
 	kind, sourceKind, source, target, err := resolveDrive9CopyRoute(opts)
 	if err != nil {
 		return nil, "", "", err
+	}
+	if targetOverride != "" {
+		if kind != drive9CopyTargetRemote || sourceKind != drive9CopySourceRemote {
+			return nil, "", "", apperr.New("fs.invalid_copy_flags", "usage", 2, "a retargeted copy must be a remote to remote copy")
+		}
+		target = targetOverride
 	}
 	switch kind {
 	case drive9CopyTargetRemote:
