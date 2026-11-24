@@ -44,15 +44,10 @@ func TestDrive9CopyRemoteToRemoteWithoutOverwriteRejectsExistingTarget(t *testin
 	if apperr.CodeFor(err) != "fs.target_exists" {
 		t.Fatalf("copy error = %v, want fs.target_exists", err)
 	}
-	// The server inserts a new node at the destination and rejects the duplicate
-	// path, so --overwrite cannot make this copy replace anything: the refusal
-	// must not send the caller after a flag that turns it into a server error.
-	message := apperr.MessageFor(err)
-	if strings.Contains(message, "--overwrite") {
-		t.Fatalf("server-side copy refusal %q offers --overwrite, which cannot replace the path", message)
-	}
-	if !strings.Contains(message, "server-side copy does not replace") {
-		t.Fatalf("server-side copy refusal = %q, want it to say a copy does not replace the path", message)
+	// Every direction can be replaced now, so the refusal points at the flag; the
+	// server-side replace stages a copy and renames it onto the destination.
+	if !strings.Contains(apperr.MessageFor(err), "pass --overwrite to replace it") {
+		t.Fatalf("server-side copy refusal = %q, want the --overwrite advice", apperr.MessageFor(err))
 	}
 	assertNoCompanionCopy(t, recordPath)
 }
@@ -126,10 +121,9 @@ func TestDrive9CopyIntoExistingRemoteDirectoryProbesTheInnerPath(t *testing.T) {
 		if !strings.Contains(message, "/workspace/README.md") {
 			t.Fatalf("error %q does not name the resolved path", message)
 		}
-		// The source is remote, so the refusal is about a copy: CI pins the
-		// sentence the live suite asserts.
-		if !strings.Contains(message, "a server-side copy does not replace an existing path") {
-			t.Fatalf("error %q does not carry the server-side-copy sentence", message)
+		// The source is remote, so CI pins the sentence the live suite asserts.
+		if !strings.Contains(message, "pass --overwrite to replace it") {
+			t.Fatalf("error %q does not carry the --overwrite advice", message)
 		}
 	})
 }

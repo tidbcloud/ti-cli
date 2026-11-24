@@ -1337,7 +1337,7 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 	intoRemoteDir.wantStdoutContains(`"status": "copied"`)
 	intoRemoteDirAgain := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", intoRemoteDirPath)
 	intoRemoteDirAgain.wantExitCode(2)
-	intoRemoteDirAgain.wantStderrContains("already exists; a server-side copy does not replace an existing path")
+	intoRemoteDirAgain.wantStderrContains("already exists; pass --overwrite to replace it")
 	intoRemoteDirAgain.wantStderrContains(intoRemoteDirPath + "/" + remoteBase)
 
 	// A server-side copy onto an existing path. Without --overwrite ti refuses
@@ -1355,14 +1355,21 @@ func testLiveFSDataPlaneContinuation(t *testing.T, bin, profileName, rootPath, s
 	seedOverwriteTarget.wantExitCode(0)
 	refusedOverwrite := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", overwriteTarget)
 	refusedOverwrite.wantExitCode(2)
-	refusedOverwrite.wantStderrContains("already exists; a server-side copy does not replace an existing path")
+	refusedOverwrite.wantStderrContains("already exists; pass --overwrite to replace it")
 	overwriteCopy := runTI(t, bin, "--profile", profileName, "fs", "copy-file", "--from-remote", movedPath, "--to-remote", overwriteTarget, "--overwrite")
 	overwriteCopy.wantExitCode(0)
 	overwriteCopy.wantStdoutContains(`"status": "copied"`)
 	overwriteRead := runTI(t, bin, "--profile", profileName, "fs", "cat", "--path", overwriteTarget)
 	overwriteRead.wantExitCode(0)
 	if overwriteRead.stdout != fullContent {
-		overwriteCopy.fail("the --overwrite server-side copy did not replace the destination with the source bytes")
+		overwriteRead.fail("the --overwrite server-side copy did not replace the destination: got %q want %q", overwriteRead.stdout, fullContent)
+	}
+	// The replace stages a sibling and renames it onto the destination, so a
+	// successful run must not leave that sibling behind.
+	overwriteListing := runTI(t, bin, "--profile", profileName, "fs", "list-files", "--path", rootPath)
+	overwriteListing.wantExitCode(0)
+	if strings.Contains(overwriteListing.stdout, ".ti-tmp-") {
+		overwriteListing.fail("the --overwrite server-side copy left its staging entry in the directory")
 	}
 
 	// A symlinked directory is a directory destination too (the companion stats

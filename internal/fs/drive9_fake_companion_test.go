@@ -245,6 +245,12 @@ func main() {
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "mv" && os.Getenv("TI_FAKE_DRIVE9_MV_FAIL") == "1":
 		fmt.Fprintln(os.Stderr, "fs mv: backend unavailable")
 		os.Exit(1)
+	case len(args) >= 2 && args[0] == "fs" && args[1] == "rm" && os.Getenv("TI_FAKE_DRIVE9_RM_FAIL") == "1":
+		fmt.Fprintln(os.Stderr, "fs rm: permission denied")
+		os.Exit(1)
+	case len(args) >= 2 && args[0] == "fs" && args[1] == "cp" && os.Getenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL") == "1" && strings.Contains(args[len(args)-1], ".ti-tmp-"):
+		fmt.Fprintln(os.Stderr, "fs cp: backend unavailable")
+		os.Exit(1)
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "cp" && os.Getenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE") != "":
 		sequencePath := os.Getenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE")
 		if _, err := os.Stat(sequencePath); os.IsNotExist(err) {

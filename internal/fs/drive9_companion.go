@@ -499,19 +499,38 @@ func (s Service) drive9CopyReplacingRemoteTarget(ctx context.Context, opts CopyF
 	if destination.IsDir {
 		return FileOperationResult{}, apperr.New("fs.remote_copy_target_is_directory", "usage", 2, fmt.Sprintf("remote target %q is a directory; a server-side copy replaces files only - copy into it or delete it first", destination.Path))
 	}
+	if sameDrive9RemotePath(source, destination.Path) {
+		return FileOperationResult{}, apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q is the source path; copy to a different path instead", destination.Path))
+	}
 	temporary := drive9CopyTempPath(destination.Path)
 	staged, _, _, stageErr := drive9CopyArgsForTarget(opts, temporary)
 	if stageErr != nil {
 		return FileOperationResult{}, stageErr
 	}
 	if _, err := s.drive9RunTransientRetry(ctx, opts.Profile, staged, false); err != nil {
+		// The failed copy may have created the staging node before the error, so
+		// try to remove it; the copy error stays the one the caller sees.
+		_ = s.discardDrive9CopyStaging(ctx, opts, temporary)
 		return FileOperationResult{}, err
 	}
 	if _, err := s.drive9Run(ctx, opts.Profile, []string{"fs", "mv", drive9Remote(temporary), drive9Remote(destination.Path)}, false); err != nil {
-		_, _ = s.drive9Run(ctx, opts.Profile, []string{"fs", "rm", drive9Remote(temporary)}, false)
+		if cleanupErr := s.discardDrive9CopyStaging(ctx, opts, temporary); cleanupErr != nil {
+			// The token can read and write the directory but not delete in it, so
+			// the staging file survives. Say so and name the command that removes
+			// it; otherwise the next attempt silently piles up another one.
+			return FileOperationResult{}, apperr.Wrap("fs.copy_staging_left_behind", "runtime", 1, fmt.Sprintf("replace %q failed (%v) and the staging copy %q could not be removed (%v); delete it with `ti fs delete-file --path %s`", destination.Path, err, temporary, cleanupErr, temporary), err)
+		}
 		return FileOperationResult{}, err
 	}
 	return FileOperationResult{Operation: "copy_file", SourcePath: source, TargetPath: target, Status: "copied"}, nil
+}
+
+// discardDrive9CopyStaging removes the staging path after a failed replace and
+// reports whether it could. A copy that never created the node also reports an
+// error here, so the caller treats "removed" and "never existed" alike.
+func (s Service) discardDrive9CopyStaging(ctx context.Context, opts CopyFileOptions, staging string) error {
+	_, err := s.drive9Run(ctx, opts.Profile, []string{"fs", "rm", drive9Remote(staging)}, false)
+	return err
 }
 
 // drive9CopyTempPath names the staging path next to the destination, so the
@@ -570,12 +589,12 @@ func ValidateDrive9CopyRoute(opts CopyFileOptions) error {
 	if sources != 1 || destinations != 1 {
 		return apperr.New("fs.invalid_copy_flags", "usage", 2, "copy-file requires exactly one source/target pair")
 	}
-	// The companion resolves a location scheme itself (file:///path, /abs/path
-	// and drive9://path are all accepted), but ti probes local destinations as
-	// literal filesystem paths. A scheme spelling would therefore pass the probe
-	// (nothing exists at the literal string) and still write the parsed path,
-	// which is the overwrite ti is supposed to refuse. Reject the spelling
-	// instead of probing a path the companion will not use.
+	// The companion resolves a location scheme itself and treats a ":" prefix as
+	// a drive9 path, but ti probes local destinations as literal filesystem
+	// paths. Either spelling would therefore pass the probe (nothing exists at
+	// the literal string) and still write somewhere else, which is the overwrite
+	// ti is supposed to refuse. Reject the spelling instead of probing a path the
+	// companion will not use.
 	for _, field := range []struct {
 		flag  string
 		value string
@@ -583,7 +602,14 @@ func ValidateDrive9CopyRoute(opts CopyFileOptions) error {
 		{flag: "--from-local", value: opts.FromLocal},
 		{flag: "--to-local", value: opts.ToLocal},
 	} {
-		if scheme := invalidLocalPathScheme(field.value); scheme != "" {
+		value := strings.TrimSpace(field.value)
+		if value == "" {
+			continue
+		}
+		if strings.HasPrefix(value, ":") {
+			return apperr.New("fs.local_path_scheme_unsupported", "usage", 2, fmt.Sprintf("%s %q is a drive9 path; pass a local filesystem path", field.flag, field.value))
+		}
+		if scheme := invalidLocalPathScheme(value); scheme != "" {
 			return apperr.New("fs.local_path_scheme_unsupported", "usage", 2, fmt.Sprintf("%s %q carries the URL scheme %q; pass a plain filesystem path", field.flag, field.value, scheme))
 		}
 	}
@@ -763,25 +789,20 @@ func (s Service) ensureDrive9RemoteTargetAbsent(ctx context.Context, opts CopyFi
 	return remoteTargetExistsError(source, destination.Path, sourceKind)
 }
 
-// remoteTargetExistsError words the --overwrite=false refusal for the direction.
-// An upload replaces the remote path when --overwrite is given, and a download
-// creates the local file, so both can point at the flag. A server-side copy
-// cannot: the server inserts a new node at the destination and its unique path
-// index rejects the duplicate, so --overwrite would only turn a clear refusal
-// into a server error, and the advice has to be to use a new path.
+// remoteTargetExistsError words the --overwrite=false refusal. Every direction
+// can be replaced now: an upload writes the remote path, a download creates the
+// local file, and a server-side copy is staged and renamed onto the destination
+// (see drive9CopyReplacingRemoteTarget), so the advice is the same everywhere.
 //
 // A directory destination resolves to <dir>/<base(source)>, which can be the
 // source itself (`--from-remote /dir/a --to-remote /dir` is an easy thing to
-// type). That case must not advise deleting the destination: the destination is
-// the file being copied.
+// type). That case must not offer a replacement: the destination is the file
+// being copied.
 func remoteTargetExistsError(source, target string, sourceKind drive9CopySourceKind) error {
-	if sourceKind != drive9CopySourceRemote {
-		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", target))
-	}
 	if sameDrive9RemotePath(source, target) {
 		return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q is the source path; copy to a different path instead", target))
 	}
-	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; a server-side copy does not replace an existing path, so copy to a new path or delete it first", target))
+	return apperr.New("fs.target_exists", "usage", 2, fmt.Sprintf("remote target %q already exists; pass --overwrite to replace it", target))
 }
 
 // sameDrive9RemotePath reports whether two resolved drive9 paths name the same
