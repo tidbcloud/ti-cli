@@ -34,3 +34,16 @@ func TestParentCancellationIsNotAProcessSignal(t *testing.T) {
 		t.Fatalf("cause=%v error=%v", context.Cause(ctx), ctx.Err())
 	}
 }
+
+// NotifyStop is the registration for work that runs after an earlier signal
+// cancelled its context (a cleanup): it must not receive anything that was
+// delivered before it registered, and it must receive what comes after.
+func TestNotifyStopStartsEmpty(t *testing.T) {
+	signals, stop := NotifyStop()
+	defer stop()
+	select {
+	case sig := <-signals:
+		t.Fatalf("NotifyStop delivered %v before it registered anything", sig)
+	case <-time.After(50 * time.Millisecond):
+	}
+}

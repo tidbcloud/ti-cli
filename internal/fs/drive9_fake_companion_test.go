@@ -242,6 +242,126 @@ func main() {
 		}
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "cat":
 		fmt.Fprint(os.Stdout, "file bytes")
+	case len(args) >= 2 && args[0] == "fs" && os.Getenv("TI_FAKE_DRIVE9_STATE_DIR") != "":
+		// Stateful mode: the fake keeps the set of remote paths it has created, so
+		// a test can express "the staging file was never created", "it was created
+		// and then the cleanup was refused", and "the rename applied but its
+		// answer was lost". The static stat spec is still consulted for paths the
+		// state does not know.
+		stateFile := filepath.Join(os.Getenv("TI_FAKE_DRIVE9_STATE_DIR"), "paths")
+		readState := func() []string {
+			data, err := os.ReadFile(stateFile)
+			if err != nil {
+				return nil
+			}
+			return strings.Fields(string(data))
+		}
+		writeState := func(paths []string) {
+			_ = os.WriteFile(stateFile, []byte(strings.Join(paths, "\n")), 0600)
+		}
+		hasPath := func(path string) bool {
+			for _, known := range readState() {
+				if known == path {
+					return true
+				}
+			}
+			return false
+		}
+		strip := func(value string) string { return strings.TrimPrefix(value, ":") }
+		switch args[1] {
+		case "stat":
+			path := strip(args[len(args)-1])
+			// The value is a path fragment: the token can read the destination and
+			// not the staging sibling.
+			if denied := os.Getenv("TI_FAKE_DRIVE9_STAT_DENIED"); denied != "" && strings.Contains(path, denied) {
+				fmt.Fprintln(os.Stderr, "fs stat: fs access denied")
+				os.Exit(1)
+			}
+			if hang := os.Getenv("TI_FAKE_DRIVE9_STAT_HANG"); hang != "" && strings.Contains(path, hang) {
+				ms, _ := strconv.Atoi(os.Getenv("TI_FAKE_DRIVE9_STAT_HANG_MS"))
+				time.Sleep(time.Duration(ms) * time.Millisecond)
+			}
+			if hasPath(path) {
+				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"path": path, "size": 3, "isdir": false, "revision": 1})
+				return
+			}
+			if spec := os.Getenv("TI_FAKE_DRIVE9_STAT_SPEC"); spec != "" {
+				var entries map[string]bool
+				_ = json.Unmarshal([]byte(spec), &entries)
+				if isDir, ok := entries[":"+path]; ok {
+					_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"path": path, "size": 0, "isdir": isDir, "revision": 1})
+					return
+				}
+			}
+			fmt.Fprintln(os.Stderr, "fs stat: remote file not found")
+			os.Exit(1)
+		case "cp":
+			target := strip(args[len(args)-1])
+			if strings.Contains(target, ".ti-tmp-") {
+				switch os.Getenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL") {
+				case "1":
+					fmt.Fprintln(os.Stderr, "fs cp: backend unavailable")
+					os.Exit(1)
+				case "after-create":
+					writeState(append(readState(), target))
+					fmt.Fprintln(os.Stderr, "fs cp: backend unavailable")
+					os.Exit(1)
+				}
+			}
+			writeState(append(readState(), target))
+			fmt.Fprintf(os.Stdout, "copied %s\n", target)
+			return
+		case "mv":
+			src := strip(args[2])
+			dst := strip(args[3])
+			applied := os.Getenv("TI_FAKE_DRIVE9_MV_APPLIED_FAIL") == "1"
+			if !applied && os.Getenv("TI_FAKE_DRIVE9_MV_FAIL") == "1" {
+				fmt.Fprintln(os.Stderr, "fs mv: backend unavailable")
+				os.Exit(1)
+			}
+			next := []string{}
+			for _, known := range readState() {
+				if known != src {
+					next = append(next, known)
+				}
+			}
+			writeState(append(next, dst))
+			if applied {
+				fmt.Fprintln(os.Stderr, "fs mv: backend unavailable")
+				os.Exit(1)
+			}
+			fmt.Fprintf(os.Stdout, "moved %s -> %s\n", src, dst)
+			return
+		case "rm":
+			if os.Getenv("TI_FAKE_DRIVE9_REMOVE_VANISHED") == "1" {
+				// The file was there for the look and gone for the removal.
+				fmt.Fprintln(os.Stderr, "fs rm: remote file not found")
+				os.Exit(1)
+			}
+			if os.Getenv("TI_FAKE_DRIVE9_DELETE_DENIED") == "1" {
+				// The service authorizes DELETE before it looks the path up.
+				fmt.Fprintln(os.Stderr, "fs rm: fs access denied")
+				os.Exit(1)
+			}
+			path := strip(args[len(args)-1])
+			if os.Getenv("TI_FAKE_DRIVE9_RM_FAIL") == "1" {
+				fmt.Fprintln(os.Stderr, "fs rm: permission denied")
+				os.Exit(1)
+			}
+			if !hasPath(path) {
+				fmt.Fprintln(os.Stderr, "fs rm: remote file not found")
+				os.Exit(1)
+			}
+			next := []string{}
+			for _, known := range readState() {
+				if known != path {
+					next = append(next, known)
+				}
+			}
+			writeState(next)
+			fmt.Fprintln(os.Stdout, "removed")
+			return
+		}
 	case len(args) >= 2 && args[0] == "fs" && args[1] == "cp" && os.Getenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE") != "":
 		sequencePath := os.Getenv("TI_FAKE_DRIVE9_CP_FAILURE_SEQUENCE")
 		if _, err := os.Stat(sequencePath); os.IsNotExist(err) {
