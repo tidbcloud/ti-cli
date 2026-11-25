@@ -600,3 +600,27 @@ func TestDrive9CopyFailureRemovalAnswersNotFoundAfterTheLook(t *testing.T) {
 		}
 	})
 }
+
+// A 404 the client could not parse as the API's JSON error is rendered as
+// "HTTP 404: <body>"; that body comes from whatever answered the request, so it
+// must not read as "the file is absent" even when it says "not found".
+func TestIsDrive9NotFoundIgnoresTransportStatusBodies(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "nil", err: nil, want: false},
+		{name: "api message", err: errors.New("fs stat: remote file not found"), want: true},
+		{name: "api message with code", err: errors.New("description not found"), want: true},
+		{name: "gateway html page", err: errors.New("fs stat: HTTP 404: <html><title>Not Found</title></html>"), want: false},
+		{name: "proxy json page", err: errors.New("HTTP 404: {\"error\":\"not found\"}"), want: false},
+		{name: "server error page", err: errors.New("fs cp: HTTP 502: Bad Gateway"), want: false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isDrive9NotFound(tc.err); got != tc.want {
+				t.Fatalf("isDrive9NotFound(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}

@@ -6,7 +6,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/signal"
 	"sort"
 	"strings"
 	"syscall"
@@ -17,6 +16,7 @@ import (
 	apifs "github.com/tidbcloud/ti-cli/internal/api/fs"
 	"github.com/tidbcloud/ti-cli/internal/apperr"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountstate"
+	"github.com/tidbcloud/ti-cli/internal/interrupt"
 )
 
 func (s Service) mountVaultForeground(ctx context.Context, inputs vaultMountInputs, checks []MountRuntimeCheck) (MountResult, error) {
@@ -57,9 +57,8 @@ func (s Service) mountVaultForeground(ctx context.Context, inputs vaultMountInpu
 		_ = mountstate.Remove(inputs.homeDir, inputs.mountPath)
 	}()
 
-	signalCh := make(chan os.Signal, 2)
-	signal.Notify(signalCh, syscall.SIGINT, syscall.SIGTERM)
-	defer signal.Stop(signalCh)
+	signalCh, stopSignals := interrupt.NotifyStop()
+	defer stopSignals()
 	go func() {
 		select {
 		case <-ctx.Done():

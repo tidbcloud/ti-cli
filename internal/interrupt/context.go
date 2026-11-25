@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"sync"
+	"syscall"
 )
 
 type signalsKey struct{}
@@ -72,4 +73,16 @@ func Signals(ctx context.Context) <-chan os.Signal {
 func FromSignal(ctx context.Context) bool {
 	_, ok := context.Cause(ctx).(signalCause)
 	return ok
+}
+
+// NotifyStop registers a fresh SIGINT/SIGTERM channel and returns it with a stop
+// function that unregisters it. Code that runs because an earlier signal
+// cancelled its context - a cleanup after an interrupted command - must use this
+// instead of Signals(ctx): that channel already holds the earlier signal, so
+// selecting on it would fire immediately. A signal delivered after this call
+// still stops the work.
+func NotifyStop() (<-chan os.Signal, func()) {
+	signalCh := make(chan os.Signal, 2)
+	signal.Notify(signalCh, os.Interrupt, syscall.SIGTERM)
+	return signalCh, func() { signal.Stop(signalCh) }
 }
