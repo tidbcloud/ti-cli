@@ -271,11 +271,15 @@ func main() {
 		switch args[1] {
 		case "stat":
 			path := strip(args[len(args)-1])
-			// "1" denies every stat; any other value denies the paths that contain
-			// it, so a token can read the destination and not the staging sibling.
-			if denied := os.Getenv("TI_FAKE_DRIVE9_STAT_DENIED"); denied != "" && (denied == "1" || strings.Contains(path, denied)) {
+			// The value is a path fragment: the token can read the destination and
+			// not the staging sibling.
+			if denied := os.Getenv("TI_FAKE_DRIVE9_STAT_DENIED"); denied != "" && strings.Contains(path, denied) {
 				fmt.Fprintln(os.Stderr, "fs stat: fs access denied")
 				os.Exit(1)
+			}
+			if hang := os.Getenv("TI_FAKE_DRIVE9_STAT_HANG"); hang != "" && strings.Contains(path, hang) {
+				ms, _ := strconv.Atoi(os.Getenv("TI_FAKE_DRIVE9_STAT_HANG_MS"))
+				time.Sleep(time.Duration(ms) * time.Millisecond)
 			}
 			if hasPath(path) {
 				_ = json.NewEncoder(os.Stdout).Encode(map[string]any{"path": path, "size": 3, "isdir": false, "revision": 1})
@@ -311,7 +315,7 @@ func main() {
 			src := strip(args[2])
 			dst := strip(args[3])
 			applied := os.Getenv("TI_FAKE_DRIVE9_MV_APPLIED_FAIL") == "1"
-			if os.Getenv("TI_FAKE_DRIVE9_MV_FAIL") == "1" && !applied {
+			if !applied && os.Getenv("TI_FAKE_DRIVE9_MV_FAIL") == "1" {
 				fmt.Fprintln(os.Stderr, "fs mv: backend unavailable")
 				os.Exit(1)
 			}
