@@ -56,6 +56,13 @@ func notifyContext(parent context.Context, incoming <-chan os.Signal) (context.C
 
 // Signals returns the process signals associated with ctx, or nil for a plain
 // context. A consumer must not also forward the first signal via ctx.Done.
+//
+// The channel already holds the signal that cancelled ctx: NotifyContext cancels
+// first and then forwards it. Code that runs because of that cancellation - a
+// cleanup after an interrupted command - must therefore not select on this
+// channel for a further signal, because it would fire on the signal that got it
+// there. Register a fresh channel with signal.Notify instead; that is what lets a
+// cleanup finish after the first Ctrl+C and still stop on a second one.
 func Signals(ctx context.Context) <-chan os.Signal {
 	signals, _ := ctx.Value(signalsKey{}).(<-chan os.Signal)
 	return signals

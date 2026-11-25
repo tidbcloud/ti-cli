@@ -319,10 +319,6 @@ func main() {
 				fmt.Fprintln(os.Stderr, "fs mv: backend unavailable")
 				os.Exit(1)
 			}
-			if !hasPath(src) {
-				fmt.Fprintln(os.Stderr, "fs mv: remote file not found")
-				os.Exit(1)
-			}
 			next := []string{}
 			for _, known := range readState() {
 				if known != src {
@@ -337,6 +333,11 @@ func main() {
 			fmt.Fprintf(os.Stdout, "moved %s -> %s\n", src, dst)
 			return
 		case "rm":
+			if os.Getenv("TI_FAKE_DRIVE9_REMOVE_VANISHED") == "1" {
+				// The file was there for the look and gone for the removal.
+				fmt.Fprintln(os.Stderr, "fs rm: remote file not found")
+				os.Exit(1)
+			}
 			if os.Getenv("TI_FAKE_DRIVE9_DELETE_DENIED") == "1" {
 				// The service authorizes DELETE before it looks the path up.
 				fmt.Fprintln(os.Stderr, "fs rm: fs access denied")

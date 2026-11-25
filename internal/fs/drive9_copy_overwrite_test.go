@@ -296,6 +296,9 @@ func TestDrive9CopyServerSideOverwriteNamesTheStagingPathWhenCleanupFails(t *tes
 	if !strings.Contains(message, "needs delete on that path") {
 		t.Fatalf("error %q does not say the delete command needs delete", message)
 	}
+	if !strings.HasPrefix(message, "replacing \"") {
+		t.Fatalf("error %q does not open with the failed-move wording", message)
+	}
 }
 
 // The staged copy may have created the node before it failed; the error stays the
@@ -345,6 +348,9 @@ func TestDrive9CopyServerSideOverwriteNamesStagingAfterFailedStagedCopy(t *testi
 	stage = strings.TrimPrefix(stage, ":")
 	if stage == "" || !strings.Contains(apperr.MessageFor(err), stage) {
 		t.Fatalf("error %q does not name the staging path %q", apperr.MessageFor(err), stage)
+	}
+	if !strings.HasPrefix(apperr.MessageFor(err), "copying to the staging path for ") {
+		t.Fatalf("error %q does not open with the failed-staged-copy wording", apperr.MessageFor(err))
 	}
 }
 
@@ -556,7 +562,6 @@ func TestDrive9CopyFailureRefusedStatWithGoneStaging(t *testing.T) {
 	t.Run("before the move", func(t *testing.T) {
 		service, _, _ := newStatefulCopyService(t, "/dst.txt")
 		t.Setenv("TI_FAKE_DRIVE9_STAT_DENIED", "ti-tmp")
-		t.Setenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL", "1")
 		err := service.drive9CopyFailure(context.Background(), CopyFileOptions{Profile: dataProfile()}, "/src/a.txt", "/dst.txt", "/dst.txt.ti-tmp-fixed", drive9CopyStageBeforeMove, errors.New("copy interrupted"))
 		if err == nil || err.Error() != "copy interrupted" {
 			t.Fatalf("cleanup error = %v, want the original interruption", err)
@@ -566,7 +571,29 @@ func TestDrive9CopyFailureRefusedStatWithGoneStaging(t *testing.T) {
 	t.Run("after the move", func(t *testing.T) {
 		service, _, _ := newStatefulCopyService(t, "/dst.txt")
 		t.Setenv("TI_FAKE_DRIVE9_STAT_DENIED", "ti-tmp")
-		t.Setenv("TI_FAKE_DRIVE9_MV_APPLIED_FAIL", "1")
+		err := service.drive9CopyFailure(context.Background(), CopyFileOptions{Profile: dataProfile()}, "/src/a.txt", "/dst.txt", "/dst.txt.ti-tmp-fixed", drive9CopyStageAfterMove, errors.New("copy interrupted"))
+		if apperr.CodeFor(err) != "fs.copy_outcome_unknown" {
+			t.Fatalf("cleanup error = %v, want fs.copy_outcome_unknown", err)
+		}
+	})
+}
+
+// The file can be there for the look and gone for the removal: that reads as
+// absent, so before the move the copy error comes back and after it the outcome
+// is unknown.
+func TestDrive9CopyFailureRemovalAnswersNotFoundAfterTheLook(t *testing.T) {
+	t.Run("before the move", func(t *testing.T) {
+		service, _, _ := newStatefulCopyService(t, "/dst.txt", "/dst.txt.ti-tmp-fixed")
+		t.Setenv("TI_FAKE_DRIVE9_REMOVE_VANISHED", "1")
+		err := service.drive9CopyFailure(context.Background(), CopyFileOptions{Profile: dataProfile()}, "/src/a.txt", "/dst.txt", "/dst.txt.ti-tmp-fixed", drive9CopyStageBeforeMove, errors.New("copy interrupted"))
+		if err == nil || err.Error() != "copy interrupted" {
+			t.Fatalf("cleanup error = %v, want the original interruption", err)
+		}
+	})
+
+	t.Run("after the move", func(t *testing.T) {
+		service, _, _ := newStatefulCopyService(t, "/dst.txt", "/dst.txt.ti-tmp-fixed")
+		t.Setenv("TI_FAKE_DRIVE9_REMOVE_VANISHED", "1")
 		err := service.drive9CopyFailure(context.Background(), CopyFileOptions{Profile: dataProfile()}, "/src/a.txt", "/dst.txt", "/dst.txt.ti-tmp-fixed", drive9CopyStageAfterMove, errors.New("copy interrupted"))
 		if apperr.CodeFor(err) != "fs.copy_outcome_unknown" {
 			t.Fatalf("cleanup error = %v, want fs.copy_outcome_unknown", err)
