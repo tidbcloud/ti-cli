@@ -1349,6 +1349,14 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 	}
 	if opts.NoAutoPack {
 		args = append(args, "--no-auto-pack")
+	} else {
+		// Replay the --pack-path values recorded at mount time. The companion's
+		// `mount` has no flag for them, and it is `umount --pack-path` that feeds
+		// the automatic pack; without this the mount succeeds while the archive
+		// silently omits the local overlay paths the user asked for.
+		for _, packPath := range locator.PackPaths {
+			args = append(args, "--pack-path", packPath)
+		}
 	}
 	args = append(args, opts.MountPath)
 	if _, err := s.drive9Run(ctx, profile, args, false); err != nil {
@@ -1404,6 +1412,10 @@ func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kin
 	if len(mountOpts) > 0 {
 		opts := mountOpts[0]
 		locator = locator.WithLayerView(opts.RemotePath, opts.LayerRef, opts.CheckpointID, opts.ReadOnly)
+		// The companion's `mount` has no pack-path flag, so the extra paths have
+		// to survive until unmount: `drive9 umount --pack-path` is what makes the
+		// automatic pack include them.
+		locator = locator.WithPackPaths(opts.PackPaths)
 	}
 	if _, err := mountlocator.Write(homeDir, locator); err != nil {
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "write ti fs mount locator", err)
