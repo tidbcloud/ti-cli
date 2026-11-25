@@ -2,6 +2,7 @@ package mountlocator
 
 import (
 	"os"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -104,5 +105,40 @@ func TestTokenCorrelationAndLegacyListCompatibility(t *testing.T) {
 		if locator.FileSystemName == "tenant-old" && (locator.TokenID != "" || locator.TokenFingerprint != "") {
 			t.Fatalf("legacy locator gained correlation: %#v", locator)
 		}
+	}
+}
+
+// TestPackPathsSurviveLocatorRoundTrip keeps the mount-time --pack-path values
+// available to unmount, which is the only place the companion accepts them.
+func TestPackPathsSurviveLocatorRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	locator, err := New("default", "tenant-pack", "aws-us-east-1", "/tmp/pack-home", t.TempDir(), "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	locator = locator.WithPackPaths([]string{"/src", " node_modules ", "/src", ""})
+	if _, err := Write(home, locator); err != nil {
+		t.Fatal(err)
+	}
+	read, _, err := Read(home, locator.MountPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"/src", "node_modules"}
+	if !reflect.DeepEqual(read.PackPaths, want) {
+		t.Fatalf("pack paths = %#v, want %#v", read.PackPaths, want)
+	}
+}
+
+// TestNormalizePackPathsDropsBlanksAndDuplicates pins the shape the companion
+// receives: one non-empty flag value per entry, first occurrence wins.
+func TestNormalizePackPathsDropsBlanksAndDuplicates(t *testing.T) {
+	got := NormalizePackPaths([]string{" /a ", "", "/a", "/b", "  "})
+	want := []string{"/a", "/b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("NormalizePackPaths = %#v, want %#v", got, want)
+	}
+	if normalized := NormalizePackPaths([]string{"", " "}); normalized != nil {
+		t.Fatalf("NormalizePackPaths blanks = %#v, want nil", normalized)
 	}
 }

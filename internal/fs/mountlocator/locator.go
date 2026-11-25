@@ -37,6 +37,12 @@ type Locator struct {
 	LayerRef         string `json:"layer_ref,omitempty"`
 	CheckpointID     string `json:"checkpoint_id,omitempty"`
 	ReadOnly         bool   `json:"read_only,omitempty"`
+	// PackPaths are the extra local-overlay paths given to
+	// `ti fs mount-file-system --pack-path`. The companion's mount has no flag
+	// for them, so they are recorded here and replayed as `drive9 umount
+	// --pack-path` so the automatic pack includes them. Older locators may omit
+	// the field; an omitted field means "none".
+	PackPaths []string `json:"pack_paths,omitempty"`
 }
 
 func (l Locator) WithLayerView(remotePath, layerRef, checkpointID string, readOnly bool) Locator {
@@ -45,6 +51,40 @@ func (l Locator) WithLayerView(remotePath, layerRef, checkpointID string, readOn
 	l.CheckpointID = strings.TrimSpace(checkpointID)
 	l.ReadOnly = readOnly
 	return l
+}
+
+// WithPackPaths records the extra pack paths supplied at mount time so unmount
+// can hand them back to the companion. Blank entries are dropped and duplicates
+// collapse onto their first occurrence, because the companion appends one
+// --pack-path flag per entry.
+func (l Locator) WithPackPaths(paths []string) Locator {
+	l.PackPaths = NormalizePackPaths(paths)
+	return l
+}
+
+// NormalizePackPaths trims, drops blank entries and removes duplicates while
+// preserving the caller's order.
+func NormalizePackPaths(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func New(profile, fileSystemName, regionCode, companionHome, mountPath, kind string) (Locator, error) {
