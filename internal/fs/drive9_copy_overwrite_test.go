@@ -2,6 +2,7 @@ package fs
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -58,6 +59,21 @@ func newStatefulCopyService(t *testing.T, existing ...string) (Service, string, 
 		}
 	}
 	return testCompanionService(t.TempDir(), companion), recordPath, state
+}
+
+// fakeDrive9Paths reads the stateful fake's remote path set: the tests assert on
+// the final set, not only on the argv that produced it.
+func fakeDrive9Paths(t *testing.T, state string) map[string]bool {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(state, "paths"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	paths := map[string]bool{}
+	for _, path := range strings.Fields(string(data)) {
+		paths[path] = true
+	}
+	return paths
 }
 
 func TestDrive9CopyServerSideOverwriteStagesAndMoves(t *testing.T) {
@@ -282,9 +298,9 @@ func TestDrive9CopyServerSideOverwriteNamesTheStagingPathWhenCleanupFails(t *tes
 }
 
 // The staged copy may have created the node before it failed; the error stays the
-// copy's unless the cleanup leaves the file behind.
+// copy's, the staging file is removed, and no move is attempted.
 func TestDrive9CopyServerSideOverwriteCleansUpAfterFailedStagedCopy(t *testing.T) {
-	service, _, _ := newStatefulCopyService(t, "/dst.txt")
+	service, recordPath, state := newStatefulCopyService(t, "/dst.txt")
 	t.Setenv("TI_FAKE_DRIVE9_CP_STAGED_FAIL", "after-create")
 
 	_, err := service.CopyFile(context.Background(), CopyFileOptions{
@@ -298,6 +314,15 @@ func TestDrive9CopyServerSideOverwriteCleansUpAfterFailedStagedCopy(t *testing.T
 	}
 	if apperr.CodeFor(err) != "fs.companion_failed" {
 		t.Fatalf("copy error = %v, want the staged copy failure alone", err)
+	}
+	for _, args := range copyCalls(t, recordPath) {
+		if args[1] == "mv" {
+			t.Fatalf("calls = %v, want no move after a failed staged copy", copyCalls(t, recordPath))
+		}
+	}
+	paths := fakeDrive9Paths(t, state)
+	if len(paths) != 1 || !paths["/dst.txt"] {
+		t.Fatalf("paths = %v, want only the destination after the cleanup", paths)
 	}
 }
 
@@ -326,7 +351,7 @@ func TestDrive9CopyServerSideOverwriteNamesStagingAfterFailedStagedCopy(t *testi
 // already gone, the destination already holds the new bytes, and the error has to
 // say the outcome is unknown instead of pointing at a delete.
 func TestDrive9CopyServerSideOverwriteAppliedMoveLostAnswer(t *testing.T) {
-	service, _, _ := newStatefulCopyService(t, "/dst.txt")
+	service, _, state := newStatefulCopyService(t, "/dst.txt")
 	t.Setenv("TI_FAKE_DRIVE9_MV_APPLIED_FAIL", "1")
 
 	_, err := service.CopyFile(context.Background(), CopyFileOptions{
@@ -347,6 +372,10 @@ func TestDrive9CopyServerSideOverwriteAppliedMoveLostAnswer(t *testing.T) {
 	}
 	if strings.Contains(message, "delete-file") {
 		t.Fatalf("error %q points at a delete for a staging path that is already gone", message)
+	}
+	paths := fakeDrive9Paths(t, state)
+	if len(paths) != 1 || !paths["/dst.txt"] {
+		t.Fatalf("paths = %v, want the destination to be the only remaining path", paths)
 	}
 }
 
@@ -440,5 +469,64 @@ func TestDrive9CopyArgsForTargetRejectsNonRemoteRoutes(t *testing.T) {
 	_, _, _, err := drive9CopyArgsForTarget(CopyFileOptions{Profile: dataProfile(), FromLocal: local, ToRemote: "/dst.txt"}, "/dst.txt.ti-tmp-0000")
 	if apperr.CodeFor(err) != "fs.invalid_copy_flags" {
 		t.Fatalf("retargeted upload error = %v, want fs.invalid_copy_flags", err)
+	}
+}
+
+// The fallback for an unreadable staging path must not claim a leftover: the
+// token can read the destination but not the staging sibling, so ti could not
+// look. It says so, names the suffix to look for, and keeps the copy error.
+func TestDrive9CopyServerSideOverwriteReportsUncheckedStaging(t *testing.T) {
+	service, _, _ := newStatefulCopyService(t, "/dst.txt")
+	t.Setenv("TI_FAKE_DRIVE9_STAT_DENIED", "ti-tmp")
+	t.Setenv("TI_FAKE_DRIVE9_RM_FAIL", "1")
+	t.Setenv("TI_FAKE_DRIVE9_MV_FAIL", "1")
+
+	_, err := service.CopyFile(context.Background(), CopyFileOptions{
+		Profile:    dataProfile(),
+		FromRemote: "/src/a.txt",
+		ToRemote:   "/dst.txt",
+		Overwrite:  true,
+	})
+	if apperr.CodeFor(err) != "fs.copy_staging_unchecked" {
+		t.Fatalf("copy error = %v, want fs.copy_staging_unchecked", err)
+	}
+	message := apperr.MessageFor(err)
+	if !strings.Contains(message, "could not determine whether the staging file") {
+		t.Fatalf("error %q claims an outcome it could not observe", message)
+	}
+	if strings.Contains(message, "could not be removed") {
+		t.Fatalf("error %q states that the staging file exists", message)
+	}
+	if !strings.Contains(message, ".ti-tmp-") {
+		t.Fatalf("error %q does not say what to look for", message)
+	}
+}
+
+// A cancelled copy still cleans up: the check and the removal run on a context
+// that ignores the cancellation, so the user does not get a leftover note for a
+// file that was never looked at.
+func TestDrive9CopyFailureCleansUpOnCancelledContext(t *testing.T) {
+	service, recordPath, state := newStatefulCopyService(t, "/dst.txt", "/dst.txt.ti-tmp-fixed")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := service.drive9CopyFailure(ctx, CopyFileOptions{Profile: dataProfile()}, "/src/a.txt", "/dst.txt", "/dst.txt.ti-tmp-fixed", true, errors.New("copy interrupted"))
+	if err == nil || err.Error() != "copy interrupted" {
+		t.Fatalf("cleanup error = %v, want the original interruption", err)
+	}
+	var sawStat, sawRemove bool
+	for _, args := range copyCalls(t, recordPath) {
+		switch args[1] {
+		case "stat":
+			sawStat = true
+		case "rm":
+			sawRemove = true
+		}
+	}
+	if !sawStat || !sawRemove {
+		t.Fatalf("calls = %v, want a stat and a removal on a cancelled context", copyCalls(t, recordPath))
+	}
+	if paths := fakeDrive9Paths(t, state); paths["/dst.txt.ti-tmp-fixed"] {
+		t.Fatalf("paths = %v, want the staging file removed", paths)
 	}
 }
