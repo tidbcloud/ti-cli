@@ -12,9 +12,13 @@ import (
 // mapping onto the companion's archive and overlay paths. The rules mirrored
 // here live in the companion at cmd/drive9/cli/pack.go (joinArchivePath,
 // resolvePackPath, overlayPathForArchivePath) and the profile table at
-// cmd/drive9/cli/profile.go. This package also holds an older copy of both
-// mappings in pack.go, used by nothing on the companion path; it has drifted
-// (it accepts `/a/../b`) and should be deleted rather than kept in step.
+// cmd/drive9/cli/profile.go. This is the one replica to keep in step for the
+// command paths. `internal/fs/pack.go` still holds the legacy read half --
+// `overlayPathForArchivePath`, `toRemotePath` and `remoteToLocalPath` are
+// compiled into the ti-native FUSE runtime, and `canonicalArchivePath` (which
+// accepted `/a/../b`, the drift that started this) is reachable only from
+// mount entry points that no caller reaches. Removing that half belongs with
+// the FUSE runtime in a follow-up; nothing here may be "fixed" to match it.
 
 // normalizeMountPackPaths trims and de-duplicates --pack-path once, where the
 // companion argv is decided, and refuses the shapes that cannot survive to the
