@@ -181,7 +181,76 @@ func normalizeMountOptions(opts MountFileSystemOptions) (MountFileSystemOptions,
 	if err != nil {
 		return MountFileSystemOptions{}, err
 	}
+	opts, err = normalizeMountPackPaths(opts)
+	if err != nil {
+		return MountFileSystemOptions{}, err
+	}
 	return rejectUnsupportedMountDurability(opts)
+}
+
+// normalizeMountPackPaths trims and de-duplicates --pack-path once, where the
+// companion argv is decided, and refuses the shapes that cannot survive to the
+// automatic pack: a WebDAV mount has no local overlay to pack, and the
+// companion's joinArchivePath rejects a backslash or a relative path with an
+// empty, "." or ".." segment.
+func normalizeMountPackPaths(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
+	opts.PackPaths = mergeMountPackPaths(opts.PackPaths)
+	if len(opts.PackPaths) == 0 {
+		return opts, nil
+	}
+	if companionMountMode(opts.Driver) == "webdav" {
+		return MountFileSystemOptions{}, apperr.New("fs.pack_path_requires_fuse", "usage", 2,
+			"--pack-path needs a FUSE mount: the automatic pack reads the local overlay, and a WebDAV mount has no local overlay; remove --pack-path or use --driver fuse where FUSE is available")
+	}
+	for _, raw := range opts.PackPaths {
+		if strings.Contains(raw, "\\") {
+			return MountFileSystemOptions{}, apperr.New("fs.invalid_pack_path", "usage", 2,
+				fmt.Sprintf("--pack-path %q contains a backslash; use forward slashes", raw))
+		}
+		if strings.HasPrefix(raw, "/") {
+			continue
+		}
+		for _, part := range strings.Split(raw, "/") {
+			if part == "" || part == "." || part == ".." {
+				return MountFileSystemOptions{}, apperr.New("fs.invalid_pack_path", "usage", 2,
+					fmt.Sprintf("--pack-path %q is not a clean relative path; the automatic pack refuses empty, \".\" and \"..\" segments", raw))
+			}
+		}
+	}
+	return opts, nil
+}
+
+// mountPackArchivePath maps a --pack-path value onto the archive path the
+// companion packs. It mirrors drive9's resolvePackPath with the empty local
+// prefix the automatic pack uses: an absolute path under the mount's remote
+// root is remote-relative, any other absolute path is already mount-local, and
+// a relative path resolves under the mount root.
+func mountPackArchivePath(remoteRoot, raw string) string {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "/") {
+		return "/" + raw
+	}
+	root := strings.TrimSuffix(strings.TrimSpace(remoteRoot), "/")
+	if root != "" && root != "/" {
+		if raw == root {
+			return "/"
+		}
+		if strings.HasPrefix(raw, root+"/") {
+			return strings.TrimPrefix(raw, root)
+		}
+	}
+	return raw
+}
+
+// mountPackOverlayPath returns where an archive path lives in the local
+// overlay the companion packs: <local-root>/overlay/<archive path>.
+func mountPackOverlayPath(localRoot, archivePath string) string {
+	root := filepath.Join(localRoot, "overlay")
+	rel := strings.TrimPrefix(archivePath, "/")
+	if rel == "" {
+		return root
+	}
+	return filepath.Join(root, filepath.FromSlash(rel))
 }
 
 func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, opts MountFileSystemOptions) (dryrun.Result, error) {
@@ -380,7 +449,31 @@ func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string
 		dryrun.Check{Name: "file_system_id", Status: "passed", Message: profile.FSTenantID},
 		dryrun.Check{Name: "region", Status: "passed", Message: profile.FSPlacementRegionCode},
 		dryrun.Check{Name: "pre_unmount_drain", Status: "passed", Message: describeDryRunDrainGate(locator, opts)},
+		describeDryRunPackReplay(locator, opts),
 	), nil
+}
+
+// describeDryRunPackReplay predicts which recorded --pack-path values normal
+// execution would hand to the companion, so a dry run cannot promise a pack
+// that the local overlay no longer satisfies.
+func describeDryRunPackReplay(locator mountlocator.Locator, opts UnmountFileSystemOptions) dryrun.Check {
+	if opts.NoAutoPack {
+		return dryrun.Check{Name: "auto_pack_paths", Status: "skipped", Message: "--no-auto-pack disables the automatic pack and the recorded --pack-path replay"}
+	}
+	kept, checks := replayablePackPaths(locator)
+	if len(kept) == 0 && len(checks) == 0 {
+		return dryrun.Check{Name: "auto_pack_paths", Status: "passed", Message: "no --pack-path values were recorded at mount"}
+	}
+	message := fmt.Sprintf("replayed: %s", strings.Join(kept, ", "))
+	status := "passed"
+	if len(kept) == 0 {
+		status = "warning"
+		message = "replayed: none"
+	}
+	for _, check := range checks {
+		message += "; " + check.Message
+	}
+	return dryrun.Check{Name: "auto_pack_paths", Status: status, Message: message}
 }
 
 // drainSupportCheck predicts whether `ti fs drain-file-system` will run for

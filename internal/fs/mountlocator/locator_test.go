@@ -108,37 +108,32 @@ func TestTokenCorrelationAndLegacyListCompatibility(t *testing.T) {
 	}
 }
 
-// TestPackPathsSurviveLocatorRoundTrip keeps the mount-time --pack-path values
-// available to unmount, which is the only place the companion accepts them.
-func TestPackPathsSurviveLocatorRoundTrip(t *testing.T) {
+// TestPackPathsAndLocalRootRoundTrip keeps the two fields unmount replays on a
+// JSON round trip; nothing else in the locator is involved.
+func TestPackPathsAndLocalRootRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	locator, err := New("default", "tenant-pack", "aws-us-east-1", "/tmp/pack-home", t.TempDir(), "fs")
 	if err != nil {
 		t.Fatal(err)
 	}
-	locator = locator.WithPackPaths([]string{"/src", " node_modules ", "/src", ""})
-	if _, err := Write(home, locator); err != nil {
+	locator.LocalRoot = "/tmp/pack-home/local"
+	locator.PackPaths = []string{"/src", "node_modules"}
+	path, err := Write(home, locator)
+	if err != nil {
 		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"local_root": "/tmp/pack-home/local"`) || !strings.Contains(string(data), `"pack_paths"`) {
+		t.Fatalf("locator json = %s", data)
 	}
 	read, _, err := Read(home, locator.MountPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"/src", "node_modules"}
-	if !reflect.DeepEqual(read.PackPaths, want) {
-		t.Fatalf("pack paths = %#v, want %#v", read.PackPaths, want)
-	}
-}
-
-// TestNormalizePackPathsDropsBlanksAndDuplicates pins the shape the companion
-// receives: one non-empty flag value per entry, first occurrence wins.
-func TestNormalizePackPathsDropsBlanksAndDuplicates(t *testing.T) {
-	got := NormalizePackPaths([]string{" /a ", "", "/a", "/b", "  "})
-	want := []string{"/a", "/b"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("NormalizePackPaths = %#v, want %#v", got, want)
-	}
-	if normalized := NormalizePackPaths([]string{"", " "}); normalized != nil {
-		t.Fatalf("NormalizePackPaths blanks = %#v, want nil", normalized)
+	if read.LocalRoot != locator.LocalRoot || !reflect.DeepEqual(read.PackPaths, locator.PackPaths) {
+		t.Fatalf("round trip = %#v, want %#v", read, locator)
 	}
 }

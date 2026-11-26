@@ -366,7 +366,7 @@ internal/dryrun/            shared dry-run result envelope
 internal/fs/                ti fs control-plane, data-plane, and mount use cases
 internal/fs/aiconfig/       optional Filesystem extraction and embedding configuration
 internal/fs/fscred/         ID-keyed ti fs credentials, selection, and legacy migration
-internal/fs/mountlocator/   non-secret Drive9 background mount routing state
+internal/fs/mountlocator/   non-secret Drive9 background mount routing state (also the mount local root and --pack-path values unmount replays)
 internal/fs/tokenmgmt/      Filesystem token lifecycle and local rotation safety
 internal/oplog/             local JSONL operation log writer
 internal/output/            structured JSON/text/raw rendering

@@ -46,6 +46,9 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	if err != nil {
 		return MountResult{}, err
 	}
+	// The locator records the mount's remote root next to the pack paths so
+	// unmount can map an absolute --pack-path value back into the overlay.
+	opts.RemotePath = remotePath
 	// Security (information protection): mount-time auto/explicit unpack writes a
 	// local overlay through the companion, so audit it exactly like
 	// unpack-file-system does. An unpack target ti cannot resolve is refused
@@ -129,7 +132,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	// Record the driver the companion actually mounted with, so the matching
 	// unmount knows whether the mount supports the drain gate.
 	mountedDriver := drive9MountedDriver(result.Stderr, opts.Driver)
-	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", mountedDriver, opts); err != nil {
+	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", mountedDriver, auditRoot, &opts); err != nil {
 		// A partially completed unpack can leave an escaping link behind, and a
 		// later mount would record it as pre-existing state, so audit before
 		// deciding whether the failed mount can be torn down.
