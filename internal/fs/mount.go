@@ -188,71 +188,6 @@ func normalizeMountOptions(opts MountFileSystemOptions) (MountFileSystemOptions,
 	return rejectUnsupportedMountDurability(opts)
 }
 
-// normalizeMountPackPaths trims and de-duplicates --pack-path once, where the
-// companion argv is decided, and refuses the shapes that cannot survive to the
-// automatic pack: a WebDAV mount has no local overlay to pack, and the
-// companion's joinArchivePath rejects a backslash or a relative path with an
-// empty, "." or ".." segment.
-func normalizeMountPackPaths(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
-	opts.PackPaths = mergeMountPackPaths(opts.PackPaths)
-	if len(opts.PackPaths) == 0 {
-		return opts, nil
-	}
-	if companionMountMode(opts.Driver) == "webdav" {
-		return MountFileSystemOptions{}, apperr.New("fs.pack_path_requires_fuse", "usage", 2,
-			"--pack-path needs a FUSE mount: the automatic pack reads the local overlay, and a WebDAV mount has no local overlay; remove --pack-path or use --driver fuse where FUSE is available")
-	}
-	for _, raw := range opts.PackPaths {
-		if strings.Contains(raw, "\\") {
-			return MountFileSystemOptions{}, apperr.New("fs.invalid_pack_path", "usage", 2,
-				fmt.Sprintf("--pack-path %q contains a backslash; use forward slashes", raw))
-		}
-		if strings.HasPrefix(raw, "/") {
-			continue
-		}
-		for _, part := range strings.Split(raw, "/") {
-			if part == "" || part == "." || part == ".." {
-				return MountFileSystemOptions{}, apperr.New("fs.invalid_pack_path", "usage", 2,
-					fmt.Sprintf("--pack-path %q is not a clean relative path; the automatic pack refuses empty, \".\" and \"..\" segments", raw))
-			}
-		}
-	}
-	return opts, nil
-}
-
-// mountPackArchivePath maps a --pack-path value onto the archive path the
-// companion packs. It mirrors drive9's resolvePackPath with the empty local
-// prefix the automatic pack uses: an absolute path under the mount's remote
-// root is remote-relative, any other absolute path is already mount-local, and
-// a relative path resolves under the mount root.
-func mountPackArchivePath(remoteRoot, raw string) string {
-	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, "/") {
-		return "/" + raw
-	}
-	root := strings.TrimSuffix(strings.TrimSpace(remoteRoot), "/")
-	if root != "" && root != "/" {
-		if raw == root {
-			return "/"
-		}
-		if strings.HasPrefix(raw, root+"/") {
-			return strings.TrimPrefix(raw, root)
-		}
-	}
-	return raw
-}
-
-// mountPackOverlayPath returns where an archive path lives in the local
-// overlay the companion packs: <local-root>/overlay/<archive path>.
-func mountPackOverlayPath(localRoot, archivePath string) string {
-	root := filepath.Join(localRoot, "overlay")
-	rel := strings.TrimPrefix(archivePath, "/")
-	if rel == "" {
-		return root
-	}
-	return filepath.Join(root, filepath.FromSlash(rel))
-}
-
 func (s Service) DryRunMountFileSystem(ctx context.Context, commandPath string, opts MountFileSystemOptions) (dryrun.Result, error) {
 	var err error
 	opts, err = normalizeMountOptions(opts)
@@ -830,25 +765,6 @@ func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath strin
 	return root, unpackPossible, nil
 }
 
-func mergeMountPackPaths(groups ...[]string) []string {
-	seen := map[string]struct{}{}
-	var out []string
-	for _, group := range groups {
-		for _, value := range group {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				continue
-			}
-			if _, ok := seen[value]; ok {
-				continue
-			}
-			seen[value] = struct{}{}
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
 func mountCacheBytes(value, fallback int64, flagName string) (int64, error) {
 	if value < 0 {
 		return 0, apperr.New("fs.invalid_mount_cache_size", "usage", 2, flagName+" must be non-negative")
@@ -917,6 +833,16 @@ func (r UnmountResult) Human() string {
 		if r.Drain.Response != nil {
 			_, _ = fmt.Fprintf(&out, "pending: %s\n", drainPendingSummary(r.Drain.Response.Pending))
 		}
+	}
+	// Checks are the only place a skipped --pack-path shows up, so the text
+	// output has to render them: a silent skip is indistinguishable from a pack
+	// that included the path.
+	for _, check := range r.Checks {
+		_, _ = fmt.Fprintf(&out, "%s: %s", check.Name, check.Status)
+		if check.Message != "" {
+			_, _ = fmt.Fprintf(&out, " (%s)", check.Message)
+		}
+		_, _ = fmt.Fprintln(&out)
 	}
 	return strings.TrimRight(out.String(), "\n")
 }
