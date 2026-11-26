@@ -2818,3 +2818,82 @@ func TestFSListRegionsThroughBinary(t *testing.T) {
 	withoutKeys := runTIWithInput(t, bin, "", noKeys, "fs", "list-regions")
 	withoutKeys.wantExitCode(3)
 }
+
+// TestFSMountPackPathReachesUmount covers the flag -> locator -> umount path
+// with the real ti binary: the companion's mount has no pack-path flag, so the
+// value must reach `umount --pack-path`, and a WebDAV mount must refuse it
+// before anything runs.
+func TestFSMountPackPathReachesUmount(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake companion build path is covered by unit tests on Windows")
+	}
+	bin := tiBinary(t)
+	home := t.TempDir()
+	companion := filepath.Join(t.TempDir(), "ti-drive9")
+	build := exec.Command("go", "build", "-o", companion, "./testdata/fake-drive9.go")
+	build.Dir = "."
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fake Drive9 companion: %v\n%s", err, output)
+	}
+	// Mounts resolve their companion from the installed layout, like installers
+	// place it, so the test does not depend on TI_DRIVE9_BIN for mounts.
+	bin = installedLayout(t, bin, companion)
+	recordPath := filepath.Join(t.TempDir(), "calls.jsonl")
+	regionsServer := newFakeFSRegions(t, fakeFSRegion{RegionCode: "aws-us-east-1", CloudProvider: "aws", ServiceAddress: "https://fs-east.test"})
+	baseEnv := []string{
+		"HOME=" + home,
+		"TI_TEST_FAKE_MOUNT_READY=1",
+		"FAKE_DRIVE9_RECORD=" + recordPath,
+		"TI_ALLOW_TEST_ENDPOINTS=1",
+		"TI_TEST_FS_REGIONS_URL=" + regionsServer.URL,
+	}
+	seedFSCredential(t, home, "default", "tenant-sandbox", "aws-us-east-1", "https://fs-east.test", drive9TestToken("tenant-sandbox"))
+	authEnv := append(append([]string{}, baseEnv...), "TDC_FS_TOKEN="+drive9TestToken("tenant-sandbox"), "TDC_REGION_CODE=aws-us-east-1")
+
+	localRoot := filepath.Join(home, "local")
+	if err := os.MkdirAll(filepath.Join(localRoot, "overlay", "src"), 0o755); err != nil {
+		t.Fatalf("seed overlay: %v", err)
+	}
+	mountPath := filepath.Join(home, "mnt")
+	mount := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", mountPath,
+		"--driver", "fuse",
+		"--mount-profile", "portable",
+		"--local-root", localRoot,
+		"--pack-path", "/src",
+	)
+	mount.wantExitCode(0)
+
+	unmount := runTIWithInput(t, bin, "", authEnv, "fs", "unmount-file-system", "--mount-path", mountPath)
+	unmount.wantExitCode(0)
+
+	umountArgs := []string(nil)
+	for _, call := range readFakeDrive9Calls(t, recordPath) {
+		if len(call.Args) > 0 && call.Args[0] == "umount" {
+			umountArgs = call.Args
+		}
+	}
+	if umountArgs == nil {
+		t.Fatalf("no umount call recorded")
+	}
+	found := false
+	for i, arg := range umountArgs {
+		if arg == "--pack-path" && i+1 < len(umountArgs) && umountArgs[i+1] == "/src" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("umount argv did not replay --pack-path /src: %#v", umountArgs)
+	}
+
+	webdav := runTIWithInput(t, bin, "", authEnv,
+		"fs", "mount-file-system",
+		"--mount-path", filepath.Join(home, "mnt-webdav"),
+		"--driver", "webdav",
+		"--mount-profile", "portable",
+		"--pack-path", "/src",
+	)
+	webdav.wantExitCode(2)
+	webdav.wantStderrContains("needs a FUSE mount")
+}
