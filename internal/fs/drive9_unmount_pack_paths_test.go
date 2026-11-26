@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/tidbcloud/ti-cli/internal/apperr"
+	"github.com/tidbcloud/ti-cli/internal/dryrun"
 	"github.com/tidbcloud/ti-cli/internal/fs/mountlocator"
 )
 
@@ -330,5 +331,34 @@ func TestUnmountSkipsReplayForANonFUSELocator(t *testing.T) {
 	}
 	if !hasRuntimeCheck(result.Checks, "pack_path", "skipped") {
 		t.Fatalf("missing skipped pack_path check: %#v", result.Checks)
+	}
+}
+
+// TestDryRunUnmountReportsPackReplay keeps --dry-run honest about the automatic
+// pack: it reports exactly what normal execution would replay or skip.
+func TestDryRunUnmountReportsPackReplay(t *testing.T) {
+	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src", "node_modules"}, nil)
+	seedOverlay(t, localRoot, "/src")
+	result, err := service.DryRunUnmountFileSystem(context.Background(), "ti fs unmount-file-system", UnmountFileSystemOptions{
+		Profile:   dataProfile(),
+		MountPath: mountPath,
+	})
+	if err != nil {
+		t.Fatalf("dry run failed: %v", err)
+	}
+	var pack *dryrun.Check
+	for i := range result.Checks {
+		if result.Checks[i].Name == "auto_pack_paths" {
+			pack = &result.Checks[i]
+		}
+	}
+	if pack == nil {
+		t.Fatalf("dry run missing auto_pack_paths check: %#v", result.Checks)
+	}
+	if pack.Status != "passed" || !strings.Contains(pack.Message, "/src") {
+		t.Fatalf("auto_pack_paths = %#v, want /src replayed", *pack)
+	}
+	if !strings.Contains(pack.Message, "node_modules") || !strings.Contains(pack.Message, "not in the local overlay") {
+		t.Fatalf("auto_pack_paths = %#v, want the skipped path named", *pack)
 	}
 }
