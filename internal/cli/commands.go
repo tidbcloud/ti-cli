@@ -2684,7 +2684,7 @@ func newFSUnmountFileSystemCommand(info version.Info) *cobra.Command {
 	cmd.Flags().Bool("force", false, "Skip the pre-unmount drain gate and unmount even when local writes are still pending.")
 	cmd.Flags().Bool("ignore-absent", false, "Return success when no file system mount state exists for the specified path.")
 	cmd.Flags().String("pack-archive-path", "", "Pack archive to write after unmount")
-	cmd.Flags().Bool("no-auto-pack", false, "Skip the automatic pack at unmount, including the --pack-path values recorded at mount.")
+	cmd.Flags().Bool("no-auto-pack", false, "Skip the automatic pack at unmount; the --pack-path values recorded at mount are dropped with it unless --pack-archive-path asks for an explicit archive.")
 	markUsageRequired(cmd, "mount-path")
 	return cmd
 }

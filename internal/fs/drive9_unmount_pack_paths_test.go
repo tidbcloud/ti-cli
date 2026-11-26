@@ -362,3 +362,42 @@ func TestDryRunUnmountReportsPackReplay(t *testing.T) {
 		t.Fatalf("auto_pack_paths = %#v, want the skipped path named", *pack)
 	}
 }
+
+// TestUnmountReplaysPackPathsForAnExplicitArchive covers the interaction the
+// review named: --no-auto-pack suppresses the automatic archive, but an
+// explicit --pack-archive-path still packs, so the recorded paths must ride
+// along with it.
+func TestUnmountReplaysPackPathsForAnExplicitArchive(t *testing.T) {
+	service, mountPath, recordPath, localRoot := mountWithPackPaths(t, []string{"/src"}, nil)
+	seedOverlay(t, localRoot, "/src")
+	result, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
+		Profile:         dataProfile(),
+		MountPath:       mountPath,
+		NoAutoPack:      true,
+		PackArchivePath: "/exports/workspace.tar.gz",
+	})
+	if err != nil {
+		t.Fatalf("unmount failed: %v", err)
+	}
+	args := umountCallArgs(t, recordPath)
+	if got := packPathArgs(args); !reflect.DeepEqual(got, []string{"/src"}) {
+		t.Fatalf("umount --pack-path = %#v, want /src beside the explicit archive", got)
+	}
+	if !hasArg(args, "--pack") {
+		t.Fatalf("umount argv missing the explicit archive: %#v", args)
+	}
+	for _, check := range result.Checks {
+		if check.Name == "pack_path" && check.Status == "skipped" {
+			t.Fatalf("explicit archive replay must not be skipped: %#v", result.Checks)
+		}
+	}
+}
+
+func hasArg(args []string, want string) bool {
+	for _, arg := range args {
+		if arg == want {
+			return true
+		}
+	}
+	return false
+}

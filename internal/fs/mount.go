@@ -457,8 +457,8 @@ func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string
 // execution would hand to the companion, so a dry run cannot promise a pack
 // that the local overlay no longer satisfies.
 func describeDryRunPackReplay(locator mountlocator.Locator, opts UnmountFileSystemOptions) dryrun.Check {
-	if opts.NoAutoPack {
-		return dryrun.Check{Name: "auto_pack_paths", Status: "skipped", Message: "--no-auto-pack disables the automatic pack and the recorded --pack-path replay"}
+	if opts.NoAutoPack && strings.TrimSpace(opts.PackArchivePath) == "" {
+		return dryrun.Check{Name: "auto_pack_paths", Status: "skipped", Message: "--no-auto-pack disables the automatic pack, and no --pack-archive-path asks for an explicit one, so the recorded --pack-path values are not replayed"}
 	}
 	kept, checks := replayablePackPaths(locator)
 	if len(kept) == 0 && len(checks) == 0 {

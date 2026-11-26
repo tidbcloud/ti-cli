@@ -1350,13 +1350,15 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 	var packChecks []MountRuntimeCheck
 	if opts.NoAutoPack {
 		args = append(args, "--no-auto-pack")
-	} else {
-		// Replay the --pack-path values recorded at mount time. The companion's
-		// `mount` has no flag for them, and it is `umount --pack-path` that feeds
-		// the automatic pack; without this the mount succeeds while the archive
-		// silently omits the local overlay paths the user asked for. Values the
-		// overlay no longer holds are skipped with a visible check instead of
-		// failing a pack that runs after the mount is already detached.
+	}
+	// Replay the --pack-path values recorded at mount time whenever a pack will
+	// run: the automatic one, or an explicit --pack-archive-path that outlives
+	// --no-auto-pack. The companion's `mount` has no flag for them, and it is
+	// `umount --pack-path` that feeds the pack; without this the mount succeeds
+	// while the archive silently omits the local overlay paths the user asked
+	// for. Values the overlay no longer holds are skipped with a visible check
+	// instead of failing a pack that runs after the mount is already detached.
+	if !opts.NoAutoPack || strings.TrimSpace(opts.PackArchivePath) != "" {
 		packPaths, checks := replayablePackPaths(locator)
 		packChecks = checks
 		for _, packPath := range packPaths {
