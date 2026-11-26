@@ -1162,6 +1162,11 @@ Background FS and vault mounts write only a non-secret locator under
 `~/.ti/mounts/`. Drain and unmount must route through that locator to the
 original resource-scoped companion HOME without requiring the FS token again.
 Successful unmount removes the locator; failed unmount preserves it for retry.
+The locator also carries the mount's local overlay root and the `--pack-path`
+values supplied at mount, which unmount replays as `umount --pack-path`; a
+logged path is replayed only while it is still present in
+`<local_root>/overlay`, because the companion treats `umount --pack-path` as a
+strict path that fails the pack after the mount is already detached.
 
 `ti fs unmount-file-system` drains before it detaches a FUSE mount and must never
 report success while write-back work is still local. Parse the companion's
