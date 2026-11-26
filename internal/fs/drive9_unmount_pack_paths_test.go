@@ -15,7 +15,7 @@ import (
 
 // mountWithPackPaths mounts through the fake companion with a real local
 // overlay root and returns the service, mount path, calls file and local root.
-func mountWithPackPaths(t *testing.T, packPaths []string, tweak func(*MountFileSystemOptions)) (Service, string, string, string) {
+func mountWithPackPaths(t *testing.T, packPaths []string) (Service, string, string, string) {
 	t.Helper()
 	home := t.TempDir()
 	localRoot := t.TempDir()
@@ -31,9 +31,6 @@ func mountWithPackPaths(t *testing.T, packPaths []string, tweak func(*MountFileS
 		MountProfile: "portable",
 		LocalRoot:    localRoot,
 		PackPaths:    packPaths,
-	}
-	if tweak != nil {
-		tweak(&opts)
 	}
 	if _, err := service.MountFileSystem(context.Background(), opts); err != nil {
 		t.Fatalf("mount failed: %v", err)
@@ -128,7 +125,7 @@ func TestMountRejectsPackPathFormsThePackRefuses(t *testing.T) {
 // TestMountRecordsPackPathsOnLocator pins the normalized values and the local
 // root that unmount needs to verify them.
 func TestMountRecordsPackPathsOnLocator(t *testing.T) {
-	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src", " node_modules ", "/src", ""}, nil)
+	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src", " node_modules ", "/src", ""})
 	home, err := service.homeDir()
 	if err != nil {
 		t.Fatalf("home dir: %v", err)
@@ -146,11 +143,54 @@ func TestMountRecordsPackPathsOnLocator(t *testing.T) {
 	}
 }
 
+// TestMountRecordsRootWithoutAutoUnpack covers the state that made --pack-path
+// inert: --no-auto-unpack means nothing unpacks, so the audit decision has no
+// root, but the mount still packs at unmount and needs the overlay root to verify
+// the recorded paths.
+func TestMountRecordsRootWithoutAutoUnpack(t *testing.T) {
+	home := t.TempDir()
+	companion, recordPath := buildFakeDrive9(t)
+	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
+	service := testCompanionService(home, companion)
+	service.mountPointActive = trueMountEvidence
+	mountPath := filepath.Join(t.TempDir(), "mnt")
+	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
+		Profile: dataProfile(), MountPath: mountPath, Driver: "fuse",
+		MountProfile: "portable", PackPaths: []string{"/src"}, NoAutoUnpack: true,
+	}); err != nil {
+		t.Fatalf("mount failed: %v", err)
+	}
+	locator, _, err := mountlocator.Read(home, mountPath)
+	if err != nil {
+		t.Fatalf("read locator: %v", err)
+	}
+	if strings.TrimSpace(locator.LocalRoot) == "" {
+		t.Fatalf("locator local root is empty, so unmount cannot verify --pack-path")
+	}
+	seedOverlay(t, locator.LocalRoot, "/src")
+
+	result, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
+		Profile:   dataProfile(),
+		MountPath: mountPath,
+	})
+	if err != nil {
+		t.Fatalf("unmount failed: %v", err)
+	}
+	if got := packPathArgs(umountCallArgs(t, recordPath)); !reflect.DeepEqual(got, []string{"/src"}) {
+		t.Fatalf("umount --pack-path = %#v, want /src", got)
+	}
+	for _, check := range result.Checks {
+		if check.Name == "pack_path" {
+			t.Fatalf("unexpected pack_path check: %#v", result.Checks)
+		}
+	}
+}
+
 // TestUnmountForwardsOnlyPathsStillInTheOverlay is the regression this change
 // exists for: a path that never made it into the overlay is skipped with a
 // check instead of failing the pack after the mount is detached.
 func TestUnmountForwardsOnlyPathsStillInTheOverlay(t *testing.T) {
-	service, mountPath, recordPath, localRoot := mountWithPackPaths(t, []string{"/src", "node_modules"}, nil)
+	service, mountPath, recordPath, localRoot := mountWithPackPaths(t, []string{"/src", "node_modules"})
 	seedOverlay(t, localRoot, "/src")
 
 	result, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
@@ -171,7 +211,7 @@ func TestUnmountForwardsOnlyPathsStillInTheOverlay(t *testing.T) {
 // TestUnmountSkipsReplayWithoutRecordedLocalRoot covers a locator that cannot
 // verify its paths: replaying blindly could fail after the detach.
 func TestUnmountSkipsReplayWithoutRecordedLocalRoot(t *testing.T) {
-	service, mountPath, recordPath, _ := mountWithPackPaths(t, []string{"/src"}, nil)
+	service, mountPath, recordPath, _ := mountWithPackPaths(t, []string{"/src"})
 	home, err := service.homeDir()
 	if err != nil {
 		t.Fatalf("home dir: %v", err)
@@ -201,12 +241,18 @@ func TestUnmountSkipsReplayWithoutRecordedLocalRoot(t *testing.T) {
 	if !hasRuntimeCheck(result.Checks, "pack_path", "skipped") {
 		t.Fatalf("missing skipped pack_path check: %#v", result.Checks)
 	}
+	for _, check := range result.Checks {
+		if check.Name == "pack_path" && check.Status == "skipped" && strings.Contains(check.Message, "did not record the local overlay root it packs from") {
+			return
+		}
+	}
+	t.Fatalf("skipped pack_path check does not name the missing overlay root: %#v", result.Checks)
 }
 
 // TestUnmountLegacyLocatorSendsNoPackFlag keeps locators written before this
 // change on the exact same argv.
 func TestUnmountLegacyLocatorSendsNoPackFlag(t *testing.T) {
-	service, mountPath, recordPath, _ := mountWithPackPaths(t, nil, nil)
+	service, mountPath, recordPath, _ := mountWithPackPaths(t, nil)
 	if _, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
 		Profile:   dataProfile(),
 		MountPath: mountPath,
@@ -221,7 +267,7 @@ func TestUnmountLegacyLocatorSendsNoPackFlag(t *testing.T) {
 // TestUnmountSkipsPackPathsWhenAutoPackDisabled keeps --no-auto-pack
 // authoritative.
 func TestUnmountSkipsPackPathsWhenAutoPackDisabled(t *testing.T) {
-	service, mountPath, recordPath, localRoot := mountWithPackPaths(t, []string{"/src"}, nil)
+	service, mountPath, recordPath, localRoot := mountWithPackPaths(t, []string{"/src"})
 	seedOverlay(t, localRoot, "/src")
 	if _, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
 		Profile:    dataProfile(),
@@ -236,9 +282,10 @@ func TestUnmountSkipsPackPathsWhenAutoPackDisabled(t *testing.T) {
 }
 
 // TestUnmountFailureAfterDrainNamesTheRecovery keeps the failure actionable:
-// the mount may already be detached, so a bare retry is not the only option.
+// the mount may already be detached, so a bare retry is not the only option. The
+// drain really ran here, so the warning that the writes are safe is earned.
 func TestUnmountFailureAfterDrainNamesTheRecovery(t *testing.T) {
-	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src"}, nil)
+	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src"})
 	seedOverlay(t, localRoot, "/src")
 	t.Setenv("TI_FAKE_UMOUNT_FAIL", "1")
 	_, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
@@ -248,17 +295,77 @@ func TestUnmountFailureAfterDrainNamesTheRecovery(t *testing.T) {
 	if apperr.CodeFor(err) != "fs.unmount_failed_after_drain" {
 		t.Fatalf("unmount error = %v, want fs.unmount_failed_after_drain", err)
 	}
-	for _, want := range []string{"--no-auto-pack", "--ignore-absent", "may already be detached"} {
+	if code := apperr.ExitCodeFor(err); code != 1 {
+		t.Fatalf("exit code = %d, want 1: a failed unmount is not an authentication failure", code)
+	}
+	for _, want := range []string{"--no-auto-pack", "may already be detached"} {
 		if !strings.Contains(apperr.MessageFor(err), want) {
 			t.Fatalf("unmount error %q missing %q", apperr.MessageFor(err), want)
 		}
+	}
+	// The mount is still listed, so dropping its record would orphan it.
+	if !strings.Contains(apperr.MessageFor(err), "would orphan") {
+		t.Fatalf("unmount error %q must warn before recommending --ignore-absent for a listed mount", apperr.MessageFor(err))
+	}
+	if strings.Contains(apperr.MessageFor(err), "add --ignore-absent") {
+		t.Fatalf("unmount error %q recommends --ignore-absent for a listed mount", apperr.MessageFor(err))
+	}
+}
+
+// TestUnmountFailureAfterDetachedMountOffersIgnoreAbsent covers the other half of
+// the same advice: once the kernel no longer lists the mount, dropping the record
+// is the way out and the message must say so.
+func TestUnmountFailureAfterDetachedMountOffersIgnoreAbsent(t *testing.T) {
+	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src"})
+	seedOverlay(t, localRoot, "/src")
+	service.mountPointActive = func(string) (bool, error) { return false, nil }
+	t.Setenv("TI_FAKE_UMOUNT_FAIL", "1")
+	_, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
+		Profile:   dataProfile(),
+		MountPath: mountPath,
+	})
+	if apperr.CodeFor(err) != "fs.unmount_failed_after_drain" {
+		t.Fatalf("unmount error = %v, want fs.unmount_failed_after_drain", err)
+	}
+	if !strings.Contains(apperr.MessageFor(err), "add --ignore-absent") {
+		t.Fatalf("unmount error %q missing --ignore-absent for a detached mount", apperr.MessageFor(err))
+	}
+}
+
+// TestUnmountForceFailureKeepsTheCompanionError covers --force, where the drain
+// gate is skipped: the message must not claim a drain that never ran, and the
+// exit code must stay the companion's own.
+func TestUnmountForceFailureKeepsTheCompanionError(t *testing.T) {
+	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src"})
+	seedOverlay(t, localRoot, "/src")
+	t.Setenv("TI_FAKE_UMOUNT_FAIL", "1")
+	_, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
+		Profile:   dataProfile(),
+		MountPath: mountPath,
+		Force:     true,
+	})
+	if apperr.CodeFor(err) != "fs.companion_failed" {
+		t.Fatalf("unmount error = %v, want the companion's own fs.companion_failed", err)
+	}
+	if strings.Contains(apperr.MessageFor(err), "drain succeeded") {
+		t.Fatalf("--force skipped the drain, but the error claims it succeeded: %q", apperr.MessageFor(err))
+	}
+	if code := apperr.ExitCodeFor(err); code != 1 {
+		t.Fatalf("exit code = %d, want the companion's 1", code)
+	}
+	home, homeErr := service.homeDir()
+	if homeErr != nil {
+		t.Fatalf("home dir: %v", homeErr)
+	}
+	if _, _, readErr := mountlocator.Read(home, mountPath); readErr != nil {
+		t.Fatalf("locator must survive a failed --force unmount: %v", readErr)
 	}
 }
 
 // TestUnmountForceWithMissingOverlayPathSucceeds covers --force with a path the
 // overlay no longer holds: the skip must happen before the strict umount.
 func TestUnmountForceWithMissingOverlayPathSucceeds(t *testing.T) {
-	service, mountPath, recordPath, _ := mountWithPackPaths(t, []string{"/gone"}, nil)
+	service, mountPath, recordPath, _ := mountWithPackPaths(t, []string{"/gone"})
 	if _, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
 		Profile:   dataProfile(),
 		MountPath: mountPath,
@@ -284,7 +391,7 @@ func TestMergeMountPackPathsDropsBlanksAndDuplicates(t *testing.T) {
 // TestUnmountKeepsLocatorWhenThePackFails keeps the retry path: the mount may
 // already be detached, so the record must survive for a --no-auto-pack retry.
 func TestUnmountKeepsLocatorWhenThePackFails(t *testing.T) {
-	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src"}, nil)
+	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src"})
 	seedOverlay(t, localRoot, "/src")
 	t.Setenv("TI_FAKE_UMOUNT_FAIL", "1")
 	if _, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
@@ -305,7 +412,7 @@ func TestUnmountKeepsLocatorWhenThePackFails(t *testing.T) {
 // TestUnmountSkipsReplayForANonFUSELocator covers a locator written with paths
 // but a WebDAV driver: the mount has no overlay, so nothing may be replayed.
 func TestUnmountSkipsReplayForANonFUSELocator(t *testing.T) {
-	service, mountPath, recordPath, localRoot := mountWithPackPaths(t, []string{"/src"}, nil)
+	service, mountPath, recordPath, localRoot := mountWithPackPaths(t, []string{"/src"})
 	seedOverlay(t, localRoot, "/src")
 	home, err := service.homeDir()
 	if err != nil {
@@ -337,7 +444,7 @@ func TestUnmountSkipsReplayForANonFUSELocator(t *testing.T) {
 // TestDryRunUnmountReportsPackReplay keeps --dry-run honest about the automatic
 // pack: it reports exactly what normal execution would replay or skip.
 func TestDryRunUnmountReportsPackReplay(t *testing.T) {
-	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src", "node_modules"}, nil)
+	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src", "node_modules"})
 	seedOverlay(t, localRoot, "/src")
 	result, err := service.DryRunUnmountFileSystem(context.Background(), "ti fs unmount-file-system", UnmountFileSystemOptions{
 		Profile:   dataProfile(),
@@ -363,12 +470,46 @@ func TestDryRunUnmountReportsPackReplay(t *testing.T) {
 	}
 }
 
+// TestDryRunKeepsReplayForAnExplicitArchive pins the dry-run copy of the replay
+// rule: --no-auto-pack alone suppresses the automatic pack, an explicit
+// --pack-archive-path still packs, so the recorded paths are still replayed.
+func TestDryRunKeepsReplayForAnExplicitArchive(t *testing.T) {
+	service, mountPath, _, localRoot := mountWithPackPaths(t, []string{"/src"})
+	seedOverlay(t, localRoot, "/src")
+
+	autoPackCheck := func(t *testing.T, opts UnmountFileSystemOptions) dryrun.Check {
+		t.Helper()
+		opts.Profile = dataProfile()
+		opts.MountPath = mountPath
+		result, err := service.DryRunUnmountFileSystem(context.Background(), "ti fs unmount-file-system", opts)
+		if err != nil {
+			t.Fatalf("dry run failed: %v", err)
+		}
+		for _, check := range result.Checks {
+			if check.Name == "auto_pack_paths" {
+				return check
+			}
+		}
+		t.Fatalf("dry run missing auto_pack_paths check: %#v", result.Checks)
+		return dryrun.Check{}
+	}
+
+	if got := autoPackCheck(t, UnmountFileSystemOptions{NoAutoPack: true}); got.Status != "skipped" {
+		t.Fatalf("auto_pack_paths = %#v, want skipped with only --no-auto-pack", got)
+	}
+	if got := autoPackCheck(t, UnmountFileSystemOptions{NoAutoPack: true, PackArchivePath: "/exports/workspace.tar.gz"}); got.Status != "passed" {
+		t.Fatalf("auto_pack_paths = %#v, want replayed beside the explicit archive", got)
+	} else if !strings.Contains(got.Message, "/src") {
+		t.Fatalf("auto_pack_paths = %#v, want the replayed path named", got)
+	}
+}
+
 // TestUnmountReplaysPackPathsForAnExplicitArchive covers the interaction the
 // review named: --no-auto-pack suppresses the automatic archive, but an
 // explicit --pack-archive-path still packs, so the recorded paths must ride
 // along with it.
 func TestUnmountReplaysPackPathsForAnExplicitArchive(t *testing.T) {
-	service, mountPath, recordPath, localRoot := mountWithPackPaths(t, []string{"/src"}, nil)
+	service, mountPath, recordPath, localRoot := mountWithPackPaths(t, []string{"/src"})
 	seedOverlay(t, localRoot, "/src")
 	result, err := service.UnmountFileSystem(context.Background(), UnmountFileSystemOptions{
 		Profile:         dataProfile(),

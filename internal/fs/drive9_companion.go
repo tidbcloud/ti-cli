@@ -1382,13 +1382,20 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 			absent.Checks = append(absent.Checks, packChecks...)
 			return absent, nil
 		}
-		if drainErr == nil {
-			// The drain succeeded, so the writes are safe; what failed is the
+		if drain.Status == "drained" {
+			// The drain completed, so the writes are safe; what failed is the
 			// detach or the pack that follows it. Name the recovery instead of
 			// only asking for a retry: the kernel mount may already be gone.
-			return UnmountResult{}, apperr.New("fs.unmount_failed_after_drain", "runtime", 3, fmt.Sprintf(
-				"%v; the pre-unmount drain succeeded, so writes are safe, but the kernel mount at %q may already be detached; retry with `ti fs unmount-file-system --mount-path %q --no-auto-pack` to skip the automatic pack, or add --ignore-absent to drop the mount record",
-				err, opts.MountPath, opts.MountPath))
+			// --ignore-absent drops the mount record, so it is only offered when
+			// the mount is no longer listed; suggesting it for a live mount would
+			// orphan that mount from the drain gate and the token guards.
+			recovery := fmt.Sprintf("%v; the pre-unmount drain succeeded, so writes are safe, but the kernel mount at %q may already be detached; retry with `ti fs unmount-file-system --mount-path %q --no-auto-pack` to skip the automatic pack", err, opts.MountPath, opts.MountPath)
+			if s.mountListed(opts.MountPath) {
+				recovery += ", which keeps the mount record so the failure can be fixed and retried; --ignore-absent would orphan a mount that is still listed"
+			} else {
+				recovery += ", or add --ignore-absent to drop the mount record"
+			}
+			return UnmountResult{}, apperr.New("fs.unmount_failed_after_drain", "runtime", 1, recovery)
 		}
 		return UnmountResult{}, err
 	}
@@ -1407,6 +1414,17 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 		result.Checks = append(result.Checks, MountRuntimeCheck{Name: "drain", Status: "failed", Message: apperr.MessageFor(drainErr)})
 	}
 	return result, nil
+}
+
+// mountListed reports whether the kernel still lists a mount at mountPath. It
+// gates advice that would drop the mount record, so an unanswerable probe counts
+// as listed: the conservative answer is the one that never orphans a live mount.
+func (s Service) mountListed(mountPath string) bool {
+	active, err := s.mountEvidence()(mountPath)
+	if err != nil {
+		return true
+	}
+	return active
 }
 
 // replayablePackPaths splits the recorded --pack-path values into the ones the
@@ -1430,7 +1448,7 @@ func replayablePackPaths(locator mountlocator.Locator) ([]string, []MountRuntime
 		return nil, []MountRuntimeCheck{{
 			Name:    "pack_path",
 			Status:  "skipped",
-			Message: "the mount did not record its local overlay root, so the recorded --pack-path values cannot be packed; pass --pack-archive-path to pack explicitly",
+			Message: "the mount did not record the local overlay root it packs from, so ti cannot verify the recorded --pack-path values and does not replay them",
 		}}
 	}
 	kept := make([]string, 0, len(locator.PackPaths))

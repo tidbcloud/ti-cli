@@ -58,6 +58,19 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	if err != nil {
 		return MountResult{}, err
 	}
+	// The locator's root is not the audit's root: unmount needs it to verify the
+	// recorded --pack-path values against the overlay the companion would pack,
+	// and a mount that unpacks nothing (--no-auto-unpack, or a profile with no
+	// pack paths) still packs at unmount. Resolving it from the audit decision
+	// left those mounts with no root and made --pack-path inert again.
+	locatorRoot := auditRoot
+	if strings.TrimSpace(locatorRoot) == "" && len(opts.PackPaths) > 0 {
+		locatorRoot, err = s.companionMountLocalRoot(opts.Profile, remotePath)
+		if err != nil {
+			return MountResult{}, apperr.Wrap("fs.mount_local_root_unresolved", "config", 2,
+				"resolve the local overlay root that --pack-path is packed from", err)
+		}
+	}
 	var overlayBefore map[string]overlayEntryInfo
 	if unpackPossible {
 		var snapshotProblems []string
@@ -132,7 +145,7 @@ func (s Service) drive9MountFileSystem(ctx context.Context, opts MountFileSystem
 	// Record the driver the companion actually mounted with, so the matching
 	// unmount knows whether the mount supports the drain gate.
 	mountedDriver := drive9MountedDriver(result.Stderr, opts.Driver)
-	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", mountedDriver, auditRoot, &opts); err != nil {
+	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "fs", mountedDriver, locatorRoot, &opts); err != nil {
 		// A partially completed unpack can leave an escaping link behind, and a
 		// later mount would record it as pre-existing state, so audit before
 		// deciding whether the failed mount can be torn down.
