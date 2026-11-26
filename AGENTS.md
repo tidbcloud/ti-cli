@@ -1289,6 +1289,11 @@ window is treated as pre-existing local state by later audits.
 local root, the effective pack paths, and the none-profile `--unpack-archive-path`
 rule; live execution and `--dry-run` must both go through it, and neither may
 create ti's own overlay directory on the companion path.
+`normalizeMountOptions` then hands the pack paths to `normalizeMountPackPaths`
+(`internal/fs/mount_pack_paths.go`), the single owner of trimming, de-duplication,
+and the mount-time refusals (`fs.pack_path_requires_fuse`, `fs.invalid_pack_path`).
+That file also owns the replica of the companion's `resolvePackPath` and
+`overlayPathForArchivePath`, pinned by literal path vectors.
 `--no-auto-unpack` disables only the profile/pack-path driven unpack, not an
 explicit `--unpack-archive-path`. Ordinary mounts must keep their flag shape, so
 only an explicit `--local-root` is forwarded to the companion, and a mount that
