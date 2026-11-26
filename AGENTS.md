@@ -1297,7 +1297,10 @@ That file also owns the replica of the companion's `resolvePackPath` and
 `--no-auto-unpack` disables only the profile/pack-path driven unpack, not an
 explicit `--unpack-archive-path`. Ordinary mounts must keep their flag shape, so
 only an explicit `--local-root` is forwarded to the companion, and a mount that
-does not unpack is not audited. Without an explicit root, the audited directory
+unpacks nothing at the companion is not audited. The predicate counts the
+effective pack paths rather than the companion's unpack decision, so a
+`coding-agent` mount with `--pack-path` is audited although that profile carries
+no unpack paths of its own. Without an explicit root, the audited directory
 is the companion's own default root, replicated in `companionMountLocalRoot`
 from drive9's `defaultMountLocalRoot`:
 `os.UserCacheDir()/drive9/mounts/<safe-label(remote)>-<sha256(server\nremoteRoot\ncredential-key)[:8]>`

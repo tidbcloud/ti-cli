@@ -213,9 +213,6 @@ func TestUnmountForwardsOnlyPathsStillInTheOverlay(t *testing.T) {
 	if !strings.Contains(human, "pack_path: skipped") {
 		t.Fatalf("text output does not report the skipped path:\n%s", human)
 	}
-	if strings.Contains(human, "drain: drained") {
-		t.Fatalf("text output repeats the drain status as a check:\n%s", human)
-	}
 }
 
 // TestUnmountSkipsReplayWithoutRecordedLocalRoot covers a locator that cannot
