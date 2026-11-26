@@ -1556,8 +1556,12 @@ func TestLiveFSMountRuntime(t *testing.T) {
 // TestLiveFSMountPackPathPacksOverlay is the live check for the claim this
 // change makes: a mount-time --pack-path reaches the pack that runs at unmount
 // and the archive really contains the directory. The fake companion accepts any
-// argv, so only the real one can confirm it. Dispatch with `make live-e2e`
-// (TI_LIVE=1); it needs FUSE and a provisioned File System.
+// argv, so only the real one can confirm it. It mounts with `coding-agent`
+// because that profile carries no pack paths of its own: with `portable` the
+// whole overlay lands in every archive anyway and the assertion would hold
+// without the replay. Dispatch with `make live-e2e` (all live tests) or
+// `make live-e2e-fs` (the filesystem subset, which lists this test); both need
+// TI_LIVE=1, FUSE and a provisioned File System.
 func TestLiveFSMountPackPathPacksOverlay(t *testing.T) {
 	requireLive(t)
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
@@ -1605,13 +1609,15 @@ func TestLiveFSMountPackPathPacksOverlay(t *testing.T) {
 	createDir := runTI(t, bin, "--profile", profileName, "fs", "create-directory", "--path", remoteRoot, "--mode", "0755")
 	createDir.wantExitCode(0)
 
-	mount := runTI(t, bin, "--profile", profileName, "fs", "mount", "--mount-path", mountPath, "--remote-path", remoteRoot, "--local-root", localRoot, "--driver", "fuse", "--mount-profile", "portable", "--pack-path", "/cached", "--ready-timeout", "30s")
+	mount := runTI(t, bin, "--profile", profileName, "fs", "mount", "--mount-path", mountPath, "--remote-path", remoteRoot, "--local-root", localRoot, "--driver", "fuse", "--mount-profile", "coding-agent", "--pack-path", "/cached", "--ready-timeout", "30s")
 	mount.wantExitCode(0)
 	mount.wantStdoutContains(`"status": "mounted"`)
 	mount.wantStdoutContains("pack_paths")
 
 	// --no-auto-pack plus an explicit archive keeps the replay (the companion's
-	// own rule), so the archive holds exactly the paths replayed from the mount.
+	// own rule). `coding-agent` has no pack paths of its own, so this unmount
+	// fails with "path arguments are required" unless ti replays the recorded
+	// value: the archive then holds exactly what was replayed.
 	unmount := runTI(t, bin, "--profile", profileName, "fs", "umount", "--mount-path", mountPath, "--no-auto-pack", "--pack-archive-path", archivePath)
 	unmount.wantExitCode(0)
 	unmount.wantStdoutContains(`"status": "unmounted"`)
@@ -1621,7 +1627,7 @@ func TestLiveFSMountPackPathPacksOverlay(t *testing.T) {
 	}
 
 	unpackLocalRoot := t.TempDir()
-	unpack := runTI(t, bin, "--profile", profileName, "fs", "unpack-file-system", "--local-root", unpackLocalRoot, "--remote-root", remoteRoot, "--mount-profile", "portable", "--archive-path", archivePath)
+	unpack := runTI(t, bin, "--profile", profileName, "fs", "unpack-file-system", "--local-root", unpackLocalRoot, "--remote-root", remoteRoot, "--mount-profile", "coding-agent", "--archive-path", archivePath)
 	unpack.wantExitCode(0)
 	unpack.wantStdoutContains(`"status": "unpacked"`)
 	packed, err := os.ReadFile(filepath.Join(unpackLocalRoot, "overlay", "cached", "item.txt"))
