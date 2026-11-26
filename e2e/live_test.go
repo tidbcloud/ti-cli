@@ -1553,6 +1553,96 @@ func TestLiveFSMountRuntime(t *testing.T) {
 	remoteDeleted = true
 }
 
+// TestLiveFSMountPackPathPacksOverlay is the live check for the claim this
+// change makes: a mount-time --pack-path reaches the pack that runs at unmount
+// and the archive really contains the directory. The fake companion accepts any
+// argv, so only the real one can confirm it. It mounts with `coding-agent`
+// because that profile carries no pack paths of its own: with `portable` the
+// whole overlay lands in every archive anyway and the assertion would hold
+// without the replay. Dispatch with `make live-e2e` (all live tests) or
+// `make live-e2e-fs` (the filesystem subset, which lists this test); both need
+// TI_LIVE=1, FUSE and a provisioned File System.
+func TestLiveFSMountPackPathPacksOverlay(t *testing.T) {
+	requireLive(t)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("ti fs FUSE mount live e2e currently runs on macOS or Linux")
+	}
+
+	bin := tiBinary(t)
+	profileName := liveProfileName(t)
+	ensureLiveFSResource(t, bin, profileName)
+	suffix := time.Now().UTC().Format("20060102150405")
+	remoteRoot := "/ti-e2e-pack-path-" + suffix
+	mountPath := filepath.Join(t.TempDir(), "mount")
+	if err := os.MkdirAll(mountPath, 0o755); err != nil {
+		t.Fatalf("create mount path: %v", err)
+	}
+	// An explicit root keeps the overlay predictable: the companion packs
+	// <local-root>/overlay/<archive path>.
+	localRoot := t.TempDir()
+	overlayDir := filepath.Join(localRoot, "overlay", "cached")
+	if err := os.MkdirAll(overlayDir, 0o755); err != nil {
+		t.Fatalf("create overlay dir: %v", err)
+	}
+	content := "packed from the local overlay " + suffix + "\n"
+	if err := os.WriteFile(filepath.Join(overlayDir, "item.txt"), []byte(content), 0o644); err != nil {
+		t.Fatalf("write overlay file: %v", err)
+	}
+	archivePath := remoteRoot + "/packs/pack-path.tar.gz"
+	unmounted := false
+	remoteDeleted := false
+	defer func() {
+		if !unmounted {
+			cleanupUnmount := runTI(t, bin, "--profile", profileName, "fs", "unmount-file-system", "--mount-path", mountPath, "--ignore-absent", "--force")
+			if cleanupUnmount.exitCode != 0 {
+				t.Logf("cleanup unmount failed for %s: exit=%d stdout=%s stderr=%s", mountPath, cleanupUnmount.exitCode, cleanupUnmount.stdout, cleanupUnmount.stderr)
+			}
+		}
+		if !remoteDeleted {
+			cleanupRemote := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
+			if cleanupRemote.exitCode != 0 && cleanupRemote.exitCode != 5 {
+				t.Logf("cleanup remote failed for %s: exit=%d stdout=%s stderr=%s", remoteRoot, cleanupRemote.exitCode, cleanupRemote.stdout, cleanupRemote.stderr)
+			}
+		}
+	}()
+
+	createDir := runTI(t, bin, "--profile", profileName, "fs", "create-directory", "--path", remoteRoot, "--mode", "0755")
+	createDir.wantExitCode(0)
+
+	mount := runTI(t, bin, "--profile", profileName, "fs", "mount", "--mount-path", mountPath, "--remote-path", remoteRoot, "--local-root", localRoot, "--driver", "fuse", "--mount-profile", "coding-agent", "--pack-path", "/cached", "--ready-timeout", "30s")
+	mount.wantExitCode(0)
+	mount.wantStdoutContains(`"status": "mounted"`)
+	mount.wantStdoutContains("pack_paths")
+
+	// --no-auto-pack plus an explicit archive keeps the replay (the companion's
+	// own rule). `coding-agent` has no pack paths of its own, so this unmount
+	// fails with "path arguments are required" unless ti replays the recorded
+	// value: the archive then holds exactly what was replayed.
+	unmount := runTI(t, bin, "--profile", profileName, "fs", "umount", "--mount-path", mountPath, "--no-auto-pack", "--pack-archive-path", archivePath)
+	unmount.wantExitCode(0)
+	unmount.wantStdoutContains(`"status": "unmounted"`)
+	unmounted = true
+	if strings.Contains(unmount.stdout, `"status": "skipped"`) {
+		t.Fatalf("the recorded --pack-path was skipped instead of replayed: %s", unmount.stdout)
+	}
+
+	unpackLocalRoot := t.TempDir()
+	unpack := runTI(t, bin, "--profile", profileName, "fs", "unpack-file-system", "--local-root", unpackLocalRoot, "--remote-root", remoteRoot, "--mount-profile", "coding-agent", "--archive-path", archivePath)
+	unpack.wantExitCode(0)
+	unpack.wantStdoutContains(`"status": "unpacked"`)
+	packed, err := os.ReadFile(filepath.Join(unpackLocalRoot, "overlay", "cached", "item.txt"))
+	if err != nil {
+		t.Fatalf("the archive does not contain the directory named by --pack-path: %v", err)
+	}
+	if string(packed) != content {
+		t.Fatalf("packed overlay content mismatch: got %q want %q", packed, content)
+	}
+
+	deleteRoot := runTI(t, bin, "--profile", profileName, "fs", "delete-file", "--path", remoteRoot, "--recursive")
+	deleteRoot.wantExitCode(0)
+	remoteDeleted = true
+}
+
 func TestLiveFSConfigurationFreeAccess(t *testing.T) {
 	requireLive(t)
 	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {

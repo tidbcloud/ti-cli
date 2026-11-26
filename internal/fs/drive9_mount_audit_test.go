@@ -172,7 +172,7 @@ func TestDrive9MountDerivesOverlayRootForAudit(t *testing.T) {
 	t.Setenv("TI_FAKE_ESCAPE_ROOT", root)
 
 	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
-		Profile: dataProfile(), MountPath: mountPath, MountProfile: "coding-agent", PackPaths: []string{"/"},
+		Profile: dataProfile(), MountPath: mountPath, MountProfile: "coding-agent", Driver: "fuse", PackPaths: []string{"/"},
 	}); apperr.CodeFor(err) != "fs.unsafe_pack_symlink" {
 		t.Fatalf("derived overlay audit error = %v", err)
 	}
@@ -315,8 +315,8 @@ func TestDrive9MountRejectsPackFlagsWithoutProfile(t *testing.T) {
 	companion, _ := buildFakeDrive9(t)
 	service := testCompanionService(t.TempDir(), companion)
 	for _, opts := range []MountFileSystemOptions{
-		{Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "mnt"), MountProfile: "none", PackPaths: []string{"/"}},
-		{Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "mnt"), MountProfile: "none", LocalRoot: filepath.Join(t.TempDir(), "local")},
+		{Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "mnt"), MountProfile: "none", Driver: "fuse", PackPaths: []string{"/"}},
+		{Profile: dataProfile(), MountPath: filepath.Join(t.TempDir(), "mnt"), MountProfile: "none", Driver: "fuse", LocalRoot: filepath.Join(t.TempDir(), "local")},
 	} {
 		if _, err := service.MountFileSystem(context.Background(), opts); apperr.CodeFor(err) != "fs.invalid_mount_profile" {
 			t.Fatalf("mount profile eligibility error = %v for %#v", err, opts)
@@ -579,7 +579,7 @@ func TestDrive9MountNoAutoUnpackKeepsOldFlagShape(t *testing.T) {
 	mountPath := filepath.Join(t.TempDir(), "mnt")
 	if _, err := service.MountFileSystem(context.Background(), MountFileSystemOptions{
 		Profile: dataProfile(), MountPath: mountPath, MountProfile: "portable",
-		PackPaths: []string{"/"}, NoAutoUnpack: true,
+		Driver: "fuse", PackPaths: []string{"/"}, NoAutoUnpack: true,
 	}); err != nil {
 		t.Fatalf("no-auto-unpack mount failed: %v", err)
 	}

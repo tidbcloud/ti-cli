@@ -181,6 +181,10 @@ func normalizeMountOptions(opts MountFileSystemOptions) (MountFileSystemOptions,
 	if err != nil {
 		return MountFileSystemOptions{}, err
 	}
+	opts, err = normalizeMountPackPaths(opts)
+	if err != nil {
+		return MountFileSystemOptions{}, err
+	}
 	return rejectUnsupportedMountDurability(opts)
 }
 
@@ -380,7 +384,40 @@ func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string
 		dryrun.Check{Name: "file_system_id", Status: "passed", Message: profile.FSTenantID},
 		dryrun.Check{Name: "region", Status: "passed", Message: profile.FSPlacementRegionCode},
 		dryrun.Check{Name: "pre_unmount_drain", Status: "passed", Message: describeDryRunDrainGate(locator, opts)},
+		describeDryRunPackReplay(locator, opts),
 	), nil
+}
+
+// replayPackPaths reports whether this unmount packs at all, and therefore
+// whether the recorded --pack-path values must be replayed: the automatic pack
+// runs unless --no-auto-pack is set, and an explicit --pack-archive-path still
+// packs beside it. Unmount and --dry-run both decide through this one predicate
+// so the prediction cannot drift from the execution.
+func replayPackPaths(opts UnmountFileSystemOptions) bool {
+	return !opts.NoAutoPack || strings.TrimSpace(opts.PackArchivePath) != ""
+}
+
+// describeDryRunPackReplay predicts which recorded --pack-path values normal
+// execution would hand to the companion, so a dry run cannot promise a pack
+// that the local overlay no longer satisfies.
+func describeDryRunPackReplay(locator mountlocator.Locator, opts UnmountFileSystemOptions) dryrun.Check {
+	if !replayPackPaths(opts) {
+		return dryrun.Check{Name: "auto_pack_paths", Status: "skipped", Message: "--no-auto-pack disables the automatic pack, and no --pack-archive-path asks for an explicit one, so the recorded --pack-path values are not replayed"}
+	}
+	kept, checks := replayablePackPaths(locator)
+	if len(kept) == 0 && len(checks) == 0 {
+		return dryrun.Check{Name: "auto_pack_paths", Status: "passed", Message: "no --pack-path values were recorded at mount"}
+	}
+	message := fmt.Sprintf("replayed: %s", strings.Join(kept, ", "))
+	status := "passed"
+	if len(kept) == 0 {
+		status = "warning"
+		message = "replayed: none"
+	}
+	for _, check := range checks {
+		message += "; " + check.Message
+	}
+	return dryrun.Check{Name: "auto_pack_paths", Status: status, Message: message}
 }
 
 // drainSupportCheck predicts whether `ti fs drain-file-system` will run for
@@ -737,25 +774,6 @@ func (s Service) mountOverlayAudit(opts MountFileSystemOptions, remotePath strin
 	return root, unpackPossible, nil
 }
 
-func mergeMountPackPaths(groups ...[]string) []string {
-	seen := map[string]struct{}{}
-	var out []string
-	for _, group := range groups {
-		for _, value := range group {
-			value = strings.TrimSpace(value)
-			if value == "" {
-				continue
-			}
-			if _, ok := seen[value]; ok {
-				continue
-			}
-			seen[value] = struct{}{}
-			out = append(out, value)
-		}
-	}
-	return out
-}
-
 func mountCacheBytes(value, fallback int64, flagName string) (int64, error) {
 	if value < 0 {
 		return 0, apperr.New("fs.invalid_mount_cache_size", "usage", 2, flagName+" must be non-negative")
@@ -824,6 +842,20 @@ func (r UnmountResult) Human() string {
 		if r.Drain.Response != nil {
 			_, _ = fmt.Fprintf(&out, "pending: %s\n", drainPendingSummary(r.Drain.Response.Pending))
 		}
+	}
+	// Checks are the only place a skipped --pack-path shows up, so the text
+	// output has to render them: a silent skip is indistinguishable from a pack
+	// that included the path. The drain check is skipped because the drain line
+	// above already carries it, and printing both repeats the same message.
+	for _, check := range r.Checks {
+		if check.Name == "drain" {
+			continue
+		}
+		_, _ = fmt.Fprintf(&out, "%s: %s", check.Name, check.Status)
+		if check.Message != "" {
+			_, _ = fmt.Fprintf(&out, " (%s)", check.Message)
+		}
+		_, _ = fmt.Fprintln(&out)
 	}
 	return strings.TrimRight(out.String(), "\n")
 }

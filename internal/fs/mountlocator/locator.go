@@ -37,6 +37,13 @@ type Locator struct {
 	LayerRef         string `json:"layer_ref,omitempty"`
 	CheckpointID     string `json:"checkpoint_id,omitempty"`
 	ReadOnly         bool   `json:"read_only,omitempty"`
+	// LocalRoot and PackPaths let unmount hand the extra `--pack-path` values
+	// to the companion, which is the only channel into the automatic pack (the
+	// companion's mount has no pack-path flag). LocalRoot is the mount's local
+	// overlay root, recorded so unmount can check that each path exists before
+	// the mount is detached. Older locators omit both; omitted means "none".
+	LocalRoot string   `json:"local_root,omitempty"`
+	PackPaths []string `json:"pack_paths,omitempty"`
 }
 
 func (l Locator) WithLayerView(remotePath, layerRef, checkpointID string, readOnly bool) Locator {

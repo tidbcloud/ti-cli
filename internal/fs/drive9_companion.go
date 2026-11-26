@@ -1207,7 +1207,7 @@ func (s Service) drive9MountVault(ctx context.Context, opts VaultMountOptions) (
 	if _, err := s.drive9Runner().Run(ctx, fswrap.RunOptions{Profile: opts.Profile, Args: args, IncludeFSAPIKey: true, VaultToken: opts.VaultToken}); err != nil {
 		return MountResult{}, err
 	}
-	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "vault", "fuse"); err != nil {
+	if err := s.writeDrive9MountLocator(opts.Profile, opts.MountPath, "vault", "fuse", "", nil); err != nil {
 		if umountErr := s.umountMount(ctx, MountFileSystemOptions{Profile: opts.Profile, MountPath: opts.MountPath}); umountErr != nil {
 			// Compose an apperr error: the CLI renders apperr.MessageFor, which
 			// reads only the embedded apperr message, so a fmt.Errorf wrapper would
@@ -1347,8 +1347,23 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 	if opts.PackArchivePath != "" {
 		args = append(args, "--pack", drive9RemoteMust(opts.PackArchivePath))
 	}
+	var packChecks []MountRuntimeCheck
 	if opts.NoAutoPack {
 		args = append(args, "--no-auto-pack")
+	}
+	// Replay the --pack-path values recorded at mount time whenever a pack will
+	// run: the automatic one, or an explicit --pack-archive-path that outlives
+	// --no-auto-pack. The companion's `mount` has no flag for them, and it is
+	// `umount --pack-path` that feeds the pack; without this the mount succeeds
+	// while the archive silently omits the local overlay paths the user asked
+	// for. Values the overlay no longer holds are skipped with a visible check
+	// instead of failing a pack that runs after the mount is already detached.
+	if replayPackPaths(opts) {
+		packPaths, checks := replayablePackPaths(locator)
+		packChecks = checks
+		for _, packPath := range packPaths {
+			args = append(args, "--pack-path", packPath)
+		}
 	}
 	args = append(args, opts.MountPath)
 	if _, err := s.drive9Run(ctx, profile, args, false); err != nil {
@@ -1364,7 +1379,28 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 			if drainErr != nil {
 				absent.Checks = append(absent.Checks, MountRuntimeCheck{Name: "drain", Status: "failed", Message: apperr.MessageFor(drainErr)})
 			}
+			absent.Checks = append(absent.Checks, packChecks...)
 			return absent, nil
+		}
+		if drain.Status == "drained" {
+			// The drain completed, so the writes are safe; what failed is the
+			// detach or the pack that follows it. Name the recovery instead of
+			// only asking for a retry: the kernel mount may already be gone.
+			// --ignore-absent drops the mount record, so it is only offered when
+			// the mount is no longer listed; suggesting it for a live mount would
+			// orphan that mount from the drain gate and the token guards.
+			// The mount is gone, so --ignore-absent is the retry that completes;
+			// --no-auto-pack stops at the drain gate once the companion state is
+			// gone, so it is named second. For a mount that is still listed it is
+			// the other way round: retrying keeps the record and only the flag that
+			// skips the pack helps.
+			recovery := fmt.Sprintf("%v; the pre-unmount drain succeeded, so writes are safe, but the kernel mount at %q may already be detached", err, opts.MountPath)
+			if s.mountListed(opts.MountPath) {
+				recovery += fmt.Sprintf("; retry with `ti fs unmount-file-system --mount-path %q --no-auto-pack` to skip the automatic pack, which keeps the mount record so the failure can be fixed and retried; --ignore-absent would orphan a mount that is still listed", opts.MountPath)
+			} else {
+				recovery += fmt.Sprintf("; retry with `ti fs unmount-file-system --mount-path %q --ignore-absent` to drop the mount record, or add --no-auto-pack to skip the automatic pack", opts.MountPath)
+			}
+			return UnmountResult{}, apperr.New("fs.unmount_failed_after_drain", "runtime", 1, recovery)
 		}
 		return UnmountResult{}, err
 	}
@@ -1376,6 +1412,7 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 		return UnmountResult{}, apperr.Wrap("fs.remove_mount_locator", "runtime", 1, "remove ti fs mount locator", err)
 	}
 	result := UnmountResult{Status: "unmounted", MountPath: opts.MountPath, Driver: locator.Driver, Drain: &drain}
+	result.Checks = append(result.Checks, packChecks...)
 	if drainErr != nil {
 		// --ignore-absent asked ti to continue past a drain it could not
 		// complete, so the outcome must still say the writes may be lost.
@@ -1384,7 +1421,63 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 	return result, nil
 }
 
-func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kind, driver string, mountOpts ...MountFileSystemOptions) error {
+// mountListed reports whether the kernel still lists a mount at mountPath. It
+// gates advice that would drop the mount record, so an unanswerable probe counts
+// as listed: the conservative answer is the one that never orphans a live mount.
+func (s Service) mountListed(mountPath string) bool {
+	active, err := s.mountEvidence()(mountPath)
+	if err != nil {
+		return true
+	}
+	return active
+}
+
+// replayablePackPaths splits the recorded --pack-path values into the ones the
+// companion can pack right now and the checks that explain the rest. A path is
+// replayed only when the mount recorded a local overlay root and the path is
+// present in that overlay: `umount --pack-path` is the strict form of a pack
+// path, so replaying an absent one fails the pack after the mount is already
+// detached.
+func replayablePackPaths(locator mountlocator.Locator) ([]string, []MountRuntimeCheck) {
+	if len(locator.PackPaths) == 0 {
+		return nil, nil
+	}
+	if locator.Driver != "" && locator.Driver != "fuse" {
+		return nil, []MountRuntimeCheck{{
+			Name:    "pack_path",
+			Status:  "skipped",
+			Message: fmt.Sprintf("the mount is %s, which has no local overlay; the recorded --pack-path values are not packed", locator.Driver),
+		}}
+	}
+	if strings.TrimSpace(locator.LocalRoot) == "" {
+		return nil, []MountRuntimeCheck{{
+			Name:    "pack_path",
+			Status:  "skipped",
+			Message: "the mount did not record the local overlay root it packs from, so ti cannot verify the recorded --pack-path values and does not replay them",
+		}}
+	}
+	kept := make([]string, 0, len(locator.PackPaths))
+	var checks []MountRuntimeCheck
+	for _, packPath := range locator.PackPaths {
+		overlayPath := mountPackOverlayPath(locator.LocalRoot, mountPackArchivePath(locator.RemotePath, packPath))
+		// The companion normalizes the archive path to NFC and this check compares
+		// raw bytes, so a name in another normalization form is either skipped
+		// here or replayed and then not found by the pack after the detach. ti
+		// has no NFC dependency, so that stays a known limit rather than a rule.
+		if _, err := os.Lstat(overlayPath); err != nil {
+			checks = append(checks, MountRuntimeCheck{
+				Name:    "pack_path",
+				Status:  "skipped",
+				Message: fmt.Sprintf("%s is not in the local overlay (%s), so the automatic pack leaves it out", packPath, overlayPath),
+			})
+			continue
+		}
+		kept = append(kept, packPath)
+	}
+	return kept, checks
+}
+
+func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kind, driver, localRoot string, opts *MountFileSystemOptions) error {
 	if profile == nil {
 		return apperr.New("fs.missing_profile", "config", 2, "active profile is required")
 	}
@@ -1401,9 +1494,17 @@ func (s Service) writeDrive9MountLocator(profile *config.Profile, mountPath, kin
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "construct ti fs mount locator", err)
 	}
 	locator = locator.WithTokenCorrelation(profile.FSTenantID, profile.FSTokenID, fsTokenFingerprint(profile.FSAPIKey)).WithServiceAddress(profile.FSServiceAddress).WithDriver(driver)
-	if len(mountOpts) > 0 {
-		opts := mountOpts[0]
+	if opts != nil {
 		locator = locator.WithLayerView(opts.RemotePath, opts.LayerRef, opts.CheckpointID, opts.ReadOnly)
+		// The companion's `mount` has no pack-path flag, so the values have to
+		// survive until unmount: `drive9 umount --pack-path` is what makes the
+		// automatic pack include them. Only a FUSE mount has a local overlay to
+		// pack, and only a recorded local root lets unmount verify a path before
+		// detaching the mount.
+		if driver == "fuse" && len(opts.PackPaths) > 0 {
+			locator.PackPaths = opts.PackPaths
+			locator.LocalRoot = localRoot
+		}
 	}
 	if _, err := mountlocator.Write(homeDir, locator); err != nil {
 		return apperr.Wrap("fs.write_mount_locator", "runtime", 1, "write ti fs mount locator", err)

@@ -377,6 +377,15 @@ func TestUnmountIgnoreAbsentAbsentPathStillReportsDrainFailure(t *testing.T) {
 	if !found {
 		t.Fatalf("absent path did not report the tolerated drain failure: %#v", result.Checks)
 	}
+	// The drain already has its own line, so the text output must not print the
+	// same failure a second time as a check: this is what pins the skip.
+	human := result.Human()
+	if !strings.Contains(human, "drain: ") {
+		t.Fatalf("text output lost the drain line:\n%s", human)
+	}
+	if strings.Contains(human, "drain: failed") {
+		t.Fatalf("text output repeats the tolerated drain failure as a check:\n%s", human)
+	}
 }
 
 // TestUnmountIgnoreAbsentStillBlocksParsedPendingWork covers the classification

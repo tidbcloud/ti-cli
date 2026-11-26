@@ -2640,7 +2640,7 @@ func newFSMountFileSystemCommand(info version.Info) *cobra.Command {
 	cmd.Flags().Bool("write-back-cache", true, "Legacy alias: true selects --durability=interactive and false selects --durability=auto. Unavailable for checkpoint mounts.")
 	cmd.Flags().String("mount-profile", "", "Mount profile: coding-agent, portable, or none. Default: none.")
 	cmd.Flags().String("local-root", "", "Local overlay root. Default: ~/.ti/local/fs/<mount-hash>.")
-	cmd.Flags().StringArray("pack-path", nil, "Local overlay path included by automatic or manual pack. Repeatable.")
+	cmd.Flags().StringArray("pack-path", nil, "Local overlay path to include in the automatic pack written at unmount; the path must exist in the local overlay, and WebDAV mounts cannot use it. Repeatable.")
 	cmd.Flags().String("unpack-archive-path", "", "Restore the pack archive before mounting.")
 	cmd.Flags().Bool("no-auto-unpack", false, "Skip default auto-unpack for portable mount profile before mounting.")
 	cmd.Flags().String("layer-ref", "", "Mount through this writable layer ID, unique name, or supported tag reference; requires FUSE.")
@@ -2684,7 +2684,7 @@ func newFSUnmountFileSystemCommand(info version.Info) *cobra.Command {
 	cmd.Flags().Bool("force", false, "Skip the pre-unmount drain gate and unmount even when local writes are still pending.")
 	cmd.Flags().Bool("ignore-absent", false, "Return success when no file system mount state exists for the specified path.")
 	cmd.Flags().String("pack-archive-path", "", "Pack archive to write after unmount")
-	cmd.Flags().Bool("no-auto-pack", false, "Skip the portable mount profile's default auto-pack action.")
+	cmd.Flags().Bool("no-auto-pack", false, "Skip the automatic pack at unmount; the --pack-path values recorded at mount are dropped with it unless --pack-archive-path asks for an explicit archive.")
 	markUsageRequired(cmd, "mount-path")
 	return cmd
 }

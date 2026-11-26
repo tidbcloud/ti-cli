@@ -2,6 +2,7 @@ package mountlocator
 
 import (
 	"os"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -104,5 +105,35 @@ func TestTokenCorrelationAndLegacyListCompatibility(t *testing.T) {
 		if locator.FileSystemName == "tenant-old" && (locator.TokenID != "" || locator.TokenFingerprint != "") {
 			t.Fatalf("legacy locator gained correlation: %#v", locator)
 		}
+	}
+}
+
+// TestPackPathsAndLocalRootRoundTrip keeps the two fields unmount replays on a
+// JSON round trip; nothing else in the locator is involved.
+func TestPackPathsAndLocalRootRoundTrip(t *testing.T) {
+	home := t.TempDir()
+	locator, err := New("default", "tenant-pack", "aws-us-east-1", "/tmp/pack-home", t.TempDir(), "fs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	locator.LocalRoot = "/tmp/pack-home/local"
+	locator.PackPaths = []string{"/src", "node_modules"}
+	path, err := Write(home, locator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"local_root": "/tmp/pack-home/local"`) || !strings.Contains(string(data), `"pack_paths"`) {
+		t.Fatalf("locator json = %s", data)
+	}
+	read, _, err := Read(home, locator.MountPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if read.LocalRoot != locator.LocalRoot || !reflect.DeepEqual(read.PackPaths, locator.PackPaths) {
+		t.Fatalf("round trip = %#v, want %#v", read, locator)
 	}
 }

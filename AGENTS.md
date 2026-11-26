@@ -366,7 +366,7 @@ internal/dryrun/            shared dry-run result envelope
 internal/fs/                ti fs control-plane, data-plane, and mount use cases
 internal/fs/aiconfig/       optional Filesystem extraction and embedding configuration
 internal/fs/fscred/         ID-keyed ti fs credentials, selection, and legacy migration
-internal/fs/mountlocator/   non-secret Drive9 background mount routing state
+internal/fs/mountlocator/   non-secret Drive9 background mount routing state (also the mount local root and --pack-path values unmount replays)
 internal/fs/tokenmgmt/      Filesystem token lifecycle and local rotation safety
 internal/oplog/             local JSONL operation log writer
 internal/output/            structured JSON/text/raw rendering
@@ -1162,6 +1162,11 @@ Background FS and vault mounts write only a non-secret locator under
 `~/.ti/mounts/`. Drain and unmount must route through that locator to the
 original resource-scoped companion HOME without requiring the FS token again.
 Successful unmount removes the locator; failed unmount preserves it for retry.
+The locator also carries the mount's local overlay root and the `--pack-path`
+values supplied at mount, which unmount replays as `umount --pack-path`; a
+logged path is replayed only while it is still present in
+`<local_root>/overlay`, because the companion treats `umount --pack-path` as a
+strict path that fails the pack after the mount is already detached.
 
 `ti fs unmount-file-system` drains before it detaches a FUSE mount and must never
 report success while write-back work is still local. Parse the companion's
@@ -1284,10 +1289,18 @@ window is treated as pre-existing local state by later audits.
 local root, the effective pack paths, and the none-profile `--unpack-archive-path`
 rule; live execution and `--dry-run` must both go through it, and neither may
 create ti's own overlay directory on the companion path.
+`normalizeMountOptions` then hands the pack paths to `normalizeMountPackPaths`
+(`internal/fs/mount_pack_paths.go`), the single owner of trimming, de-duplication,
+and the mount-time refusals (`fs.pack_path_requires_fuse`, `fs.invalid_pack_path`).
+That file also owns the replica of the companion's `resolvePackPath` and
+`overlayPathForArchivePath`, pinned by literal path vectors.
 `--no-auto-unpack` disables only the profile/pack-path driven unpack, not an
 explicit `--unpack-archive-path`. Ordinary mounts must keep their flag shape, so
 only an explicit `--local-root` is forwarded to the companion, and a mount that
-does not unpack is not audited. Without an explicit root, the audited directory
+unpacks nothing at the companion is not audited. The predicate counts the
+effective pack paths rather than the companion's unpack decision, so a
+`coding-agent` mount with `--pack-path` is audited although that profile carries
+no unpack paths of its own. Without an explicit root, the audited directory
 is the companion's own default root, replicated in `companionMountLocalRoot`
 from drive9's `defaultMountLocalRoot`:
 `os.UserCacheDir()/drive9/mounts/<safe-label(remote)>-<sha256(server\nremoteRoot\ncredential-key)[:8]>`
