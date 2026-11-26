@@ -148,6 +148,7 @@ func TestMountRecordsPackPathsOnLocator(t *testing.T) {
 // root, but the mount still packs at unmount and needs the overlay root to verify
 // the recorded paths.
 func TestMountRecordsRootWithoutAutoUnpack(t *testing.T) {
+	t.Setenv("XDG_CACHE_HOME", "")
 	home := t.TempDir()
 	companion, recordPath := buildFakeDrive9(t)
 	t.Setenv("TI_FAKE_DRIVE9_RECORD", recordPath)
@@ -205,6 +206,15 @@ func TestUnmountForwardsOnlyPathsStillInTheOverlay(t *testing.T) {
 	}
 	if !hasRuntimeCheck(result.Checks, "pack_path", "skipped") {
 		t.Fatalf("missing skipped pack_path check: %#v", result.Checks)
+	}
+	// The text output is the only place a plain `ti fs umount` user sees the
+	// skip, so pin it: dropping the renderer would hide the path silently.
+	human := result.Human()
+	if !strings.Contains(human, "pack_path: skipped") {
+		t.Fatalf("text output does not report the skipped path:\n%s", human)
+	}
+	if strings.Contains(human, "drain: drained") {
+		t.Fatalf("text output repeats the drain status as a check:\n%s", human)
 	}
 }
 
@@ -307,8 +317,8 @@ func TestUnmountFailureAfterDrainNamesTheRecovery(t *testing.T) {
 	if !strings.Contains(apperr.MessageFor(err), "would orphan") {
 		t.Fatalf("unmount error %q must warn before recommending --ignore-absent for a listed mount", apperr.MessageFor(err))
 	}
-	if strings.Contains(apperr.MessageFor(err), "add --ignore-absent") {
-		t.Fatalf("unmount error %q recommends --ignore-absent for a listed mount", apperr.MessageFor(err))
+	if strings.Contains(apperr.MessageFor(err), "to drop the mount record") {
+		t.Fatalf("unmount error %q recommends dropping the record of a listed mount", apperr.MessageFor(err))
 	}
 }
 
@@ -327,8 +337,11 @@ func TestUnmountFailureAfterDetachedMountOffersIgnoreAbsent(t *testing.T) {
 	if apperr.CodeFor(err) != "fs.unmount_failed_after_drain" {
 		t.Fatalf("unmount error = %v, want fs.unmount_failed_after_drain", err)
 	}
-	if !strings.Contains(apperr.MessageFor(err), "add --ignore-absent") {
-		t.Fatalf("unmount error %q missing --ignore-absent for a detached mount", apperr.MessageFor(err))
+	if !strings.Contains(apperr.MessageFor(err), "--ignore-absent` to drop the mount record") {
+		t.Fatalf("unmount error %q must lead with --ignore-absent for a detached mount", apperr.MessageFor(err))
+	}
+	if strings.Contains(apperr.MessageFor(err), "would orphan") {
+		t.Fatalf("unmount error %q argues against the flag it should recommend for a detached mount", apperr.MessageFor(err))
 	}
 }
 

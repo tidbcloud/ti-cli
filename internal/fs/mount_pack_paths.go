@@ -9,13 +9,20 @@ import (
 )
 
 // This file owns --pack-path: one normalizer, the mount-time refusals, and the
-// mapping onto the companion's archive and overlay paths.
+// mapping onto the companion's archive and overlay paths. The rules mirrored
+// here live in the companion at cmd/drive9/cli/pack.go (joinArchivePath,
+// resolvePackPath, overlayPathForArchivePath) and the profile table at
+// cmd/drive9/cli/profile.go. This package also holds an older copy of both
+// mappings in pack.go, used by nothing on the companion path; it has drifted
+// (it accepts `/a/../b`) and should be deleted rather than kept in step.
 
 // normalizeMountPackPaths trims and de-duplicates --pack-path once, where the
 // companion argv is decided, and refuses the shapes that cannot survive to the
 // automatic pack: a WebDAV mount has no local overlay to pack, and the
-// companion's joinArchivePath rejects a backslash or a relative path with an
-// empty, "." or ".." segment.
+// companion's joinArchivePath (cmd/drive9/cli/pack.go) rejects a backslash or a
+// relative path with an empty, "." or ".." segment. This is a subset of the
+// companion's rule: it also refuses control characters and invalid UTF-8, which
+// ti lets through so a path it cannot validate is not refused here either.
 func normalizeMountPackPaths(opts MountFileSystemOptions) (MountFileSystemOptions, error) {
 	opts.PackPaths = mergeMountPackPaths(opts.PackPaths)
 	if len(opts.PackPaths) == 0 {

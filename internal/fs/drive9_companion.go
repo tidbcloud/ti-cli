@@ -1358,7 +1358,7 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 	// while the archive silently omits the local overlay paths the user asked
 	// for. Values the overlay no longer holds are skipped with a visible check
 	// instead of failing a pack that runs after the mount is already detached.
-	if !opts.NoAutoPack || strings.TrimSpace(opts.PackArchivePath) != "" {
+	if replayPackPaths(opts) {
 		packPaths, checks := replayablePackPaths(locator)
 		packChecks = checks
 		for _, packPath := range packPaths {
@@ -1389,11 +1389,16 @@ func (s Service) drive9UnmountFileSystem(ctx context.Context, opts UnmountFileSy
 			// --ignore-absent drops the mount record, so it is only offered when
 			// the mount is no longer listed; suggesting it for a live mount would
 			// orphan that mount from the drain gate and the token guards.
-			recovery := fmt.Sprintf("%v; the pre-unmount drain succeeded, so writes are safe, but the kernel mount at %q may already be detached; retry with `ti fs unmount-file-system --mount-path %q --no-auto-pack` to skip the automatic pack", err, opts.MountPath, opts.MountPath)
+			// The mount is gone, so --ignore-absent is the retry that completes;
+			// --no-auto-pack stops at the drain gate once the companion state is
+			// gone, so it is named second. For a mount that is still listed it is
+			// the other way round: retrying keeps the record and only the flag that
+			// skips the pack helps.
+			recovery := fmt.Sprintf("%v; the pre-unmount drain succeeded, so writes are safe, but the kernel mount at %q may already be detached", err, opts.MountPath)
 			if s.mountListed(opts.MountPath) {
-				recovery += ", which keeps the mount record so the failure can be fixed and retried; --ignore-absent would orphan a mount that is still listed"
+				recovery += fmt.Sprintf("; retry with `ti fs unmount-file-system --mount-path %q --no-auto-pack` to skip the automatic pack, which keeps the mount record so the failure can be fixed and retried; --ignore-absent would orphan a mount that is still listed", opts.MountPath)
 			} else {
-				recovery += ", or add --ignore-absent to drop the mount record"
+				recovery += fmt.Sprintf("; retry with `ti fs unmount-file-system --mount-path %q --ignore-absent` to drop the mount record, or add --no-auto-pack to skip the automatic pack", opts.MountPath)
 			}
 			return UnmountResult{}, apperr.New("fs.unmount_failed_after_drain", "runtime", 1, recovery)
 		}
@@ -1455,6 +1460,10 @@ func replayablePackPaths(locator mountlocator.Locator) ([]string, []MountRuntime
 	var checks []MountRuntimeCheck
 	for _, packPath := range locator.PackPaths {
 		overlayPath := mountPackOverlayPath(locator.LocalRoot, mountPackArchivePath(locator.RemotePath, packPath))
+		// The companion normalizes the archive path to NFC and this check compares
+		// raw bytes, so a name in another normalization form is either skipped
+		// here or replayed and then not found by the pack after the detach. ti
+		// has no NFC dependency, so that stays a known limit rather than a rule.
 		if _, err := os.Lstat(overlayPath); err != nil {
 			checks = append(checks, MountRuntimeCheck{
 				Name:    "pack_path",

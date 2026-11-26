@@ -388,11 +388,20 @@ func (s Service) DryRunUnmountFileSystem(ctx context.Context, commandPath string
 	), nil
 }
 
+// replayPackPaths reports whether this unmount packs at all, and therefore
+// whether the recorded --pack-path values must be replayed: the automatic pack
+// runs unless --no-auto-pack is set, and an explicit --pack-archive-path still
+// packs beside it. Unmount and --dry-run both decide through this one predicate
+// so the prediction cannot drift from the execution.
+func replayPackPaths(opts UnmountFileSystemOptions) bool {
+	return !opts.NoAutoPack || strings.TrimSpace(opts.PackArchivePath) != ""
+}
+
 // describeDryRunPackReplay predicts which recorded --pack-path values normal
 // execution would hand to the companion, so a dry run cannot promise a pack
 // that the local overlay no longer satisfies.
 func describeDryRunPackReplay(locator mountlocator.Locator, opts UnmountFileSystemOptions) dryrun.Check {
-	if opts.NoAutoPack && strings.TrimSpace(opts.PackArchivePath) == "" {
+	if !replayPackPaths(opts) {
 		return dryrun.Check{Name: "auto_pack_paths", Status: "skipped", Message: "--no-auto-pack disables the automatic pack, and no --pack-archive-path asks for an explicit one, so the recorded --pack-path values are not replayed"}
 	}
 	kept, checks := replayablePackPaths(locator)
@@ -836,8 +845,12 @@ func (r UnmountResult) Human() string {
 	}
 	// Checks are the only place a skipped --pack-path shows up, so the text
 	// output has to render them: a silent skip is indistinguishable from a pack
-	// that included the path.
+	// that included the path. The drain check is skipped because the drain line
+	// above already carries it, and printing both repeats the same message.
 	for _, check := range r.Checks {
+		if check.Name == "drain" {
+			continue
+		}
 		_, _ = fmt.Fprintf(&out, "%s: %s", check.Name, check.Status)
 		if check.Message != "" {
 			_, _ = fmt.Fprintf(&out, " (%s)", check.Message)
